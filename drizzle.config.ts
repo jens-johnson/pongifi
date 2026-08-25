@@ -27,6 +27,17 @@
 import { defineConfig } from 'drizzle-kit';
 
 /**
+ * drizzle-kit runs outside Nuxt, so it never sees the values the dev server loads. Node can read the file itself; in
+ * CI and on Vercel the variables are already in the environment and there is no file to find
+ * @internal
+ */
+try {
+  process.loadEnvFile('.env');
+} catch {
+  /* No local env file; the platform supplies the variables instead */
+}
+
+/**
  * The Drizzle Kit configuration: schema lives under `server/db/schema`, generated SQL migrations are checked into
  * `server/db/migrations` and applied in CI before a deploy
  * @public
