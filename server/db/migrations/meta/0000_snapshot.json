@@ -1,5 +1,5 @@
 {
-  "id": "ec7d8c93-1257-4cf1-90f8-09d0d8b3a124",
+  "id": "5cf18125-2a04-4213-9769-afa8b9af45bf",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -101,8 +101,12 @@
           "name": "game_events_game_id_games_id_fk",
           "tableFrom": "game_events",
           "tableTo": "games",
-          "columnsFrom": ["game_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "game_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -110,8 +114,12 @@
           "name": "game_events_serving_user_id_users_id_fk",
           "tableFrom": "game_events",
           "tableTo": "users",
-          "columnsFrom": ["serving_user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "serving_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -119,8 +127,12 @@
           "name": "game_events_scoring_user_id_users_id_fk",
           "tableFrom": "game_events",
           "tableTo": "users",
-          "columnsFrom": ["scoring_user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "scoring_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -247,8 +259,12 @@
           "name": "game_participants_game_id_games_id_fk",
           "tableFrom": "game_participants",
           "tableTo": "games",
-          "columnsFrom": ["game_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "game_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -256,8 +272,12 @@
           "name": "game_participants_user_id_users_id_fk",
           "tableFrom": "game_participants",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -495,8 +515,12 @@
           "name": "games_league_id_leagues_id_fk",
           "tableFrom": "games",
           "tableTo": "leagues",
-          "columnsFrom": ["league_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -504,8 +528,12 @@
           "name": "games_created_by_users_id_fk",
           "tableFrom": "games",
           "tableTo": "users",
-          "columnsFrom": ["created_by"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -513,8 +541,12 @@
           "name": "games_recorder_user_id_users_id_fk",
           "tableFrom": "games",
           "tableTo": "users",
-          "columnsFrom": ["recorder_user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "recorder_user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -643,8 +675,12 @@
           "name": "invitations_league_id_leagues_id_fk",
           "tableFrom": "invitations",
           "tableTo": "leagues",
-          "columnsFrom": ["league_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -652,8 +688,12 @@
           "name": "invitations_invited_by_users_id_fk",
           "tableFrom": "invitations",
           "tableTo": "users",
-          "columnsFrom": ["invited_by"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "invited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -740,8 +780,12 @@
           "name": "leagues_created_by_users_id_fk",
           "tableFrom": "leagues",
           "tableTo": "users",
-          "columnsFrom": ["created_by"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -869,8 +913,12 @@
           "name": "memberships_league_id_leagues_id_fk",
           "tableFrom": "memberships",
           "tableTo": "leagues",
-          "columnsFrom": ["league_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -878,8 +926,12 @@
           "name": "memberships_user_id_users_id_fk",
           "tableFrom": "memberships",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -956,8 +1008,12 @@
           "name": "notification_preferences_user_id_users_id_fk",
           "tableFrom": "notification_preferences",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1051,8 +1107,12 @@
           "name": "notifications_user_id_users_id_fk",
           "tableFrom": "notifications",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1060,8 +1120,12 @@
           "name": "notifications_league_id_leagues_id_fk",
           "tableFrom": "notifications",
           "tableTo": "leagues",
-          "columnsFrom": ["league_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1216,8 +1280,12 @@
           "name": "rating_snapshots_league_id_leagues_id_fk",
           "tableFrom": "rating_snapshots",
           "tableTo": "leagues",
-          "columnsFrom": ["league_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "league_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1225,8 +1293,12 @@
           "name": "rating_snapshots_user_id_users_id_fk",
           "tableFrom": "rating_snapshots",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1234,8 +1306,12 @@
           "name": "rating_snapshots_game_id_games_id_fk",
           "tableFrom": "rating_snapshots",
           "tableTo": "games",
-          "columnsFrom": ["game_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "game_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1327,8 +1403,12 @@
           "name": "user_accounts_user_id_users_id_fk",
           "tableFrom": "user_accounts",
           "tableTo": "users",
-          "columnsFrom": ["user_id"],
-          "columnsTo": ["id"],
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1418,87 +1498,130 @@
     "public.auth_provider": {
       "name": "auth_provider",
       "schema": "public",
-      "values": ["GOOGLE"]
+      "values": [
+        "GOOGLE"
+      ]
     },
     "public.confirmation_status": {
       "name": "confirmation_status",
       "schema": "public",
-      "values": ["UNCONFIRMED", "CONFIRMED", "DISPUTED"]
+      "values": [
+        "CONFIRMED",
+        "DISPUTED",
+        "UNCONFIRMED"
+      ]
     },
     "public.game_event_type": {
       "name": "game_event_type",
       "schema": "public",
       "values": [
+        "EXPEDITE_INTRODUCED",
+        "LET",
         "MATCH_INIT",
         "RALLY",
-        "LET",
+        "RETIREMENT",
         "SERVICE_DOUBT",
         "TIMEOUT",
-        "TOWEL_BREAK",
-        "EXPEDITE_INTRODUCED",
         "TIME_CAP_REACHED",
-        "RETIREMENT"
+        "TOWEL_BREAK"
       ]
     },
     "public.game_status": {
       "name": "game_status",
       "schema": "public",
       "values": [
-        "DRAFT",
-        "SCHEDULED",
-        "IN_PROGRESS",
-        "COMPLETE",
-        "WALKOVER",
-        "RETIRED",
-        "NO_CONTEST",
         "ABANDONED",
-        "VOID"
+        "COMPLETE",
+        "DRAFT",
+        "IN_PROGRESS",
+        "NO_CONTEST",
+        "RETIRED",
+        "SCHEDULED",
+        "VOID",
+        "WALKOVER"
       ]
     },
     "public.game_type": {
       "name": "game_type",
       "schema": "public",
-      "values": ["SINGLES", "DOUBLES", "CUTTHROAT"]
+      "values": [
+        "CUTTHROAT",
+        "DOUBLES",
+        "SINGLES"
+      ]
     },
     "public.invitation_status": {
       "name": "invitation_status",
       "schema": "public",
-      "values": ["PENDING", "ACCEPTED", "DECLINED", "EXPIRED", "REVOKED"]
+      "values": [
+        "ACCEPTED",
+        "DECLINED",
+        "EXPIRED",
+        "PENDING",
+        "REVOKED"
+      ]
     },
     "public.league_role": {
       "name": "league_role",
       "schema": "public",
-      "values": ["COMMISSIONER", "MANAGER", "PLAYER"]
+      "values": [
+        "COMMISSIONER",
+        "MANAGER",
+        "PLAYER"
+      ]
     },
     "public.league_visibility": {
       "name": "league_visibility",
       "schema": "public",
-      "values": ["PRIVATE", "DISCOVERABLE"]
+      "values": [
+        "DISCOVERABLE",
+        "PRIVATE"
+      ]
     },
     "public.membership_status": {
       "name": "membership_status",
       "schema": "public",
-      "values": ["INVITED", "ACTIVE", "INACTIVE", "REMOVED"]
+      "values": [
+        "ACTIVE",
+        "INACTIVE",
+        "INVITED",
+        "REMOVED"
+      ]
     },
     "public.participant_outcome": {
       "name": "participant_outcome",
       "schema": "public",
-      "values": ["WIN", "LOSS", "NO_RESULT"]
+      "values": [
+        "LOSS",
+        "NO_RESULT",
+        "WIN"
+      ]
     },
     "public.participant_side": {
       "name": "participant_side",
       "schema": "public",
-      "values": ["A", "B"]
+      "values": [
+        "A",
+        "B"
+      ]
     },
     "public.rating_scope": {
       "name": "rating_scope",
       "schema": "public",
-      "values": ["OVERALL", "SINGLES", "DOUBLES", "CUTTHROAT"]
+      "values": [
+        "CUTTHROAT",
+        "DOUBLES",
+        "OVERALL",
+        "SINGLES"
+      ]
     },
     "public.recording_mode": {
       "name": "recording_mode",
       "schema": "public",
-      "values": ["LIVE", "RETROACTIVE"]
+      "values": [
+        "LIVE",
+        "RETROACTIVE"
+      ]
     }
   },
   "schemas": {},

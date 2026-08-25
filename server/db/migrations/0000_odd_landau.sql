@@ -1,15 +1,15 @@
 CREATE TYPE "public"."auth_provider" AS ENUM('GOOGLE');--> statement-breakpoint
-CREATE TYPE "public"."confirmation_status" AS ENUM('UNCONFIRMED', 'CONFIRMED', 'DISPUTED');--> statement-breakpoint
-CREATE TYPE "public"."game_event_type" AS ENUM('MATCH_INIT', 'RALLY', 'LET', 'SERVICE_DOUBT', 'TIMEOUT', 'TOWEL_BREAK', 'EXPEDITE_INTRODUCED', 'TIME_CAP_REACHED', 'RETIREMENT');--> statement-breakpoint
-CREATE TYPE "public"."game_status" AS ENUM('DRAFT', 'SCHEDULED', 'IN_PROGRESS', 'COMPLETE', 'WALKOVER', 'RETIRED', 'NO_CONTEST', 'ABANDONED', 'VOID');--> statement-breakpoint
-CREATE TYPE "public"."game_type" AS ENUM('SINGLES', 'DOUBLES', 'CUTTHROAT');--> statement-breakpoint
-CREATE TYPE "public"."invitation_status" AS ENUM('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED', 'REVOKED');--> statement-breakpoint
+CREATE TYPE "public"."confirmation_status" AS ENUM('CONFIRMED', 'DISPUTED', 'UNCONFIRMED');--> statement-breakpoint
+CREATE TYPE "public"."game_event_type" AS ENUM('EXPEDITE_INTRODUCED', 'LET', 'MATCH_INIT', 'RALLY', 'RETIREMENT', 'SERVICE_DOUBT', 'TIMEOUT', 'TIME_CAP_REACHED', 'TOWEL_BREAK');--> statement-breakpoint
+CREATE TYPE "public"."game_status" AS ENUM('ABANDONED', 'COMPLETE', 'DRAFT', 'IN_PROGRESS', 'NO_CONTEST', 'RETIRED', 'SCHEDULED', 'VOID', 'WALKOVER');--> statement-breakpoint
+CREATE TYPE "public"."game_type" AS ENUM('CUTTHROAT', 'DOUBLES', 'SINGLES');--> statement-breakpoint
+CREATE TYPE "public"."invitation_status" AS ENUM('ACCEPTED', 'DECLINED', 'EXPIRED', 'PENDING', 'REVOKED');--> statement-breakpoint
 CREATE TYPE "public"."league_role" AS ENUM('COMMISSIONER', 'MANAGER', 'PLAYER');--> statement-breakpoint
-CREATE TYPE "public"."league_visibility" AS ENUM('PRIVATE', 'DISCOVERABLE');--> statement-breakpoint
-CREATE TYPE "public"."membership_status" AS ENUM('INVITED', 'ACTIVE', 'INACTIVE', 'REMOVED');--> statement-breakpoint
-CREATE TYPE "public"."participant_outcome" AS ENUM('WIN', 'LOSS', 'NO_RESULT');--> statement-breakpoint
+CREATE TYPE "public"."league_visibility" AS ENUM('DISCOVERABLE', 'PRIVATE');--> statement-breakpoint
+CREATE TYPE "public"."membership_status" AS ENUM('ACTIVE', 'INACTIVE', 'INVITED', 'REMOVED');--> statement-breakpoint
+CREATE TYPE "public"."participant_outcome" AS ENUM('LOSS', 'NO_RESULT', 'WIN');--> statement-breakpoint
 CREATE TYPE "public"."participant_side" AS ENUM('A', 'B');--> statement-breakpoint
-CREATE TYPE "public"."rating_scope" AS ENUM('OVERALL', 'SINGLES', 'DOUBLES', 'CUTTHROAT');--> statement-breakpoint
+CREATE TYPE "public"."rating_scope" AS ENUM('CUTTHROAT', 'DOUBLES', 'OVERALL', 'SINGLES');--> statement-breakpoint
 CREATE TYPE "public"."recording_mode" AS ENUM('LIVE', 'RETROACTIVE');--> statement-breakpoint
 CREATE TABLE "game_events" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
