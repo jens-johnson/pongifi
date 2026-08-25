@@ -24,6 +24,13 @@
 export default {
   extends: ['@jens-johnson/style-guide/stylelint'],
 
+  /**
+   * The shared config declares the same ignores, but stylelint resolves an extended config's `ignoreFiles` relative to
+   * that config's own directory, which puts them inside node_modules. Declaring them here anchors them to the repo
+   * root, so build output and coverage reports do not get linted as source
+   */
+  ignoreFiles: ['.nuxt/**', '.output/**', 'node_modules/**', 'dist/**', 'coverage/**'],
+
   /* pongifi relaxations on top of the shared base; each is a deliberate consequence of the design-token system */
   rules: {
     /* OKLCH is current and well-supported */
