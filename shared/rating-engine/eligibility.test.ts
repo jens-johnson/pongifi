@@ -19,7 +19,7 @@
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import { describe, expect, it } from 'vitest';
 
-import { EConfirmationStatus, EGameStatus } from '#shared/domain';
+import { ConfirmationStatus, GameStatus } from '#shared/domain';
 
 import { feedsPointStatistics, feedsRallyStatistics, feedsRatings, feedsWinLoss } from './eligibility';
 import type { IGameEligibility } from './types';
@@ -33,8 +33,8 @@ import type { IGameEligibility } from './types';
  */
 function facts(overrides: Partial<IGameEligibility> = {}): IGameEligibility {
   return {
-    status: EGameStatus.COMPLETE,
-    confirmationStatus: EConfirmationStatus.CONFIRMED,
+    status: GameStatus.COMPLETE,
+    confirmationStatus: ConfirmationStatus.CONFIRMED,
     hasGuest: false,
     ratingEnabled: true,
     isLiveRecorded: true,
@@ -68,20 +68,20 @@ describe(getTestFileName(import.meta.url), (): void => {
         facts({ isLiveRecorded: false }),
         [true, true, true, false],
       ],
-      ['a walkover feeds win-loss only', facts({ status: EGameStatus.WALKOVER }), [true, false, false, false]],
+      ['a walkover feeds win-loss only', facts({ status: GameStatus.WALKOVER }), [true, false, false, false]],
       [
         'a retirement feeds win-loss, ratings, and the points played before it',
-        facts({ status: EGameStatus.RETIRED }),
+        facts({ status: GameStatus.RETIRED }),
         [true, true, true, true],
       ],
       [
         'an unconfirmed game feeds nothing yet',
-        facts({ confirmationStatus: EConfirmationStatus.UNCONFIRMED }),
+        facts({ confirmationStatus: ConfirmationStatus.UNCONFIRMED }),
         [false, false, false, false],
       ],
       [
         'a disputed game feeds nothing',
-        facts({ confirmationStatus: EConfirmationStatus.DISPUTED }),
+        facts({ confirmationStatus: ConfirmationStatus.DISPUTED }),
         [false, false, false, false],
       ],
       [
@@ -99,12 +99,12 @@ describe(getTestFileName(import.meta.url), (): void => {
         facts({ isUnratedOverride: true }),
         [true, false, true, true],
       ],
-      ['a no contest feeds nothing', facts({ status: EGameStatus.NO_CONTEST }), [false, false, false, false]],
-      ['an abandoned game feeds nothing', facts({ status: EGameStatus.ABANDONED }), [false, false, false, false]],
-      ['a void game feeds nothing', facts({ status: EGameStatus.VOID }), [false, false, false, false]],
+      ['a no contest feeds nothing', facts({ status: GameStatus.NO_CONTEST }), [false, false, false, false]],
+      ['an abandoned game feeds nothing', facts({ status: GameStatus.ABANDONED }), [false, false, false, false]],
+      ['a void game feeds nothing', facts({ status: GameStatus.VOID }), [false, false, false, false]],
       [
         'a game still in progress feeds nothing',
-        facts({ status: EGameStatus.IN_PROGRESS }),
+        facts({ status: GameStatus.IN_PROGRESS }),
         [false, false, false, false],
       ],
     ])('%s', (_label, eligibility, expected): void => {
@@ -115,8 +115,8 @@ describe(getTestFileName(import.meta.url), (): void => {
       const combinations = [
         facts(),
         facts({ isLiveRecorded: false }),
-        facts({ status: EGameStatus.WALKOVER }),
-        facts({ confirmationStatus: EConfirmationStatus.DISPUTED }),
+        facts({ status: GameStatus.WALKOVER }),
+        facts({ confirmationStatus: ConfirmationStatus.DISPUTED }),
       ];
 
       for (const eligibility of combinations) {

@@ -19,8 +19,8 @@
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import { describe, expect, it } from 'vitest';
 
-import { EConfirmationStatus, EGameStatus, EParticipantOutcome, ERatingScope } from '#shared/domain';
-import { EGameType, ESide } from '#shared/rules-engine';
+import { ConfirmationStatus, GameStatus, ParticipantOutcome, RatingScope } from '#shared/domain';
+import { GameType, Side } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
 import { ELEVATED_K_FACTOR, ESTABLISHED_K_FACTOR, PROVISIONAL_K_FACTOR, STARTING_RATING } from './constants';
@@ -54,7 +54,7 @@ function player(participantId: string, score: number, overrides: Partial<IRatedP
  * @param participants - The players
  * @returns A rateable input
  */
-function gameOf(gameType: EGameType, participants: IRatedParticipant[]): IRateGameInput {
+function gameOf(gameType: GameType, participants: IRatedParticipant[]): IRateGameInput {
   return {
     gameType,
     participants,
@@ -84,8 +84,8 @@ function deltaFor(input: IRateGameInput, participantId: string): number {
  */
 function eligibility(overrides: Partial<IGameEligibility> = {}): IGameEligibility {
   return {
-    status: EGameStatus.COMPLETE,
-    confirmationStatus: EConfirmationStatus.CONFIRMED,
+    status: GameStatus.COMPLETE,
+    confirmationStatus: ConfirmationStatus.CONFIRMED,
     hasGuest: false,
     ratingEnabled: true,
     isLiveRecorded: true,
@@ -124,9 +124,9 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(rateGame), (): void => {
     describe('singles', (): void => {
       it('behaves exactly like plain elo at the minimum winning margin (VIII.II)', (): void => {
-        const input = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A }),
-          player('loser', 9, { side: ESide.B }),
+        const input = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A }),
+          player('loser', 9, { side: Side.B }),
         ]);
 
         /* Equal ratings, so the expectation is a half and the exchange is half the base K */
@@ -135,26 +135,26 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('moves ratings further on a wider margin (VIII.II)', (): void => {
-        const narrow = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A }),
-          player('loser', 9, { side: ESide.B }),
+        const narrow = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A }),
+          player('loser', 9, { side: Side.B }),
         ]);
-        const wide = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A }),
-          player('loser', 3, { side: ESide.B }),
+        const wide = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A }),
+          player('loser', 3, { side: Side.B }),
         ]);
 
         expect(deltaFor(wide, 'winner')).toBeGreaterThan(deltaFor(narrow, 'winner'));
       });
 
       it('damps the margin bonus as the winner’s rating advantage grows (VIII.II)', (): void => {
-        const evenlyMatched = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A }),
-          player('loser', 3, { side: ESide.B }),
+        const evenlyMatched = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A }),
+          player('loser', 3, { side: Side.B }),
         ]);
-        const runningItUp = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A, rating: 1800 }),
-          player('loser', 3, { side: ESide.B, rating: 1200 }),
+        const runningItUp = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A, rating: 1800 }),
+          player('loser', 3, { side: Side.B, rating: 1200 }),
         ]);
         const favouriteMultiplier =
           deltaFor(runningItUp, 'winner') / (1 - expectedScore(1800, 1200)) / ESTABLISHED_K_FACTOR;
@@ -164,18 +164,18 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('never moves a rating by more than twice the base k (VIII.II)', (): void => {
-        const blowout = gameOf(EGameType.SINGLES, [
-          player('winner', 21, { side: ESide.A, rating: 1000 }),
-          player('loser', 0, { side: ESide.B, rating: 1900 }),
+        const blowout = gameOf(GameType.SINGLES, [
+          player('winner', 21, { side: Side.A, rating: 1000 }),
+          player('loser', 0, { side: Side.B, rating: 1900 }),
         ]);
 
         expect(Math.abs(deltaFor(blowout, 'winner'))).toBeLessThanOrEqual(ESTABLISHED_K_FACTOR * 2);
       });
 
       it('keeps the exchange zero-sum when both players share a k tier (VIII.II)', (): void => {
-        const input = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A, rating: 1340 }),
-          player('loser', 4, { side: ESide.B, rating: 1105 }),
+        const input = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A, rating: 1340 }),
+          player('loser', 4, { side: Side.B, rating: 1105 }),
         ]);
         const total = rateGame(input).reduce((sum, change) => sum + change.delta, 0);
 
@@ -183,13 +183,13 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('rewards an underdog more than a favourite for the same win (VIII.II)', (): void => {
-        const underdog = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A, rating: 1000 }),
-          player('loser', 6, { side: ESide.B, rating: 1500 }),
+        const underdog = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A, rating: 1000 }),
+          player('loser', 6, { side: Side.B, rating: 1500 }),
         ]);
-        const favourite = gameOf(EGameType.SINGLES, [
-          player('winner', 11, { side: ESide.A, rating: 1500 }),
-          player('loser', 6, { side: ESide.B, rating: 1000 }),
+        const favourite = gameOf(GameType.SINGLES, [
+          player('winner', 11, { side: Side.A, rating: 1500 }),
+          player('loser', 6, { side: Side.B, rating: 1000 }),
         ]);
 
         expect(deltaFor(underdog, 'winner')).toBeGreaterThan(deltaFor(favourite, 'winner'));
@@ -199,9 +199,9 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       it('still moves ratings when a retirement leaves no winning margin (VIII.VII)', (): void => {
         /* Taken literally the multiplier is log(1)/log(3) = 0 here, which would move nobody */
-        const retiredLevel = gameOf(EGameType.SINGLES, [
-          player('stayed', 5, { side: ESide.A, outcome: EParticipantOutcome.WIN }),
-          player('withdrew', 5, { side: ESide.B, outcome: EParticipantOutcome.LOSS }),
+        const retiredLevel = gameOf(GameType.SINGLES, [
+          player('stayed', 5, { side: Side.A, outcome: ParticipantOutcome.WIN }),
+          player('withdrew', 5, { side: Side.B, outcome: ParticipantOutcome.LOSS }),
         ]);
 
         expect(deltaFor(retiredLevel, 'stayed')).toBeCloseTo(ESTABLISHED_K_FACTOR * 0.5, 10);
@@ -209,9 +209,9 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('credits the side that stayed even when the retiring player was ahead (III.II.X.II)', (): void => {
-        const input = gameOf(EGameType.SINGLES, [
-          player('stayed', 3, { side: ESide.A, outcome: EParticipantOutcome.WIN }),
-          player('withdrew', 9, { side: ESide.B, outcome: EParticipantOutcome.LOSS }),
+        const input = gameOf(GameType.SINGLES, [
+          player('stayed', 3, { side: Side.A, outcome: ParticipantOutcome.WIN }),
+          player('withdrew', 9, { side: Side.B, outcome: ParticipantOutcome.LOSS }),
         ]);
 
         expect(deltaFor(input, 'stayed')).toBeGreaterThan(0);
@@ -219,7 +219,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('refuses a field that does not match the game type', (): void => {
-        expect(() => rateGame(gameOf(EGameType.SINGLES, [player('solo', 11, { side: ESide.A })]))).toThrow(
+        expect(() => rateGame(gameOf(GameType.SINGLES, [player('solo', 11, { side: Side.A })]))).toThrow(
           /needs 2 players/,
         );
       });
@@ -227,18 +227,18 @@ describe(getTestFileName(import.meta.url), (): void => {
       it('refuses a field stacked entirely on one side', (): void => {
         expect(() =>
           rateGame(
-            gameOf(EGameType.DOUBLES, [
-              player('a1', 11, { side: ESide.A }),
-              player('a2', 11, { side: ESide.A }),
-              player('a3', 9, { side: ESide.A }),
-              player('a4', 9, { side: ESide.A }),
+            gameOf(GameType.DOUBLES, [
+              player('a1', 11, { side: Side.A }),
+              player('a2', 11, { side: Side.A }),
+              player('a3', 9, { side: Side.A }),
+              player('a4', 9, { side: Side.A }),
             ]),
           ),
         ).toThrow(/players on both sides/);
       });
 
       it('refuses a player with no side', (): void => {
-        expect(() => rateGame(gameOf(EGameType.SINGLES, [player('a', 11, { side: ESide.A }), player('b', 9)]))).toThrow(
+        expect(() => rateGame(gameOf(GameType.SINGLES, [player('a', 11, { side: Side.A }), player('b', 9)]))).toThrow(
           /has no side/,
         );
       });
@@ -248,11 +248,11 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     describe('doubles', (): void => {
       it('rates each player against the mean of the opposing pair (VIII.III)', (): void => {
-        const paired = gameOf(EGameType.DOUBLES, [
-          player('a1', 11, { side: ESide.A, rating: 1200 }),
-          player('a2', 11, { side: ESide.A, rating: 1200 }),
-          player('b1', 9, { side: ESide.B, rating: 1000 }),
-          player('b2', 9, { side: ESide.B, rating: 1400 }),
+        const paired = gameOf(GameType.DOUBLES, [
+          player('a1', 11, { side: Side.A, rating: 1200 }),
+          player('a2', 11, { side: Side.A, rating: 1200 }),
+          player('b1', 9, { side: Side.B, rating: 1000 }),
+          player('b2', 9, { side: Side.B, rating: 1400 }),
         ]);
 
         /* The opposing pair averages 1200, so this is an even contest despite neither opponent being rated 1200 */
@@ -260,22 +260,22 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('gives both partners the full delta rather than a weighted share (VIII.III)', (): void => {
-        const input = gameOf(EGameType.DOUBLES, [
-          player('strong', 11, { side: ESide.A, rating: 1600 }),
-          player('weak', 11, { side: ESide.A, rating: 1000 }),
-          player('b1', 8, { side: ESide.B }),
-          player('b2', 8, { side: ESide.B }),
+        const input = gameOf(GameType.DOUBLES, [
+          player('strong', 11, { side: Side.A, rating: 1600 }),
+          player('weak', 11, { side: Side.A, rating: 1000 }),
+          player('b1', 8, { side: Side.B }),
+          player('b2', 8, { side: Side.B }),
         ]);
 
         expect(deltaFor(input, 'strong')).toBeCloseTo(deltaFor(input, 'weak'), 10);
       });
 
       it('costs a strong player heavily for losing alongside a weak partner (VIII.III)', (): void => {
-        const carried = gameOf(EGameType.DOUBLES, [
-          player('strong', 8, { side: ESide.A, rating: 1600 }),
-          player('weak', 8, { side: ESide.A, rating: 1000 }),
-          player('b1', 11, { side: ESide.B }),
-          player('b2', 11, { side: ESide.B }),
+        const carried = gameOf(GameType.DOUBLES, [
+          player('strong', 8, { side: Side.A, rating: 1600 }),
+          player('weak', 8, { side: Side.A, rating: 1000 }),
+          player('b1', 11, { side: Side.B }),
+          player('b2', 11, { side: Side.B }),
         ]);
 
         /* The pair averages 1300 against 1200, so the loss is an upset and both partners wear it in full */
@@ -287,34 +287,34 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     describe('cutthroat', (): void => {
       it('rates on finishing order and ignores the margin entirely (VIII.IV)', (): void => {
-        const narrow = gameOf(EGameType.CUTTHROAT, [player('first', 7), player('second', 6), player('third', 5)]);
-        const wide = gameOf(EGameType.CUTTHROAT, [player('first', 7), player('second', 1), player('third', 0)]);
+        const narrow = gameOf(GameType.CUTTHROAT, [player('first', 7), player('second', 6), player('third', 5)]);
+        const wide = gameOf(GameType.CUTTHROAT, [player('first', 7), player('second', 1), player('third', 0)]);
 
         expect(deltaFor(narrow, 'first')).toBeCloseTo(deltaFor(wide, 'first'), 10);
       });
 
       it('carries roughly one singles game of volatility, not two (VIII.IV)', (): void => {
-        const input = gameOf(EGameType.CUTTHROAT, [player('first', 7), player('second', 4), player('third', 2)]);
+        const input = gameOf(GameType.CUTTHROAT, [player('first', 7), player('second', 4), player('third', 2)]);
 
         /* Two comparisons, each at half K, both won against equal ratings */
         expect(deltaFor(input, 'first')).toBeCloseTo(ESTABLISHED_K_FACTOR * 0.5, 10);
       });
 
       it('leaves the middle finisher roughly level between equals (VIII.IV)', (): void => {
-        const input = gameOf(EGameType.CUTTHROAT, [player('first', 7), player('second', 4), player('third', 2)]);
+        const input = gameOf(GameType.CUTTHROAT, [player('first', 7), player('second', 4), player('third', 2)]);
 
         expect(deltaFor(input, 'second')).toBeCloseTo(0, 10);
         expect(deltaFor(input, 'third')).toBeCloseTo(-ESTABLISHED_K_FACTOR * 0.5, 10);
       });
 
       it('splits the comparison when two players share a score (VIII.IV)', (): void => {
-        const input = gameOf(EGameType.CUTTHROAT, [player('first', 7), player('tiedA', 4), player('tiedB', 4)]);
+        const input = gameOf(GameType.CUTTHROAT, [player('first', 7), player('tiedA', 4), player('tiedB', 4)]);
 
         expect(deltaFor(input, 'tiedA')).toBeCloseTo(deltaFor(input, 'tiedB'), 10);
       });
 
       it('is zero-sum across the three players when they share a k tier', (): void => {
-        const input = gameOf(EGameType.CUTTHROAT, [
+        const input = gameOf(GameType.CUTTHROAT, [
           player('first', 7, { rating: 1310 }),
           player('second', 5, { rating: 1190 }),
           player('third', 2, { rating: 1255 }),
@@ -325,9 +325,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       it('refuses a field that is not three players', (): void => {
-        expect(() => rateGame(gameOf(EGameType.CUTTHROAT, [player('a', 7), player('b', 4)]))).toThrow(
-          /needs 3 players/,
-        );
+        expect(() => rateGame(gameOf(GameType.CUTTHROAT, [player('a', 7), player('b', 4)]))).toThrow(/needs 3 players/);
       });
     });
 
@@ -335,9 +333,9 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     describe('provisional status', (): void => {
       it('moves a provisional rating faster than an established one (VIII.I)', (): void => {
-        const provisional = gameOf(EGameType.SINGLES, [
-          player('newcomer', 11, { side: ESide.A, gamesPlayed: 0 }),
-          player('regular', 9, { side: ESide.B }),
+        const provisional = gameOf(GameType.SINGLES, [
+          player('newcomer', 11, { side: Side.A, gamesPlayed: 0 }),
+          player('regular', 9, { side: Side.B }),
         ]);
 
         expect(deltaFor(provisional, 'newcomer')).toBeCloseTo(PROVISIONAL_K_FACTOR * 0.5, 10);
@@ -346,9 +344,9 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       it('leaves provisional status on the game that reaches the threshold (VIII.I)', (): void => {
         const [newcomer] = rateGame(
-          gameOf(EGameType.SINGLES, [
-            player('newcomer', 11, { side: ESide.A, gamesPlayed: 9 }),
-            player('regular', 9, { side: ESide.B }),
+          gameOf(GameType.SINGLES, [
+            player('newcomer', 11, { side: Side.A, gamesPlayed: 9 }),
+            player('regular', 9, { side: Side.B }),
           ]),
         );
 
@@ -378,7 +376,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       overrides: Partial<IGameEligibility> = {},
     ): IRatableGame => ({
       gameId,
-      gameType: EGameType.SINGLES,
+      gameType: GameType.SINGLES,
       winningMargin: 2,
       provisionalGames: 10,
       eligibility: eligibility(overrides),
@@ -388,30 +386,30 @@ describe(getTestFileName(import.meta.url), (): void => {
           score: 11,
           rating: 0,
           gamesPlayed: 0,
-          side: ESide.A,
+          side: Side.A,
         },
         {
           participantId: loserId,
           score: 6,
           rating: 0,
           gamesPlayed: 0,
-          side: ESide.B,
+          side: Side.B,
         },
       ],
     });
 
     it('starts everyone on the opening rating', (): void => {
-      const [first] = replayRatings([singlesGame('g1', 'ada', 'bo')], ERatingScope.OVERALL);
+      const [first] = replayRatings([singlesGame('g1', 'ada', 'bo')], RatingScope.OVERALL);
 
       expect(first!.ratingBefore).toBe(STARTING_RATING);
-      expect(first!.scope).toBe(ERatingScope.OVERALL);
+      expect(first!.scope).toBe(RatingScope.OVERALL);
       expect(first!.gameId).toBe('g1');
     });
 
     it('carries a rating forward from one game to the next', (): void => {
       const drafts = replayRatings(
         [singlesGame('g1', 'ada', 'bo'), singlesGame('g2', 'ada', 'bo')],
-        ERatingScope.OVERALL,
+        RatingScope.OVERALL,
       );
       const adaFirst = drafts.find((draft) => draft.gameId === 'g1' && draft.participantId === 'ada')!;
       const adaSecond = drafts.find((draft) => draft.gameId === 'g2' && draft.participantId === 'ada')!;
@@ -423,19 +421,19 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('produces identical output for identical input, so recomputation is reproducible (VIII.VIII)', (): void => {
       const games = [singlesGame('g1', 'ada', 'bo'), singlesGame('g2', 'bo', 'cy'), singlesGame('g3', 'cy', 'ada')];
 
-      expect(replayRatings(games, ERatingScope.OVERALL)).toEqual(replayRatings(games, ERatingScope.OVERALL));
+      expect(replayRatings(games, RatingScope.OVERALL)).toEqual(replayRatings(games, RatingScope.OVERALL));
     });
 
     it('is path-dependent; reordering the same games gives a different answer (VIII.VIII)', (): void => {
       const games = [singlesGame('g1', 'ada', 'bo'), singlesGame('g2', 'bo', 'cy'), singlesGame('g3', 'cy', 'ada')];
       const reversed = [...games].reverse();
 
-      expect(replayRatings(games, ERatingScope.OVERALL)).not.toEqual(replayRatings(reversed, ERatingScope.OVERALL));
+      expect(replayRatings(games, RatingScope.OVERALL)).not.toEqual(replayRatings(reversed, RatingScope.OVERALL));
     });
 
     it('resumes from a seed, which is how a rebuild starts partway through a history', (): void => {
       const seed = new Map([['ada', { rating: 1400, gamesPlayed: 20 }]]);
-      const [first] = replayRatings([singlesGame('g1', 'ada', 'bo')], ERatingScope.OVERALL, seed);
+      const [first] = replayRatings([singlesGame('g1', 'ada', 'bo')], RatingScope.OVERALL, seed);
 
       expect(first!.ratingBefore).toBe(1400);
       expect(first!.gamesPlayed).toBe(21);
@@ -444,10 +442,10 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('skips a game that feeds nothing, without consuming a rating or a games-played count', (): void => {
       const drafts = replayRatings(
         [
-          singlesGame('g1', 'ada', 'bo', { confirmationStatus: EConfirmationStatus.UNCONFIRMED }),
+          singlesGame('g1', 'ada', 'bo', { confirmationStatus: ConfirmationStatus.UNCONFIRMED }),
           singlesGame('g2', 'ada', 'bo'),
         ],
-        ERatingScope.OVERALL,
+        RatingScope.OVERALL,
       );
 
       expect(drafts.map((draft) => draft.gameId)).toEqual(['g2', 'g2']);

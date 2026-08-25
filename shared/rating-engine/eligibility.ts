@@ -16,7 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { EConfirmationStatus, EGameStatus } from '#shared/domain';
+import { ConfirmationStatus, GameStatus } from '#shared/domain';
 
 import type { IGameEligibility } from './types';
 
@@ -25,7 +25,7 @@ import type { IGameEligibility } from './types';
  * @internal
  * @constant
  */
-const PLAYED_STATUSES = new Set<EGameStatus>([EGameStatus.COMPLETE, EGameStatus.RETIRED]);
+const PLAYED_STATUSES = new Set<GameStatus>([GameStatus.COMPLETE, GameStatus.RETIRED]);
 
 /**
  * Whether a result has been accepted. An unconfirmed or disputed game feeds nothing at all until it is settled, which
@@ -36,7 +36,7 @@ const PLAYED_STATUSES = new Set<EGameStatus>([EGameStatus.COMPLETE, EGameStatus.
  * @returns Whether the result counts yet
  */
 function isSettled(eligibility: IGameEligibility): boolean {
-  return eligibility.confirmationStatus === EConfirmationStatus.CONFIRMED;
+  return eligibility.confirmationStatus === ConfirmationStatus.CONFIRMED;
 }
 
 /**
@@ -49,7 +49,7 @@ function isSettled(eligibility: IGameEligibility): boolean {
  */
 export function feedsWinLoss(eligibility: IGameEligibility): boolean {
   return (
-    isSettled(eligibility) && (PLAYED_STATUSES.has(eligibility.status) || eligibility.status === EGameStatus.WALKOVER)
+    isSettled(eligibility) && (PLAYED_STATUSES.has(eligibility.status) || eligibility.status === GameStatus.WALKOVER)
   );
 }
 

@@ -20,8 +20,8 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { EParticipantOutcome, type ERatingScope } from '#shared/domain';
-import { EGameType, ESide } from '#shared/rules-engine';
+import { ParticipantOutcome, type RatingScope } from '#shared/domain';
+import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import {
@@ -135,8 +135,8 @@ function changeFor(participant: IRatedParticipant, delta: number, provisionalGam
  * @throws Error when a player carries no side, or a side is empty
  * @returns The players on each side
  */
-function bySide(participants: IRatedParticipant[]): Record<ESide, IRatedParticipant[]> {
-  const sides: Record<ESide, IRatedParticipant[]> = { [ESide.A]: [], [ESide.B]: [] };
+function bySide(participants: IRatedParticipant[]): Record<Side, IRatedParticipant[]> {
+  const sides: Record<Side, IRatedParticipant[]> = { [Side.A]: [], [Side.B]: [] };
 
   for (const participant of participants) {
     if (!participant.side) {
@@ -146,7 +146,7 @@ function bySide(participants: IRatedParticipant[]): Record<ESide, IRatedParticip
     sides[participant.side].push(participant);
   }
 
-  if (!sides[ESide.A].length || !sides[ESide.B].length) {
+  if (!sides[Side.A].length || !sides[Side.B].length) {
     throw new Error('A singles or doubles game needs players on both sides.');
   }
 
@@ -180,23 +180,23 @@ function sideRating(side: IRatedParticipant[]): number {
 function rateSided(input: IRateGameInput): IRatingChange[] {
   const sides = bySide(input.participants);
   const scores = {
-    [ESide.A]: sides[ESide.A][0]!.score,
-    [ESide.B]: sides[ESide.B][0]!.score,
+    [Side.A]: sides[Side.A][0]!.score,
+    [Side.B]: sides[Side.B][0]!.score,
   };
   const ratings = {
-    [ESide.A]: sideRating(sides[ESide.A]),
-    [ESide.B]: sideRating(sides[ESide.B]),
+    [Side.A]: sideRating(sides[Side.A]),
+    [Side.B]: sideRating(sides[Side.B]),
   };
 
   /**
    * A retirement credits the side that stayed regardless of the scoreboard, so a declared outcome wins over the score.
    * Table tennis has no draws, so where no outcome is declared the higher score took it
    */
-  const declared = input.participants.find((participant) => participant.outcome === EParticipantOutcome.WIN)?.side;
-  const winner = declared ?? (scores[ESide.A] > scores[ESide.B] ? ESide.A : ESide.B);
-  const loser = winner === ESide.A ? ESide.B : ESide.A;
+  const declared = input.participants.find((participant) => participant.outcome === ParticipantOutcome.WIN)?.side;
+  const winner = declared ?? (scores[Side.A] > scores[Side.B] ? Side.A : Side.B);
+  const loser = winner === Side.A ? Side.B : Side.A;
   const multiplier = marginMultiplier(
-    Math.abs(scores[ESide.A] - scores[ESide.B]),
+    Math.abs(scores[Side.A] - scores[Side.B]),
     input.winningMargin,
     ratings[winner],
     ratings[loser],
@@ -204,7 +204,7 @@ function rateSided(input: IRateGameInput): IRatingChange[] {
 
   return input.participants.map((participant) => {
     const side = participant.side!;
-    const opposing = side === ESide.A ? ESide.B : ESide.A;
+    const opposing = side === Side.A ? Side.B : Side.A;
     const actual = Number(side === winner);
     const expected = expectedScore(ratings[side], ratings[opposing]);
     const base = kFactor(participant.rating, participant.gamesPlayed, input.provisionalGames);
@@ -253,7 +253,7 @@ function rateCutthroat(input: IRateGameInput): IRatingChange[] {
  * @returns Each player's rating change
  */
 export function rateGame(input: IRateGameInput): IRatingChange[] {
-  if (input.gameType === EGameType.CUTTHROAT) {
+  if (input.gameType === GameType.CUTTHROAT) {
     if (input.participants.length !== 3) {
       throw new Error(`A cutthroat game needs 3 players; received ${input.participants.length}.`);
     }
@@ -261,7 +261,7 @@ export function rateGame(input: IRateGameInput): IRatingChange[] {
     return rateCutthroat(input);
   }
 
-  const expected = input.gameType === EGameType.SINGLES ? 2 : 4;
+  const expected = input.gameType === GameType.SINGLES ? 2 : 4;
 
   if (input.participants.length !== expected) {
     throw new Error(`A ${input.gameType} game needs ${expected} players; received ${input.participants.length}.`);
@@ -284,7 +284,7 @@ export function rateGame(input: IRateGameInput): IRatingChange[] {
  */
 export function replayRatings(
   games: IRatableGame[],
-  scope: ERatingScope,
+  scope: RatingScope,
   seed: Map<string, { rating: number; gamesPlayed: number }> = new Map(),
 ): IRatingSnapshotDraft[] {
   const standing = new Map(seed);
