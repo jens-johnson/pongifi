@@ -16,31 +16,8 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { EGameCreator, EResultRecorder } from '#shared/domain';
-import type { EGameType } from '#shared/rules-engine';
-
-/**
- * The gameplay half of a league's settings; these determine how a game is created and scored (IV.II)
- * @public
- */
-export interface ILeagueGameplaySettings {
-  /* Which formats the league plays; at least one */
-  allowedGameTypes: EGameType[];
-  /* The score a game is played to, per game type */
-  targetScore: Record<EGameType, number>;
-  /* The lead required to win */
-  winningMargin: number;
-  /* Points between changes of service before deuce */
-  serviceInterval: number;
-  /* Best-of-N for singles and doubles; cutthroat is always a single game */
-  matchFormat: number;
-  /* Minutes before a cutthroat game is capped; zero disables the cap */
-  cutthroatTimeCap: number;
-  /* Whether the expedite system may be introduced */
-  expediteEnabled: boolean;
-  /* Minutes a player may be late before a walkover is recorded */
-  walkoverGracePeriod: number;
-}
+import type { GameCreator, ResultRecorder } from '#shared/domain';
+import type { GameType } from '#shared/rules-engine';
 
 /**
  * The administration half of a league's settings; these are league-wide by definition and can never be overridden by a
@@ -48,20 +25,56 @@ export interface ILeagueGameplaySettings {
  * @public
  */
 export interface ILeagueAdministrationSettings {
-  /* Who may create a game */
-  whoCanCreateGames: EGameCreator;
-  /* Who may record a result */
-  whoCanRecordResults: EResultRecorder;
-  /* Hours after completion during which a result may be amended */
-  resultAmendmentWindow: number;
-  /* Whether games in this league move ratings at all */
-  ratingEnabled: boolean;
   /* Rated games a player must complete before their rating leaves provisional status */
   provisionalGames: number;
+
+  /* Whether games in this league move ratings at all */
+  ratingEnabled: boolean;
+
   /* Whether a recorded result needs the other participants to accept it */
   requireConfirmation: boolean;
+
+  /* Hours after completion during which a result may be amended */
+  resultAmendmentWindow: number;
+
   /* Hours a result stays unconfirmed before it is accepted automatically */
   resultConfirmationWindow: number;
+
+  /* Who may create a game */
+  whoCanCreateGames: GameCreator;
+
+  /* Who may record a result */
+  whoCanRecordResults: ResultRecorder;
+}
+
+/**
+ * The gameplay half of a league's settings; these determine how a game is created and scored (IV.II)
+ * @public
+ */
+export interface ILeagueGameplaySettings {
+  /* Which formats the league plays; at least one */
+  allowedGameTypes: GameType[];
+
+  /* Minutes before a cutthroat game is capped; zero disables the cap */
+  cutthroatTimeCap: number;
+
+  /* Whether the expedite system may be introduced */
+  expediteEnabled: boolean;
+
+  /* Best-of-N for singles and doubles; cutthroat is always a single game */
+  matchFormat: number;
+
+  /* Points between changes of service before deuce */
+  serviceInterval: number;
+
+  /* The score a game is played to, per game type */
+  targetScore: Record<GameType, number>;
+
+  /* Minutes a player may be late before a walkover is recorded */
+  walkoverGracePeriod: number;
+
+  /* The lead required to win */
+  winningMargin: number;
 }
 
 /**
@@ -69,7 +82,7 @@ export interface ILeagueAdministrationSettings {
  * discovery queries filter on it, and a JSON field cannot be indexed as cheaply
  * @public
  */
-export type TLeagueSettings = ILeagueGameplaySettings & ILeagueAdministrationSettings;
+export type TLeagueSettings = ILeagueAdministrationSettings & ILeagueGameplaySettings;
 
 /**
  * The subset of settings a single game may override at creation time (IV.V). Nothing administrative appears here, and
@@ -77,7 +90,7 @@ export type TLeagueSettings = ILeagueGameplaySettings & ILeagueAdministrationSet
  * @public
  */
 export type TGameSettingsOverride = Partial<
-  Pick<ILeagueGameplaySettings, 'winningMargin' | 'serviceInterval' | 'matchFormat' | 'cutthroatTimeCap'> & {
+  Pick<ILeagueGameplaySettings, 'cutthroatTimeCap' | 'matchFormat' | 'serviceInterval' | 'winningMargin'> & {
     targetScore: number;
   }
 >;

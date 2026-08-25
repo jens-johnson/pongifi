@@ -16,17 +16,17 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { EGameType } from './enums';
+import { GameType } from './enums';
 
 /**
  * Pongifi's default target score per game type; leagues override these, and a game may override the league
  * @public
  * @constant
  */
-export const DEFAULT_TARGET_SCORE: Record<EGameType, number> = {
-  [EGameType.SINGLES]: 11,
-  [EGameType.DOUBLES]: 11,
-  [EGameType.CUTTHROAT]: 7,
+export const DEFAULT_TARGET_SCORE: Record<GameType, number> = {
+  [GameType.SINGLES]: 11,
+  [GameType.DOUBLES]: 11,
+  [GameType.CUTTHROAT]: 7,
 };
 
 /**
@@ -55,10 +55,10 @@ export const DEFAULT_CUTTHROAT_TIME_CAP = 15;
  * @public
  * @constant
  */
-export const PARTICIPANT_COUNT: Record<EGameType, number> = {
-  [EGameType.SINGLES]: 2,
-  [EGameType.DOUBLES]: 4,
-  [EGameType.CUTTHROAT]: 3,
+export const PARTICIPANT_COUNT: Record<GameType, number> = {
+  [GameType.SINGLES]: 2,
+  [GameType.DOUBLES]: 4,
+  [GameType.CUTTHROAT]: 3,
 };
 
 /**
