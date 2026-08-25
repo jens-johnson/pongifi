@@ -45,9 +45,14 @@ export default defineNuxtConfig({
     /* Neon Postgres pooled connection string; server-only */
     databaseUrl: process.env.DATABASE_URL,
 
-    /* Upstash Redis REST credentials; server-only */
-    upstashRedisRestUrl: process.env.UPSTASH_REDIS_REST_URL,
-    upstashRedisRestToken: process.env.UPSTASH_REDIS_REST_TOKEN,
+    /**
+     * Upstash Redis REST credentials; server-only. The Vercel Marketplace integration names these after the legacy
+     * Vercel KV variables and then applies our chosen prefix, which is why they read as
+     * `UPSTASH_REDIS_REST_KV_REST_API_*` rather than Upstash's own `UPSTASH_REDIS_REST_*`. Mapping them here is the
+     * point of runtimeConfig: the awkward provider naming stops at this file and never reaches `useCache()`.
+     */
+    upstashRedisRestUrl: process.env.UPSTASH_REDIS_REST_KV_REST_API_URL,
+    upstashRedisRestToken: process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN,
 
     /**
      * Google OAuth credentials are intentionally NOT mapped here. Mapping them into runtimeConfig bakes the secret

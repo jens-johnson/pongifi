@@ -38,7 +38,10 @@ export default defineConfig({
   schema: './server/db/schema/index.ts',
   out: './server/db/migrations',
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    /* Migrations run over the direct connection, not the pooler; PgBouncer does not support every DDL statement
+       drizzle-kit issues. Neon injects both, so prefer the unpooled URL and fall back for local setups that only
+       define the one. */
+    url: (process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL)!,
   },
   strict: true,
   verbose: true,
