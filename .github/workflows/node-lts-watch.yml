@@ -1,0 +1,74 @@
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+#
+#                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+#                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+#                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+#                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+#                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+#                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ███████████████████████████████████████ .github/workflows/node-lts-watch.yml ████████████████████████████████████████
+#
+# Weekly watch: compares the .nvmrc pin against the latest Node LTS, opening a bump issue when stale and closing it
+# when current.
+#
+# ─── SEE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+#
+#   • https://github.com/jens-johnson/jens-johnson/blob/main/docs/style-guide/conventions/shell-and-environment.md
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+
+name: 🟢 Node LTS Watch
+
+on:
+  schedule:
+    # Mondays at 15:00 UTC (morning MT), alongside the Dependabot weekly cadence
+    - cron: '0 15 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  # Compare the .nvmrc pin against the newest Node LTS and manage the bump issue accordingly
+  watch:
+    name: node-lts-watch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare the pin against the latest LTS
+        id: node-lts
+        run: bash scripts/shell/check-node-lts.sh >> "$GITHUB_OUTPUT"
+
+      # A stale pin opens (or leaves in place) a single labeled issue; the label is the dedupe key
+      - name: Open the bump issue when the pin is stale
+        if: steps.node-lts.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.node-lts.outputs.pinned }}
+          LATEST: ${{ steps.node-lts.outputs.latest }}
+        run: |
+          gh label create node-lts --description "Node LTS pin maintenance" --color 5FA04E --force
+          EXISTING="$(gh issue list --label node-lts --state open --json number --jq 'length')"
+          if [ "$EXISTING" -eq 0 ]; then
+            gh issue create \
+              --title "chore: bump the node pin to ${LATEST%%.*} (new LTS)" \
+              --label node-lts \
+              --body "$(printf 'A newer Node LTS is available: **%s** (pinned: **%s**).\n\nBump checklist:\n\n- [ ] `.nvmrc`\n- [ ] `engines.node` in `package.json` (floor)\n- [ ] `node-version` in `.github/workflows/*.yml`\n- [ ] Node badge/prose in docs, if referenced\n- [ ] `nvm install` locally, then `pnpm check`\n\nOpened automatically by the Node LTS Watch workflow; it closes this issue once the pin is current.' "$LATEST" "$PINNED")"
+          else
+            echo "bump issue already open; nothing to do"
+          fi
+
+      # A current pin closes any leftover bump issue so the signal stays trustworthy
+      - name: Close the bump issue when the pin is current
+        if: steps.node-lts.outputs.bump == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PINNED: ${{ steps.node-lts.outputs.pinned }}
+        run: |
+          gh issue list --label node-lts --state open --json number --jq '.[].number' | while read -r NUMBER; do
+            gh issue close "$NUMBER" --comment "The pin ($PINNED) is current with the latest Node LTS; closing automatically."
+          done

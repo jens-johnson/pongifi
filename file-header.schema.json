@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "File Header Generator Configuration",
+  "description": "Per-project configuration for the file-header generator: the ASCII logo banner, project name, and target width. See src/utils/developer-tooling/file-header-generator/types.ts (IHeaderConfig).",
+  "type": "object",
+  "required": ["projectName", "width", "banner"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "A reference to this schema"
+    },
+    "projectName": {
+      "type": "string",
+      "description": "Human-readable project name shown in the header"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Total character width of the rendered header"
+    },
+    "banner": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "ASCII banner lines rendered at the top of the header; re-centered by the generator"
+    },
+    "bannerFont": {
+      "type": "string",
+      "description": "Optional figlet font used to render the banner (or \"custom\" for hand-made art)"
+    }
+  }
+}

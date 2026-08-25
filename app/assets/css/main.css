@@ -1,0 +1,107 @@
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * ███████████████████████████████████████████████ #assets/css/main.css ████████████████████████████████████████████████
+ *
+ * Global styles and design token system for Pongifi. Tailwind v4 CSS-first configuration via @theme.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Themes are applied via the `data-theme` attribute on the <html> element:\n  <html> (no attribute)     -> light
+ * (default)\n  <html data-theme="dark">  -> dark\n\nComponents reference semantic tokens only (bg-bg, text-ink,
+ * bg-accent); settling the brand palette means editing the @theme block and nothing else.
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+@import 'tailwindcss';
+
+/**
+ * ─── Design Tokens (@theme) ──────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * PROVISIONAL. The brand palette and Google Fonts pairing are still open (spec XIII.II). These values are a
+ * placeholder chosen to be legible and swappable: components should only ever reference the semantic tokens, so
+ * settling the brand means editing this block and nothing else.
+ *
+ * Light theme values are the defaults; the dark theme overrides them below via a data-theme selector.
+ */
+@theme {
+  /* ── Semantic color tokens ─────────────────────────────────────────────────────────────────────────────────────── */
+  --color-bg: #f7f7f5;
+  --color-surface: #fff;
+  --color-surface-raised: #eeeeea;
+  --color-border: #d9d9d3;
+  --color-ink: #16181d;
+  --color-ink-muted: #5b6070;
+  --color-ink-subtle: #9195a3;
+
+  /* Accent: the ball. Secondary: the table. */
+  --color-accent: #e8622c;
+  --color-accent-ink: #fff;
+  --color-secondary: #1f6f6b;
+  --color-secondary-ink: #fff;
+
+  /* Status tokens for game and confirmation state */
+  --color-positive: #2f7d4f;
+  --color-caution: #a97406;
+  --color-negative: #b23838;
+
+  /* ── Raw palette (reference only; do not use in components) ────────────────────────────────────────────────────── */
+  --color-ball-400: #f2854f;
+  --color-ball-500: #e8622c;
+  --color-ball-600: #c44d1d;
+  --color-table-500: #1f6f6b;
+  --color-table-700: #14514e;
+  --color-table-900: #0c3230;
+  --color-slate-50: #f7f7f5;
+  --color-slate-200: #d9d9d3;
+  --color-slate-500: #9195a3;
+  --color-slate-700: #5b6070;
+  --color-slate-900: #16181d;
+
+  /* ── Typography ────────────────────────────────────────────────────────────────────────────────────────────────── */
+  --font-display: ui-sans-serif, system-ui, sans-serif;
+  --font-body: ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', menlo, monospace;
+}
+
+/**
+ * ─── Dark Theme ──────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * One attribute on <html> switches the full palette; only semantic tokens are redefined.
+ */
+[data-theme='dark'] {
+  --color-bg: #0e1013;
+  --color-surface: #171a1f;
+  --color-surface-raised: #21252c;
+  --color-border: #2e333c;
+  --color-ink: #f2f3f5;
+  --color-ink-muted: #a4aab8;
+  --color-ink-subtle: #6d7382;
+  --color-accent: #f2854f;
+  --color-accent-ink: #16181d;
+  --color-secondary: #3a9b95;
+  --color-secondary-ink: #0c3230;
+  --color-positive: #4fae74;
+  --color-caution: #d99a1f;
+  --color-negative: #d96a6a;
+}
+
+/**
+ * ─── Base ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ */
+@layer base {
+  html {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+  }
+}

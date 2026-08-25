@@ -1,0 +1,72 @@
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+#
+#                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+#                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+#                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+#                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+#                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+#                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# █████████████████████████████████████████████ .github/workflows/ci.yml ██████████████████████████████████████████████
+#
+# Continuous integration GitHub action; runs lint (eslint + prettier + stylelint), typecheck, and test, then build.
+# Runs on PRs and pushes targeting main and staging; mirrors the local `pnpm check` gate. Vercel handles deploys
+# via its GitHub integration; no deploy step needed here.
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+
+name: 🔀 CI
+
+# Run on pushes + PRs to main and staging (feature PRs target staging; the promotion PR targets main)
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+  workflow_dispatch:
+
+# Cancel in-flight runs for the same PR if a new commit lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Specify environment values
+env:
+  NODE_VERSION_FILE: .nvmrc
+
+# Jobs to be run
+jobs:
+  # Lint, typecheck, and test project files
+  lint:
+    name: 🧹☑️ Lint, Typecheck & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 🧹 Lint (eslint + prettier + stylelint)
+        run: pnpm lint
+      - name: ☑️ Typecheck
+        run: pnpm typecheck
+      - name: 🧪 Test (vitest)
+        run: pnpm test
+
+  # Build the project with Nuxt
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ env.NODE_VERSION_FILE }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build

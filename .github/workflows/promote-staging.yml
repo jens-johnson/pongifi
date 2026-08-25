@@ -1,0 +1,148 @@
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+#
+#                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+#                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+#                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+#                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+#                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+#                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ███████████████████████████████████████ .github/workflows/promote-staging.yml ███████████████████████████████████████
+#
+# GitHub workflow to auto-create (or updates) a `staging → main` promotion PR whenever staging gets ahead of main.
+# Body is auto-populated with conventional-commit-grouped changes since the last promotion.
+#
+# ─── MERGE STRATEGY: Use merge commits, not squash commits ───────────────────────────────────────────────────────────
+#
+# - Squash-merging a promotion collapses every staging commit into one new commit whose body re-lists all of those
+#   commit messages.
+#   - Release Please parses that body, and because the original commits survive on staging across the sync-back,
+#     each subsequent promotion re-lists the same commits
+#   - Release Please then emits a duplicate changelog entry per promotion.
+# - Merging the promotion as a MERGE COMMIT lands each feature commit on main with its original SHA, which Release
+#   Please dedupes naturally, and leaves `main..staging` empty after the post-merge sync.
+#
+# (Squash commits can be manually turned off by going to repo Settings → General → Pull Requests)
+#
+# ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+#
+# Triggered automatically on every push to `staging`. No manual invocation needed.
+# (Requires repo setting: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests")
+#
+# ─── SETUP: PROMOTE_PAT secret ───────────────────────────────────────────────────────────────────────────────────────
+#
+# - A `PROMOTE_PAT` repository secret can be linked to a fine-grained Personal Access Token. This is required for the
+#   auto-opened promotion PR to trigger downstream workflows like CI's required status checks; GitHub silently swallows
+#   downstream triggers for actions performed with the default GITHUB_TOKEN to prevent recursion loops.
+# - Without PAT: the workflow still opens the PR, but required checks like "Lint & Typecheck" won't fire and the PR
+#   can't be merged until an authorized admin manually closes + reopen sit (which re-triggers checks under their
+#   identity).
+# - With PAT: the PR is opened under the admin user's identity, all downstream workflows trigger normally.
+#
+# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+
+name: ⬆️ Promote Staging
+
+# Run automatically on pushes to the staging branch
+on:
+  push:
+    branches: [staging]
+
+# Give full PR permissions, repo read permissions
+permissions:
+  contents: read
+  pull-requests: write
+
+# Jobs to be run
+jobs:
+  # Primary promote job to update staging → main PR
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 🔀 Check if staging has real content changes vs main
+        id: check
+        run: |
+          git fetch origin main
+          # Check for actual content diff, not just commit count. After a sync merge
+          # (`git merge main` on staging), staging is technically 1 commit ahead but
+          # has zero content diff; we don't want to open a no-op promotion PR.
+          if git diff --quiet origin/main origin/staging; then
+            echo "ahead=0" >> "$GITHUB_OUTPUT"
+            echo "No content diff between main and staging; nothing to promote."
+          else
+            AHEAD=$(git rev-list --count origin/main..origin/staging)
+            echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+            echo "Staging has content changes ($AHEAD commit(s) ahead)."
+          fi
+
+      - name: 📝 Build PR body grouped by conventional commit type
+        if: steps.check.outputs.ahead != '0'
+        run: |
+          FEAT=""; FIX=""; REFACTOR=""; PERF=""; DOCS=""; CHORE=""; CI=""; STYLE=""; TEST=""; OTHER=""
+
+          while IFS='|' read -r hash subject; do
+            line="- \`${hash}\` ${subject}"
+            case "$subject" in
+              feat*)     FEAT+="${line}"$'\n' ;;
+              fix*)      FIX+="${line}"$'\n' ;;
+              refactor*) REFACTOR+="${line}"$'\n' ;;
+              perf*)     PERF+="${line}"$'\n' ;;
+              docs*)     DOCS+="${line}"$'\n' ;;
+              chore*)    CHORE+="${line}"$'\n' ;;
+              ci*)       CI+="${line}"$'\n' ;;
+              style*)    STYLE+="${line}"$'\n' ;;
+              test*)     TEST+="${line}"$'\n' ;;
+              *)         OTHER+="${line}"$'\n' ;;
+            esac
+          done < <(git log --pretty=format:'%h|%s' origin/main..origin/staging)
+
+          {
+            echo "Promotes \`staging\` → \`main\`. Auto-generated rollup of changes validated on staging.pongifi.com and ready for production."
+            echo ""
+            echo "## Changes"
+            echo ""
+            [ -n "$FEAT" ]     && { echo "**Features**"; printf '%s' "$FEAT"; echo; }
+            [ -n "$FIX" ]      && { echo "**Fixes**"; printf '%s' "$FIX"; echo; }
+            [ -n "$PERF" ]     && { echo "**Performance**"; printf '%s' "$PERF"; echo; }
+            [ -n "$REFACTOR" ] && { echo "**Refactors**"; printf '%s' "$REFACTOR"; echo; }
+            [ -n "$DOCS" ]     && { echo "**Docs**"; printf '%s' "$DOCS"; echo; }
+            [ -n "$STYLE" ]    && { echo "**Style**"; printf '%s' "$STYLE"; echo; }
+            [ -n "$TEST" ]     && { echo "**Tests**"; printf '%s' "$TEST"; echo; }
+            [ -n "$CI" ]       && { echo "**CI**"; printf '%s' "$CI"; echo; }
+            [ -n "$CHORE" ]    && { echo "**Chore**"; printf '%s' "$CHORE"; echo; }
+            [ -n "$OTHER" ]    && { echo "**Other**"; printf '%s' "$OTHER"; echo; }
+            echo "---"
+            echo ""
+            echo "_Auto-generated by [.github/workflows/promote-staging.yml](.github/workflows/promote-staging.yml). Merge this PR with a **merge commit** (not squash), so Release Please dedupes by commit SHA. After merging, sync \`staging\` with \`main\` (\`git merge main\` on the staging branch)._"
+          } > pr-body.md
+
+          echo "─── PR body preview ───"
+          cat pr-body.md
+
+      - name: 📂 Open or update promotion PR
+        if: steps.check.outputs.ahead != '0'
+        env:
+          # Prefer PROMOTE_PAT (fine-grained PAT) so downstream workflows like CI trigger normally. Falls back to
+          # GITHUB_TOKEN; the PR will still open, but required status checks won't fire and the PR will need a manual
+          # close+reopen to be mergeable.
+          GH_TOKEN: ${{ secrets.PROMOTE_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${{ secrets.PROMOTE_PAT }}" ]; then
+            echo "::warning::PROMOTE_PAT secret not set; falling back to GITHUB_TOKEN. Downstream workflows like CI won't trigger on the opened PR. See .github/workflows/promote-staging.yml header for setup instructions."
+          fi
+
+          TITLE="release: promote staging → main"
+          EXISTING=$(gh pr list --base main --head staging --state open --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing PR #$EXISTING"
+            gh pr edit "$EXISTING" --title "$TITLE" --body-file pr-body.md
+          else
+            echo "Creating new promotion PR"
+            gh pr create --base main --head staging --title "$TITLE" --body-file pr-body.md
+          fi

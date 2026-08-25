@@ -1,0 +1,108 @@
+{
+  "name": "pongifi",
+  "type": "module",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The social ping pong competition app: create leagues, record games, and track your statistics",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.10.0",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview",
+    "generate": "nuxt generate",
+    "postinstall": "nuxt prepare",
+    "prepare": "lefthook install",
+    "lint": "run-p -l lint:eslint lint:prettier lint:stylelint",
+    "lint:eslint": "eslint .",
+    "lint:prettier": "prettier --check .",
+    "lint:stylelint": "stylelint \"**/*.{css,vue}\"",
+    "lint:fix": "run-s fix:eslint fix:prettier fix:stylelint",
+    "fix:eslint": "eslint . --fix",
+    "fix:prettier": "prettier --write .",
+    "fix:stylelint": "stylelint \"**/*.{css,vue}\" --fix",
+    "typecheck": "nuxi typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "check": "run-s lint typecheck test build",
+    "commit": "cz",
+    "header": "file-header-generator",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  },
+  "lint-staged": {
+    "*.{js,mjs,ts,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{css,vue}": [
+      "stylelint --fix"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "esbuild",
+      "lefthook",
+      "unrs-resolver"
+    ]
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.2",
+    "drizzle-orm": "^0.45.2",
+    "nuxt": "^4.5.2",
+    "nuxt-auth-utils": "^0.5.30",
+    "vue": "^3.5.41",
+    "vue-router": "^5.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.2",
+    "@jens-johnson/style-guide": "github:jens-johnson/jens-johnson#v0.9.2",
+    "@nuxt/eslint": "^1.17.0",
+    "@nuxt/fonts": "^0.14.0",
+    "@nuxt/icon": "^2.5.1",
+    "@nuxt/image": "^2.1.0",
+    "@nuxt/test-utils": "^4.1.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.3.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vue/test-utils": "^2.4.11",
+    "commitizen": "^4.3.2",
+    "cz-conventional-changelog": "^3.3.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^10.9.1",
+    "eslint-plugin-vue": "^10.10.0",
+    "globals": "^17.11.0",
+    "h3": "1.15.11",
+    "happy-dom": "^20.11.6",
+    "lefthook": "^2.1.10",
+    "lint-staged": "^17.3.0",
+    "npm-run-all2": "^9.0.3",
+    "postcss-html": "^2.0.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "stylelint": "^17.14.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11",
+    "vue-eslint-parser": "^10.4.1",
+    "vue-tsc": "^3.3.11"
+  }
+}
