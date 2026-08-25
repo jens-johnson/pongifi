@@ -27,7 +27,7 @@
 import { defineSymbol } from '#shared/utils/symbol';
 
 import { PARTICIPANT_COUNT, SINGLE_POINT_SERVICE_INTERVAL } from './constants';
-import { EEventType, EGameType, EMatchStatus, ERallyWinner, ESide } from './enums';
+import { EventType, GameType, MatchStatus, RallyWinner, Side } from './enums';
 import type { IMatchInitEvent, IMatchSettings, IMatchState, TEnds, TMatchEvent } from './types';
 
 /**
@@ -42,18 +42,18 @@ interface IInternalState {
    * Which side each participant belongs to, fixed for the whole match. Sides cannot be derived from rotation index
    * parity: the rotation swaps adjacent pairs between games, which inverts the parity every game
    */
-  sides: Record<string, ESide>;
+  sides: Record<string, Side>;
   serverIndex: number;
   scores: Record<string, number>;
   gameNumber: number;
-  gamesWon: Record<ESide, number>;
+  gamesWon: Record<Side, number>;
   endsSwapped: boolean;
   decidingEndsChanged: boolean;
   pointsSinceServiceChange: number;
   serviceDoubtIssued: boolean;
   isExpedite: boolean;
   timeCapReached: boolean;
-  status: EMatchStatus;
+  status: MatchStatus;
   winner: string | null;
 }
 
@@ -68,7 +68,7 @@ interface IInternalState {
  * @throws Error when the participant is not in this match
  * @returns The participant's side
  */
-function sideOf(state: IInternalState, participant: string): ESide {
+function sideOf(state: IInternalState, participant: string): Side {
   const side = state.sides[participant];
 
   if (!side) {
@@ -85,8 +85,8 @@ function sideOf(state: IInternalState, participant: string): ESide {
  * @param side - The side to invert
  * @returns The other side
  */
-function opposing(side: ESide): ESide {
-  return side === ESide.A ? ESide.B : ESide.A;
+function opposing(side: Side): Side {
+  return side === Side.A ? Side.B : Side.A;
 }
 
 /**
@@ -143,7 +143,7 @@ function gameWinner(state: IInternalState): string | null {
  * @returns Whether the game is at deuce
  */
 function isDeuce(state: IInternalState): boolean {
-  if (state.settings.gameType === EGameType.CUTTHROAT) {
+  if (state.settings.gameType === GameType.CUTTHROAT) {
     return false;
   }
 
@@ -174,11 +174,11 @@ function gamesToWin(matchFormat: number): number {
  * @returns The side-to-end mapping, or null for cutthroat
  */
 function currentEnds(state: IInternalState): TEnds {
-  if (state.settings.gameType === EGameType.CUTTHROAT) {
+  if (state.settings.gameType === GameType.CUTTHROAT) {
     return null;
   }
 
-  return state.endsSwapped ? { [ESide.A]: 2, [ESide.B]: 1 } : { [ESide.A]: 1, [ESide.B]: 2 };
+  return state.endsSwapped ? { [Side.A]: 2, [Side.B]: 1 } : { [Side.A]: 1, [Side.B]: 2 };
 }
 
 /**
@@ -192,7 +192,7 @@ function currentEnds(state: IInternalState): TEnds {
 function applyDecidingGameEndsChange(state: IInternalState): void {
   const { settings } = state;
 
-  if (settings.gameType === EGameType.CUTTHROAT || state.decidingEndsChanged) {
+  if (settings.gameType === GameType.CUTTHROAT || state.decidingEndsChanged) {
     return;
   }
 
@@ -216,7 +216,7 @@ function applyDecidingGameEndsChange(state: IInternalState): void {
   state.decidingEndsChanged = true;
 
   /* The receiving pair reverses its receiving order; positions 1 and 3 are that pair in a doubles rotation */
-  if (settings.gameType === EGameType.DOUBLES) {
+  if (settings.gameType === GameType.DOUBLES) {
     [state.rotation[1], state.rotation[3]] = [state.rotation[3]!, state.rotation[1]!];
   }
 }
@@ -255,19 +255,19 @@ function awardPoint(state: IInternalState, unit: string, advanceService: boolean
   const winner = gameWinner(state);
 
   if (winner) {
-    if (state.settings.gameType === EGameType.CUTTHROAT) {
-      state.status = EMatchStatus.COMPLETE;
+    if (state.settings.gameType === GameType.CUTTHROAT) {
+      state.status = MatchStatus.COMPLETE;
       state.winner = winner;
 
       return;
     }
 
-    const side = winner as ESide;
+    const side = winner as Side;
 
     state.gamesWon[side] += 1;
 
     if (state.gamesWon[side] >= gamesToWin(state.settings.matchFormat)) {
-      state.status = EMatchStatus.COMPLETE;
+      state.status = MatchStatus.COMPLETE;
       state.winner = side;
 
       return;
@@ -339,14 +339,14 @@ function advanceToNextLeader(state: IInternalState, includeCurrent = false): voi
  * @param state - The working state, mutated in place
  * @param wonBy - Which side won the rally
  */
-function applyRally(state: IInternalState, wonBy: ERallyWinner): void {
+function applyRally(state: IInternalState, wonBy: RallyWinner): void {
   const server = state.rotation[state.serverIndex]!;
 
-  if (state.settings.gameType === EGameType.CUTTHROAT) {
+  if (state.settings.gameType === GameType.CUTTHROAT) {
     /* Only the server can score; losing the rally passes the serve and awards nothing (III.II.IX.III) */
-    if (wonBy === ERallyWinner.SERVING) {
+    if (wonBy === RallyWinner.SERVING) {
       if (state.timeCapReached) {
-        state.status = EMatchStatus.COMPLETE;
+        state.status = MatchStatus.COMPLETE;
         state.winner = server;
 
         return;
@@ -369,7 +369,7 @@ function applyRally(state: IInternalState, wonBy: ERallyWinner): void {
   }
 
   const servingSide = sideOf(state, server);
-  const scoringSide = wonBy === ERallyWinner.SERVING ? servingSide : opposing(servingSide);
+  const scoringSide = wonBy === RallyWinner.SERVING ? servingSide : opposing(servingSide);
 
   awardPoint(state, scoringSide, true);
 }
@@ -383,7 +383,7 @@ function applyRally(state: IInternalState, wonBy: ERallyWinner): void {
  */
 function applyServiceDoubt(state: IInternalState): void {
   if (state.serviceDoubtIssued) {
-    applyRally(state, ERallyWinner.RECEIVING);
+    applyRally(state, RallyWinner.RECEIVING);
 
     return;
   }
@@ -402,7 +402,7 @@ function applyTimeCap(state: IInternalState): void {
   const leaders = tiedLeaders(state);
 
   if (leaders.length === 1) {
-    state.status = EMatchStatus.COMPLETE;
+    state.status = MatchStatus.COMPLETE;
     state.winner = leaders[0]!;
 
     return;
@@ -426,9 +426,9 @@ function applyRetirement(state: IInternalState, participantId: string): void {
     throw new Error(`${participantId} is not a participant in this match.`);
   }
 
-  state.status = EMatchStatus.RETIRED;
+  state.status = MatchStatus.RETIRED;
 
-  if (state.settings.gameType === EGameType.CUTTHROAT) {
+  if (state.settings.gameType === GameType.CUTTHROAT) {
     const [leader] = tiedLeaders(state);
 
     state.winner = leader ?? null;
@@ -449,33 +449,33 @@ function applyRetirement(state: IInternalState, participantId: string): void {
  */
 function applyEvent(state: IInternalState, event: TMatchEvent): void {
   switch (event.type) {
-    case EEventType.MATCH_INIT:
+    case EventType.MATCH_INIT:
       throw new Error('A match log may only contain one MATCH_INIT event.');
 
-    case EEventType.RALLY:
+    case EventType.RALLY:
       applyRally(state, event.wonBy);
       break;
 
-    case EEventType.SERVICE_DOUBT:
+    case EventType.SERVICE_DOUBT:
       applyServiceDoubt(state);
       break;
 
-    case EEventType.EXPEDITE_INTRODUCED:
+    case EventType.EXPEDITE_INTRODUCED:
       state.isExpedite = true;
       break;
 
-    case EEventType.TIME_CAP_REACHED:
+    case EventType.TIME_CAP_REACHED:
       applyTimeCap(state);
       break;
 
-    case EEventType.RETIREMENT:
+    case EventType.RETIREMENT:
       applyRetirement(state, event.participantId);
       break;
 
     /* Lets, time-outs, and towel breaks award no point and do not advance the service rotation (III.II.VI.V) */
-    case EEventType.LET:
-    case EEventType.TIMEOUT:
-    case EEventType.TOWEL_BREAK:
+    case EventType.LET:
+    case EventType.TIMEOUT:
+    case EventType.TOWEL_BREAK:
       break;
   }
 }
@@ -505,13 +505,13 @@ function initialState(settings: IMatchSettings, init: IMatchInitEvent): IInterna
   }
 
   const scores: Record<string, number> =
-    settings.gameType === EGameType.CUTTHROAT
+    settings.gameType === GameType.CUTTHROAT
       ? Object.fromEntries(init.rotation.map((participant) => [participant, 0]))
-      : { [ESide.A]: 0, [ESide.B]: 0 };
+      : { [Side.A]: 0, [Side.B]: 0 };
 
   /* The opening rotation interleaves the sides, so parity is correct exactly once: at match start */
-  const sides: Record<string, ESide> = Object.fromEntries(
-    init.rotation.map((participant, index) => [participant, index % 2 === 0 ? ESide.A : ESide.B]),
+  const sides: Record<string, Side> = Object.fromEntries(
+    init.rotation.map((participant, index) => [participant, index % 2 === 0 ? Side.A : Side.B]),
   );
 
   return {
@@ -521,14 +521,14 @@ function initialState(settings: IMatchSettings, init: IMatchInitEvent): IInterna
     serverIndex: 0,
     scores,
     gameNumber: 1,
-    gamesWon: { [ESide.A]: 0, [ESide.B]: 0 },
+    gamesWon: { [Side.A]: 0, [Side.B]: 0 },
     endsSwapped: init.endsSwapped ?? false,
     decidingEndsChanged: false,
     pointsSinceServiceChange: 0,
     serviceDoubtIssued: false,
     isExpedite: false,
     timeCapReached: false,
-    status: EMatchStatus.IN_PROGRESS,
+    status: MatchStatus.IN_PROGRESS,
     winner: null,
   };
 }
@@ -540,26 +540,26 @@ function initialState(settings: IMatchSettings, init: IMatchInitEvent): IInterna
  * @param state - The working state
  * @returns The legal event types
  */
-function legalNextEvents(state: IInternalState): EEventType[] {
-  if (state.status !== EMatchStatus.IN_PROGRESS) {
+function legalNextEvents(state: IInternalState): EventType[] {
+  if (state.status !== MatchStatus.IN_PROGRESS) {
     return [];
   }
 
-  const legal: EEventType[] = [
-    EEventType.RALLY,
-    EEventType.LET,
-    EEventType.SERVICE_DOUBT,
-    EEventType.TIMEOUT,
-    EEventType.TOWEL_BREAK,
-    EEventType.RETIREMENT,
+  const legal: EventType[] = [
+    EventType.RALLY,
+    EventType.LET,
+    EventType.SERVICE_DOUBT,
+    EventType.TIMEOUT,
+    EventType.TOWEL_BREAK,
+    EventType.RETIREMENT,
   ];
 
-  if (state.settings.gameType === EGameType.CUTTHROAT) {
+  if (state.settings.gameType === GameType.CUTTHROAT) {
     if (state.settings.cutthroatTimeCap > 0 && !state.timeCapReached) {
-      legal.push(EEventType.TIME_CAP_REACHED);
+      legal.push(EventType.TIME_CAP_REACHED);
     }
   } else if (state.settings.expediteEnabled && !state.isExpedite) {
-    legal.push(EEventType.EXPEDITE_INTRODUCED);
+    legal.push(EventType.EXPEDITE_INTRODUCED);
   }
 
   return legal;
@@ -573,8 +573,8 @@ function legalNextEvents(state: IInternalState): EEventType[] {
  * @returns The public match state
  */
 function project(state: IInternalState): IMatchState {
-  const isCutthroat = state.settings.gameType === EGameType.CUTTHROAT;
-  const complete = state.status !== EMatchStatus.IN_PROGRESS;
+  const isCutthroat = state.settings.gameType === GameType.CUTTHROAT;
+  const complete = state.status !== MatchStatus.IN_PROGRESS;
 
   return {
     scores: { ...state.scores },
@@ -608,14 +608,14 @@ function project(state: IInternalState): IMatchState {
 export function replayMatch(settings: IMatchSettings, events: TMatchEvent[]): IMatchState {
   const [first, ...rest] = events;
 
-  if (!first || first.type !== EEventType.MATCH_INIT) {
+  if (!first || first.type !== EventType.MATCH_INIT) {
     throw new Error('A match log must open with a MATCH_INIT event.');
   }
 
   const state = initialState(settings, first);
 
   for (const event of rest) {
-    if (state.status !== EMatchStatus.IN_PROGRESS) {
+    if (state.status !== MatchStatus.IN_PROGRESS) {
       throw new Error(`A ${event.type} event cannot follow a completed match.`);
     }
 
