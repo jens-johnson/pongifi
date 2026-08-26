@@ -87,6 +87,16 @@ use `export *`, which unimport ignores.
   `#utils/http`, which turns unexpected rejections into 502s while letting deliberate `createError`s pass through.
 - **The repo is public. Secrets never enter it.** `.env.example` holds placeholders; real values live in Vercel.
 
+### Migrations
+
+Schema lives in `server/db/schema/`, SQL migrations are generated into `server/db/migrations/` and checked in. Author
+one with `pnpm db:generate`, apply it with `pnpm db:migrate`. Migrations run over the **unpooled** connection, because
+PgBouncer does not support every DDL statement drizzle-kit issues; the app itself uses the pooled one.
+
+`package.json` declares `"imports": { "#shared/*": "./shared/*/index.ts" }`. Nuxt provides `#shared` at build time, but
+drizzle-kit resolves the schema outside Nuxt entirely, so the alias also has to exist as a standard Node subpath
+import. Anything else that reads `shared/` without going through Nuxt gets it for free.
+
 ## Environments and git flow
 
 | Branch    | Environment | Host                  | Database                       |
