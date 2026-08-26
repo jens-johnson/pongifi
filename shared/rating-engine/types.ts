@@ -45,6 +45,18 @@ export interface IGameEligibility {
 }
 
 /**
+ * A player's standing partway through a replay: where their rating sits, and how many rated games sit behind it
+ * @public
+ */
+export interface IStanding {
+  /* Rated games completed in this scope */
+  gamesPlayed: number;
+
+  /* Their rating at this point in the replay */
+  rating: number;
+}
+
+/**
  * A player as the rating engine sees them going into a game
  * @public
  */

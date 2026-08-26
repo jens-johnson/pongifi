@@ -15,7 +15,7 @@
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * rateGame(input) -> IRatingChange[]\nreplayRatings(games, scope, seed?) -> IRatingSnapshotDraft[]
+ * rateGame(input) rates one finished game; replayRatings(games, scope, seed?) rebuilds a run of snapshots.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -38,7 +38,14 @@ import {
   STARTING_RATING,
 } from './constants';
 import { feedsRatings } from './eligibility';
-import type { IRatableGame, IRatedParticipant, IRateGameInput, IRatingChange, IRatingSnapshotDraft } from './types';
+import type {
+  IRatableGame,
+  IRatedParticipant,
+  IRateGameInput,
+  IRatingChange,
+  IRatingSnapshotDraft,
+  IStanding,
+} from './types';
 
 /* ─── Elo Primitives ─────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -85,20 +92,18 @@ export function kFactor(rating: number, gamesPlayed: number, provisionalGames: n
  * @returns The multiplier applied to each player's base K
  */
 function marginMultiplier(margin: number, winningMargin: number, winnerRating: number, loserRating: number): number {
-  /**
-   * A retirement records the score at the moment of withdrawal, which can leave a margin of one or zero. Taken
-   * literally the formula then yields zero and nobody's rating moves, contradicting VIII.VII, so the multiplier is
-   * floored at its ordinary-win value
-   */
-  const raw = Math.log(margin + 1) / Math.log(winningMargin + 1);
-  const bounded = Math.max(raw, MARGIN_MULTIPLIER_FLOOR);
+  // A retirement records the score at the moment of withdrawal, which can leave a margin of one or zero. Taken
+  // literally the formula then yields zero and nobody's rating moves, contradicting VIII.VII, so the multiplier is
+  // floored at its ordinary-win value
+  const raw: number = Math.log(margin + 1) / Math.log(winningMargin + 1);
+  const bounded: number = Math.max(raw, MARGIN_MULTIPLIER_FLOOR);
 
-  /* Guarded so an implausibly large upset cannot drive the denominator to zero and produce an infinite exchange */
-  const denominator = Math.max(
+  // Guarded so an implausibly large upset cannot drive the denominator to zero and produce an infinite exchange
+  const denominator: number = Math.max(
     DAMPENER_GAP_COEFFICIENT * (winnerRating - loserRating) + DAMPENER_NUMERATOR,
     Number.EPSILON,
   );
-  const dampener = DAMPENER_NUMERATOR / denominator;
+  const dampener: number = DAMPENER_NUMERATOR / denominator;
 
   return Math.min(bounded * dampener, MARGIN_MULTIPLIER_CAP);
 }
@@ -115,7 +120,7 @@ function marginMultiplier(margin: number, winningMargin: number, winnerRating: n
  * @returns The player's rating change
  */
 function changeFor(participant: IRatedParticipant, delta: number, provisionalGames: number): IRatingChange {
-  const gamesPlayed = participant.gamesPlayed + 1;
+  const gamesPlayed: number = participant.gamesPlayed + 1;
 
   return {
     participantId: participant.participantId,
@@ -138,13 +143,15 @@ function changeFor(participant: IRatedParticipant, delta: number, provisionalGam
 function bySide(participants: IRatedParticipant[]): Record<Side, IRatedParticipant[]> {
   const sides: Record<Side, IRatedParticipant[]> = { [Side.A]: [], [Side.B]: [] };
 
-  for (const participant of participants) {
-    if (!participant.side) {
+  participants.forEach((participant) => {
+    const side: Side | undefined = participant.side;
+
+    if (!side) {
       throw new Error(`${participant.participantId} has no side; singles and doubles require one.`);
     }
 
-    sides[participant.side].push(participant);
-  }
+    sides[side].push(participant);
+  });
 
   if (!sides[Side.A].length || !sides[Side.B].length) {
     throw new Error('A singles or doubles game needs players on both sides.');
@@ -178,24 +185,24 @@ function sideRating(side: IRatedParticipant[]): number {
  * @returns Each player's rating change
  */
 function rateSided(input: IRateGameInput): IRatingChange[] {
-  const sides = bySide(input.participants);
-  const scores = {
+  const sides: Record<Side, IRatedParticipant[]> = bySide(input.participants);
+  const scores: Record<Side, number> = {
     [Side.A]: sides[Side.A][0]!.score,
     [Side.B]: sides[Side.B][0]!.score,
   };
-  const ratings = {
+  const ratings: Record<Side, number> = {
     [Side.A]: sideRating(sides[Side.A]),
     [Side.B]: sideRating(sides[Side.B]),
   };
 
-  /**
-   * A retirement credits the side that stayed regardless of the scoreboard, so a declared outcome wins over the score.
-   * Table tennis has no draws, so where no outcome is declared the higher score took it
-   */
-  const declared = input.participants.find((participant) => participant.outcome === ParticipantOutcome.WIN)?.side;
-  const winner = declared ?? (scores[Side.A] > scores[Side.B] ? Side.A : Side.B);
-  const loser = winner === Side.A ? Side.B : Side.A;
-  const multiplier = marginMultiplier(
+  // A retirement credits the side that stayed regardless of the scoreboard, so a declared outcome wins over the
+  // score. Table tennis has no draws, so where no outcome is declared the higher score took it
+  const declared: Side | undefined = input.participants.find(
+    (participant) => participant.outcome === ParticipantOutcome.WIN,
+  )?.side;
+  const winner: Side = declared ?? (scores[Side.A] > scores[Side.B] ? Side.A : Side.B);
+  const loser: Side = winner === Side.A ? Side.B : Side.A;
+  const multiplier: number = marginMultiplier(
     Math.abs(scores[Side.A] - scores[Side.B]),
     input.winningMargin,
     ratings[winner],
@@ -203,11 +210,11 @@ function rateSided(input: IRateGameInput): IRatingChange[] {
   );
 
   return input.participants.map((participant) => {
-    const side = participant.side!;
-    const opposing = side === Side.A ? Side.B : Side.A;
-    const actual = Number(side === winner);
-    const expected = expectedScore(ratings[side], ratings[opposing]);
-    const base = kFactor(participant.rating, participant.gamesPlayed, input.provisionalGames);
+    const side: Side = participant.side!;
+    const opposing: Side = side === Side.A ? Side.B : Side.A;
+    const actual: number = Number(side === winner);
+    const expected: number = expectedScore(ratings[side], ratings[opposing]);
+    const base: number = kFactor(participant.rating, participant.gamesPlayed, input.provisionalGames);
 
     return changeFor(participant, base * multiplier * (actual - expected), input.provisionalGames);
   });
@@ -226,13 +233,13 @@ function rateCutthroat(input: IRateGameInput): IRatingChange[] {
   const { participants, provisionalGames } = input;
 
   return participants.map((participant) => {
-    const base = kFactor(participant.rating, participant.gamesPlayed, provisionalGames);
-    const delta = participants
+    const base: number = kFactor(participant.rating, participant.gamesPlayed, provisionalGames);
+    const delta: number = participants
       .filter((other) => other.participantId !== participant.participantId)
       .reduce((total, other) => {
-        /* Players on equal scores share a rank and split the comparison */
-        const actual = participant.score === other.score ? 0.5 : Number(participant.score > other.score);
-        const expected = expectedScore(participant.rating, other.rating);
+        // Players on equal scores share a rank and split the comparison
+        const actual: number = participant.score === other.score ? 0.5 : Number(participant.score > other.score);
+        const expected: number = expectedScore(participant.rating, other.rating);
 
         return total + base * CUTTHROAT_K_SHARE * (actual - expected);
       }, 0);
@@ -285,38 +292,39 @@ export function rateGame(input: IRateGameInput): IRatingChange[] {
 export function replayRatings(
   games: IRatableGame[],
   scope: RatingScope,
-  seed: Map<string, { rating: number; gamesPlayed: number }> = new Map(),
+  seed: Map<string, IStanding> = new Map(),
 ): IRatingSnapshotDraft[] {
-  const standing = new Map(seed);
+  const standing: Map<string, IStanding> = new Map(seed);
   const drafts: IRatingSnapshotDraft[] = [];
 
-  for (const game of games) {
+  games.forEach((game) => {
+    // A game that feeds nothing is skipped whole: it consumes no rating and advances nobody's games-played count
     if (!feedsRatings(game.eligibility)) {
-      continue;
+      return;
     }
 
-    const participants = game.participants.map((participant) => {
-      const current = standing.get(participant.participantId);
+    const participants: IRatedParticipant[] = game.participants.map((participant) => {
+      const current: IStanding | undefined = standing.get(participant.participantId);
 
       return {
         ...participant,
-        rating: current?.rating ?? STARTING_RATING,
         gamesPlayed: current?.gamesPlayed ?? 0,
+        rating: current?.rating ?? STARTING_RATING,
       };
     });
 
-    for (const change of rateGame({ ...game, participants })) {
+    rateGame({ ...game, participants }).forEach((change) => {
       standing.set(change.participantId, {
-        rating: change.ratingAfter,
         gamesPlayed: change.gamesPlayed,
+        rating: change.ratingAfter,
       });
       drafts.push({
         ...change,
         gameId: game.gameId,
         scope,
       });
-    }
-  }
+    });
+  });
 
   return drafts;
 }

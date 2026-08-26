@@ -18,14 +18,8 @@
 
 import { ConfirmationStatus, GameStatus } from '#shared/domain';
 
+import { PLAYED_STATUSES } from './constants';
 import type { IGameEligibility } from './types';
-
-/**
- * Statuses that represent a game actually played to some conclusion
- * @internal
- * @constant
- */
-const PLAYED_STATUSES = new Set<GameStatus>([GameStatus.COMPLETE, GameStatus.RETIRED]);
 
 /**
  * Whether a result has been accepted. An unconfirmed or disputed game feeds nothing at all until it is settled, which
