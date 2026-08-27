@@ -23,6 +23,10 @@ declare global {
      * single list of what the application expects. It does not reject a misspelling: `@types/node` gives `ProcessEnv`
      * an index signature, so any string key still type-checks.
      *
+     * Loaded by the app and shared projects, which include `../*.d.ts`, and by `tsconfig.tooling.json`, which is what
+     * puts the root config files under the compiler at all. Nuxt's generated node project, which checks
+     * `nuxt.config.ts`, does not include it; the index signature means the reads there compile regardless.
+     *
      * Every value stays optional. A variable is only present in the environments it was configured for, and the
      * unpooled connection in particular exists on Vercel but not necessarily on a bare machine, so code that requires
      * one still has to say so.

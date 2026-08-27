@@ -48,8 +48,6 @@ export default defineConfig({
    * @see {@link https://orm.drizzle.team/docs/drizzle-config-file#dbcredentials}
    */
   dbCredentials: {
-    // Both variables are declared optional in env.d.ts, so the assertion states the real precondition: one of them
-    // has to be set for a migration to run at all
     url: (process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL)!,
   },
 

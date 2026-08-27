@@ -116,6 +116,7 @@ sync `staging` back with `git merge main`.
 corepack enable && pnpm install   # first run; installs lefthook hooks via `prepare`
 pnpm dev                          # dev server
 pnpm check                        # lint -> typecheck -> test -> build; must be green before shipping
+pnpm typecheck                    # nuxt's projects, then tsconfig.tooling.json for the root config files
 pnpm lint:fix                     # autofix eslint + prettier + stylelint
 pnpm header -f <path> -d "<desc>" --write
 pnpm db:generate / db:migrate / db:studio
