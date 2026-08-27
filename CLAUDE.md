@@ -85,7 +85,8 @@ use `export *`, which unimport ignores.
   `runtimeConfig` would bake build-time values into the output.
 - Wrap every awaited external call (DB, Redis, third-party APIs) in `runUpstream(promise, 'message.')` from
   `#utils/http`, which turns unexpected rejections into 502s while letting deliberate `createError`s pass through.
-- **The repo is public. Secrets never enter it.** `.env.example` holds placeholders; real values live in Vercel.
+- **The repo is public. Secrets never enter it.** There is no checked-in env example; `vercel env pull .env`
+  produces a local file, and `env.d.ts` is the list of what the application reads.
 
 ### Migrations
 

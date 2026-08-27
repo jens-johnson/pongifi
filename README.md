@@ -25,7 +25,7 @@ Requires Node 24 (see `.nvmrc`) and pnpm 10 via Corepack. [direnv](https://diren
 ```bash
 corepack enable
 pnpm install
-cp .env.example .env      # or: vercel env pull .env
+vercel env pull .env      # secrets live in Vercel, never in the repo
 pnpm dev
 ```
 

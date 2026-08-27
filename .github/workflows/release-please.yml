@@ -1,4 +1,4 @@
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
 #
 #                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
 #                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
@@ -7,26 +7,26 @@
 #                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
 #                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
 #
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
-# ███████████████████████████████████████ .github/workflows/release-please.yml ████████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ████████████████████████████████████████ .github/workflows/release-please.yml ████████████████████████████████████████
 #
 # A GitHub workflow to trigger automated release management via `release-please`. On every push to main, release-please
 # inspects conventional commits since the last release and either opens or updates a "Release PR". Merging that PR bumps
 # package.json version and publishes a GitHub Release with a generated `CHANGELOG.md` entry.
 #
-# ─── SEE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─── SEE ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #
 # • https://github.com/googleapis/release-please-action
 # • https://github.com/googleapis/release-please
 #
-# ─── SETUP: PROMOTE_PAT secret  ──────────────────────────────────────────────────────────────────────────────────────
+# ─── SETUP: PROMOTE_PAT secret  ───────────────────────────────────────────────────────────────────────────────────────
 #
 # release-please opens a "Release PR" with auto-bumped version + CHANGELOG. If created via the default `GITHUB_TOKEN`,
 # downstream workflows (CI) won't trigger on that PR, the same recursion-prevention restriction as in
 # `promote-staging.yml`; `PROMOTE_PAT` secret allows for full identity pass-through. Without it the workflow still runs,
 # just won't trigger downstream checks on the PR.
 #
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
 
 name: 📝 Release Please
 
