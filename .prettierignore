@@ -31,7 +31,11 @@ test-results
 # ─── Miscellaneous ────────────────────────────────────────────────────────────────────────────────────────────────────
 server/db/migrations
 package-lock.json
+
+# Both are written by Release Please, which formats them its own way; Prettier disagreeing turns every release pull
+# request red, and the generator wins that argument on its next run regardless
 CHANGELOG.md
+.release-please-manifest.json
 *.min.js
 *.min.css
 .claude/
