@@ -1,48 +1,71 @@
-# 🏓 Pongifi
+<div align="center">
 
-The social ping pong competition app. Create leagues, register games, and track your statistics.
-
-Pongifi is a ping pong league tracker for an office or friend group: create a league, invite players, record games,
-and dig into the leaderboards. Three game types are first-class — **singles** (1v1), **doubles** (2v2), and
-**cutthroat** (1v1v1, house rules).
-
-## Stack
-
-| Layer             | Choice                                           |
-| ----------------- | ------------------------------------------------ |
-| Framework         | Nuxt 4 + TypeScript (Vue 3 client, Nitro server) |
-| Hosting           | Vercel                                           |
-| Database          | Neon serverless Postgres, Drizzle ORM            |
-| Cache / ephemeral | Upstash Redis                                    |
-| Auth              | Google OIDC                                      |
-| Styling           | Tailwind CSS v4, no component library            |
-| Realtime          | Server-sent events                               |
-
-## Getting started
-
-Requires Node 24 (see `.nvmrc`) and pnpm 10 via Corepack. [direnv](https://direnv.net/) is optional but recommended.
-
-```bash
-corepack enable
-pnpm install
-vercel env pull .env      # secrets live in Vercel, never in the repo
-pnpm dev
+```
+██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
 ```
 
-`pnpm check` runs the full gate — lint, typecheck, test, build.
+# Pongifi
+
+**The social ping pong competition app — [pongifi.com](https://pongifi.com)**
+
+[![Nuxt](https://img.shields.io/badge/Nuxt-00DC82?style=for-the-badge&logo=nuxtdotjs&logoColor=white)](https://nuxt.com/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Postgres](https://img.shields.io/badge/Neon_Postgres-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://neon.com/)
+[![Redis](https://img.shields.io/badge/Upstash_Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://upstash.com/)
+[![Vercel](https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com/)
+
+</div>
+
+## What it is
+
+Pongifi turns the ping pong table your office already argues over into a league worth keeping records for. Create a
+league, invite the people you play against, record games as they happen, and watch the leaderboard sort out who is
+actually any good.
+
+It came out of a real need: a group of coworkers playing daily, keeping score on a whiteboard, and losing the whole
+season every time somebody wiped it.
+
+## Game types
+
+All three are first-class — the rules, the recording surface, and the ratings each understand them natively.
+
+| Type          | Players | Notes                                                                           |
+| ------------- | ------- | ------------------------------------------------------------------------------- |
+| **Singles**   | 1v1     | Standard ITTF rules                                                             |
+| **Doubles**   | 2v2     | Standard ITTF rules, including service and receiving rotation                   |
+| **Cutthroat** | 1v1v1   | House rules: one player serves alone against two, and only the server can score |
+
+## What makes it different
+
+**Recording is the product.** One person records for the group from a top-down view of the table — tap a player to
+award the point, and service changes, end changes, and the cutthroat rotation animate so you watch the state change
+instead of tracking it in your head. Nobody else has to open the app while you play.
+
+**Nothing is a mutable counter.** A game's score is derived by replaying its event log, which is what makes undo,
+amendment, and after-the-fact corrections cheap instead of dangerous. Ratings are append-only snapshots keyed to the
+game that caused them, so correcting a result three weeks later recomputes cleanly rather than silently drifting.
+
+**The rules are real rules.** Win-by-two, service intervals, deuce, change of ends, the expedite system, the
+cutthroat time cap — implemented once as a pure module the app and the server both run, so the client can drive the
+recording surface with no round trip while the server independently verifies every game it is asked to store.
+
+## Status
+
+In active development, pre-launch. The rules engine, rating engine, and data model are in place; authentication,
+league management, and the recording surface are being built on top of them.
 
 ## Documentation
 
-- **Spec:** [Pongifi: MVP Pitch Document](https://app.notion.com/p/Pongifi-MVP-Pitch-Document-3c7a683b42b780239fd1eb463b76dbf7)
-- **Repo conventions and architecture:** [`CLAUDE.md`](./CLAUDE.md)
-- **General conventions:** [`@jens-johnson/style-guide`](https://github.com/jens-johnson/jens-johnson/blob/main/docs/style-guide/README.md)
+- **[Developer documentation](docs/developer)** — getting started, architecture, and the deployment workflow
+- **[Contributing conventions](https://github.com/jens-johnson/jens-johnson/blob/main/docs/style-guide/README.md)** —
+  the shared style guide this project is written against
 
-## Environments
+## License
 
-| Branch    | Environment | Host                  |
-| --------- | ----------- | --------------------- |
-| `main`    | Production  | `pongifi.com`         |
-| `staging` | Staging     | `staging.pongifi.com` |
-| `feat/*`  | Preview     | per-PR preview URL    |
-
-Feature branches open pull requests against `staging`; `staging` is promoted to `main` by an automated pull request.
+Not yet licensed. All rights reserved.
