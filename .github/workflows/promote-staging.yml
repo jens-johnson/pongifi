@@ -1,4 +1,4 @@
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
 #
 #                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
 #                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
@@ -7,13 +7,13 @@
 #                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
 #                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
 #
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
-# ███████████████████████████████████████ .github/workflows/promote-staging.yml ███████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ███████████████████████████████████████ .github/workflows/promote-staging.yml ████████████████████████████████████████
 #
 # GitHub workflow to auto-create (or updates) a `staging → main` promotion PR whenever staging gets ahead of main.
 # Body is auto-populated with conventional-commit-grouped changes since the last promotion.
 #
-# ─── MERGE STRATEGY: Use merge commits, not squash commits ───────────────────────────────────────────────────────────
+# ─── MERGE STRATEGY: Use merge commits, not squash commits ────────────────────────────────────────────────────────────
 #
 # - Squash-merging a promotion collapses every staging commit into one new commit whose body re-lists all of those
 #   commit messages.
@@ -25,12 +25,12 @@
 #
 # (Squash commits can be manually turned off by going to repo Settings → General → Pull Requests)
 #
-# ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─── USAGE ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #
 # Triggered automatically on every push to `staging`. No manual invocation needed.
 # (Requires repo setting: Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests")
 #
-# ─── SETUP: PROMOTE_PAT secret ───────────────────────────────────────────────────────────────────────────────────────
+# ─── SETUP: PROMOTE_PAT secret ────────────────────────────────────────────────────────────────────────────────────────
 #
 # - A `PROMOTE_PAT` repository secret can be linked to a fine-grained Personal Access Token. This is required for the
 #   auto-opened promotion PR to trigger downstream workflows like CI's required status checks; GitHub silently swallows
@@ -40,7 +40,7 @@
 #   identity).
 # - With PAT: the PR is opened under the admin user's identity, all downstream workflows trigger normally.
 #
-# █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
 
 name: ⬆️ Promote Staging
 

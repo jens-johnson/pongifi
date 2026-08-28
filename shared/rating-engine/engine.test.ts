@@ -195,7 +195,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect(deltaFor(underdog, 'winner')).toBeGreaterThan(deltaFor(favourite, 'winner'));
       });
 
-      /* ─── The spec bug this ticket fixes ─────────────────────────────────────────────────────────────────────── */
+      /* ─── The spec bug this ticket fixes ───────────────────────────────────────────────────────────────────────── */
 
       it('still moves ratings when a retirement leaves no winning margin (VIII.VII)', (): void => {
         /* Taken literally the multiplier is log(1)/log(3) = 0 here, which would move nobody */
