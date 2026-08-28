@@ -1,4 +1,4 @@
-# Getting Started
+# Pongifi • Getting Started
 
 ## Prerequisites
 

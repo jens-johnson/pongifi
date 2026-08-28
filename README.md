@@ -22,43 +22,24 @@
 
 </div>
 
-## What it is
+## Welcome!
 
-Pongifi turns the ping pong table your office already argues over into a league worth keeping records for. Create a
-league, invite the people you play against, record games as they happen, and watch the leaderboard sort out who is
-actually any good.
+Pongifi is the social ping pong app you never knew you needed. Create leagues with your friends, families, and
+coworkers, schedule and record games, and track your statistics as you compete on the leaderboard against one another.
 
-It came out of a real need: a group of coworkers playing daily, keeping score on a whiteboard, and losing the whole
-season every time somebody wiped it.
+This app was born out of a group of coworkers in San Diego who were looking for something to elevate their office ping
+pong experience. We hope you'll enjoy it just as much! 🏓
 
-## Game types
+## Game Types
 
-All three are first-class — the rules, the recording surface, and the ratings each understand them natively.
+There are three types game types available currently in Pongifi. Outside of cutthroat, a special three-player variant,
+game rules are adherent to the standard [ITTF (International Table Tennis Federation)](https://www.ittf.com/) rule set:
 
 | Type          | Players | Notes                                                                           |
 | ------------- | ------- | ------------------------------------------------------------------------------- |
 | **Singles**   | 1v1     | Standard ITTF rules                                                             |
 | **Doubles**   | 2v2     | Standard ITTF rules, including service and receiving rotation                   |
 | **Cutthroat** | 1v1v1   | House rules: one player serves alone against two, and only the server can score |
-
-## What makes it different
-
-**Recording is the product.** One person records for the group from a top-down view of the table — tap a player to
-award the point, and service changes, end changes, and the cutthroat rotation animate so you watch the state change
-instead of tracking it in your head. Nobody else has to open the app while you play.
-
-**Nothing is a mutable counter.** A game's score is derived by replaying its event log, which is what makes undo,
-amendment, and after-the-fact corrections cheap instead of dangerous. Ratings are append-only snapshots keyed to the
-game that caused them, so correcting a result three weeks later recomputes cleanly rather than silently drifting.
-
-**The rules are real rules.** Win-by-two, service intervals, deuce, change of ends, the expedite system, the
-cutthroat time cap — implemented once as a pure module the app and the server both run, so the client can drive the
-recording surface with no round trip while the server independently verifies every game it is asked to store.
-
-## Status
-
-In active development, pre-launch. The rules engine, rating engine, and data model are in place; authentication,
-league management, and the recording surface are being built on top of them.
 
 ## Documentation
 

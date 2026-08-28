@@ -1,15 +1,16 @@
-# Architecture
+# Pongifi • Architecture
 
-Nuxt 4 with TypeScript — Vue 3 on the client, Nitro server routes for the API — deployed on Vercel, with Neon
-serverless Postgres and Upstash Redis. Tailwind CSS v4, and deliberately **no component library**: the live recording
-surface is a custom table graphic that a component kit would only constrain.
+Pongifi is a Nuxt 4 application built with TypeScript, including Vue 3 on the client and Nitro server routes for the
+API. This project is deployed on Vercel, with Neon serverless Postgres and Upstash Redis. Tailwind CSS v4, and
+deliberately **no component library**: the live recording surface is a custom table graphic that a component kit would
+only constrain.
 
-## The three ideas the design rests on
+## Core Design Principles
 
-### 1. The rules engine is pure
+### 1. The Rules Engine is Pure
 
 The rules are implemented **once**, as a pure module under `shared/rules-engine/` with no I/O, consumed by both
-client and server. The client drives the recording surface with no round trip; the server replays any submitted log
+client and server. The client drives the recording surface with no round trip while the server replays any submitted log
 through the same code, so a buggy or tampered client cannot write an impossible game.
 
 ```text
@@ -33,20 +34,20 @@ Four decisions shape it:
 A rally is recorded as `{ wonBy: SERVING | RECEIVING }` rather than naming a winner — the only phrasing that works in
 all three game types, since cutthroat's free-for-all returns have no unambiguous winner on the pair side.
 
-### 2. The event log is the source of truth
+### 2. The Event Log is the Source of Truth
 
 A game's score is **never** a mutable counter. It is derived by replaying `GameEvent` rows through the rules engine.
 `GameParticipant.finalScore` is a denormalized cache written on completion and always reproducible from the log.
 
 This is what makes undo, amendment, and statistic backfill cheap rather than painful.
 
-### 3. Ratings are append-only snapshots
+### 3. Ratings Are Append-Only Snapshots
 
 Rating rows are keyed to the game that caused them; a current rating is the latest snapshot for a given league, user,
 and scope. Amending or voiding a game invalidates every snapshot from that game forward and Pongifi replays them in
 chronological order.
 
-Ratings are path-dependent, so recomputation has to be deterministic — which is only sound because both the rules
+Ratings are path-dependent, so recomputation has to be deterministic, which is only sound because both the rules
 engine and the rating engine are pure functions over the log.
 
 ## Directory layout
@@ -72,7 +73,7 @@ helpers stay unexported. `nuxt.config.ts` scans those trees recursively, because
 time, but drizzle-kit resolves the schema outside Nuxt entirely, so the alias has to exist as a standard Node subpath
 import too.
 
-## Data and clients
+## Data and Clients
 
 Neon Postgres through `#utils/db` (`useDatabase()`), Upstash Redis through `#utils/cache` (`useCache()`). Both are
 lazy per-instance singletons, since Vercel Fluid Compute reuses function instances.
@@ -84,7 +85,7 @@ build-time values into the output.
 Wrap every awaited external call in `runUpstream(promise, 'message.')` from `#utils/http`, which turns unexpected
 rejections into 502s while letting deliberate `createError`s pass through.
 
-## Data model
+## Data Model
 
 Eleven tables model accounts, leagues, games, and ratings. The decisions worth knowing:
 
