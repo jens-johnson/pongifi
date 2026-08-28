@@ -380,7 +380,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect(state.receiver).toBe('b1');
       });
 
-      it('makes the previous receiver the server and the previous server’s partner the receiver (III.II.V.III)', (): void => {
+      it('the previous receiver serves, the previous server’s partner receives (III.II.V.III)', (): void => {
         const after = (points: number): IMatchState => playSides(doubles, rotation, run(Side.A, points)).state;
 
         expect([after(2).server, after(2).receiver]).toEqual(['b1', 'a2']);
@@ -395,7 +395,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect(state.scores).toEqual({ [Side.A]: 3, [Side.B]: 0 });
       });
 
-      it('has the receiving pair serve first in the next game, receiving from their previous server (III.II.V.IV)', (): void => {
+      it('the receiving pair serves next game, receiving from its previous server (III.II.V.IV)', (): void => {
         const settings = settingsFor({ gameType: GameType.DOUBLES, matchFormat: 3 });
         const { state } = playSides(settings, rotation, run(Side.A, 11));
 
@@ -543,7 +543,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect(state.winner).toBe('p1');
       });
 
-      it('plays on in rotation when the cap finds the lead tied, until a leader wins as server (III.II.IX.IX)', (): void => {
+      it('plays on in rotation when the cap finds the lead tied (III.II.IX.IX)', (): void => {
         const tied = replayMatch(cutthroat, [...opening(rotation), { type: EventType.TIME_CAP_REACHED }]);
 
         expect(tied.isComplete).toBe(false);

@@ -57,7 +57,7 @@ interface IInternalState {
   winner: string | null;
 }
 
-/* ─── Rotation Helpers ────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Rotation Helpers ───────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * The side a participant plays for
@@ -108,7 +108,7 @@ function rotateForNextGame(rotation: string[]): string[] {
   return next;
 }
 
-/* ─── Scoring Helpers ─────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Scoring Helpers ────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Whether the current game has been won, and by which scoring unit. A game needs both the target score and the winning

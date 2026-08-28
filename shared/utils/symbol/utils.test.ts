@@ -21,7 +21,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defineSymbol, symbolDescription, symbolName } from './utils';
 
-/* ─── Fixtures ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * The readable name registered on the sample symbols under test
@@ -30,7 +30,7 @@ import { defineSymbol, symbolDescription, symbolName } from './utils';
  */
 const SAMPLE_NAME: string = 'Sample Symbol';
 
-/* ─── Tests ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(defineSymbol), (): void => {
