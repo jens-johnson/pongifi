@@ -12,7 +12,8 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
  *
- * Unauthenticated landing route: hero with the dithered backdrop, product framing, and the single sign-in CTA.
+ * Unauthenticated landing route: rotating hero headline over the dithered backdrop, with the single sign-in entry
+ * point.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -26,7 +27,7 @@ const theme = ref<TTheme>('light');
 /**
  * Flips the palette.
  *
- * A development affordance only — real theme resolution (system preference, persistence) is not designed yet, so this
+ * A development affordance only -- real theme resolution (system preference, persistence) is not designed yet, so this
  * writes the attribute directly rather than pretending to be the eventual implementation.
  */
 const toggleTheme = (): void => {
@@ -38,23 +39,29 @@ const toggleTheme = (): void => {
 <template>
   <main class="bg-bg text-ink min-h-dvh">
     <nav class="flex items-center justify-between px-16 py-6">
-      <span class="font-display text-h2 font-medium tracking-tight">Pongifi</span>
+      <NuxtLink
+        aria-label="Pongifi home"
+        class="text-ink hover:text-accent-strong block transition-colors"
+        to="/"
+      >
+        <PongifiWordmark class="h-7 w-auto" />
+      </NuxtLink>
 
       <div class="text-ink-muted text-body hidden items-center gap-8 md:flex">
         <a
-          class="hover:text-ink transition-colors"
-          href="#how"
-          >How it works</a
+          class="hover:text-accent-strong transition-colors"
+          href="#about"
+          >About</a
         >
 
         <a
-          class="hover:text-ink transition-colors"
-          href="#why"
-          >Why Pongifi</a
+          class="hover:text-accent-strong transition-colors"
+          href="#features"
+          >Features</a
         >
 
         <a
-          class="hover:text-ink transition-colors"
+          class="hover:text-accent-strong transition-colors"
           href="#faq"
           >FAQ</a
         >
@@ -62,18 +69,23 @@ const toggleTheme = (): void => {
 
       <div class="flex items-center gap-4">
         <button
-          class="border-border text-ink-muted hover:text-ink text-body-sm rounded-md border px-3 py-1.5 transition-colors"
+          :aria-label="theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'"
+          class="text-ink-muted hover:text-accent-strong flex size-9 cursor-pointer items-center justify-center rounded-md transition-colors"
           type="button"
           @click="toggleTheme"
         >
-          {{ theme === 'light' ? 'Dark' : 'Light' }}
+          <Icon
+            :name="theme === 'light' ? 'lucide:moon' : 'lucide:sun'"
+            class="size-4"
+          />
         </button>
 
         <a
-          class="text-brand hover:text-brand-hover text-body transition-colors"
+          class="text-accent-strong hover:text-accent text-body whitespace-nowrap transition-colors"
           href="#"
-          >Sign in</a
         >
+          Sign In / Register
+        </a>
       </div>
     </nav>
 
@@ -84,37 +96,35 @@ const toggleTheme = (): void => {
         </ClientOnly>
       </div>
 
-      <div class="relative z-10 max-w-[560px]">
-        <span class="bg-brand-soft text-brand-soft-ink text-body-sm inline-block rounded-full px-3 py-1.5 font-medium">
-          For offices, clubs and garages
-        </span>
-
-        <h1 class="font-display text-hero mt-6 font-medium tracking-tight text-balance">
-          Ping pong,<br />properly scored.
+      <div class="relative z-10 max-w-[620px]">
+        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
+        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
+          <HeroHeadline />
         </h1>
 
-        <p class="text-ink-muted text-body-lg mt-6">
-          Start a league with the people you already play against. Record every game, and let the ratings settle who is
-          actually best — with every result confirmed by the person across the table.
+        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
+          Start a league. Compete with your family and friends. Climb the leaderboards.
         </p>
 
         <div class="mt-8 flex flex-wrap items-center gap-3">
           <a
-            class="bg-brand text-brand-ink hover:bg-brand-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
+            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
             href="#"
           >
-            Continue with Google
+            Get Started
           </a>
 
           <a
-            class="text-brand hover:text-brand-hover text-body-lg rounded-md px-4 py-3 font-medium"
-            href="#how"
+            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
+            href="#about"
           >
-            See how it works →
+            See how it works
+            <Icon
+              class="size-4"
+              name="lucide:arrow-right"
+            />
           </a>
         </div>
-
-        <p class="text-ink-subtle text-body-sm mt-6">Free to use · No app to install</p>
       </div>
     </section>
   </main>

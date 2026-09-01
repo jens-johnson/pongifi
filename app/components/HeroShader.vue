@@ -27,6 +27,8 @@ interface IProps {
   invert?: boolean;
   /** Radius of the cursor highlight in CSS pixels. Dots inside it tint towards the accent. */
   pointerRadius?: number;
+  /** Fraction of the video height ignored at the bottom, to drop artefacts below the subject. */
+  cropBottom?: number;
   /** Cell pitch in CSS pixels. This is the dot resolution. */
   pitch?: number;
   /** Source video, served from public/. */
@@ -40,6 +42,7 @@ interface IProps {
  */
 const props = withDefaults(defineProps<IProps>(), {
   blackPoint: 0.13,
+  cropBottom: 0.07,
   dotFill: 0.82,
   gamma: 0.9,
   invert: false,
@@ -80,6 +83,7 @@ uniform float uDotFill;
 uniform float uBlackPoint;
 uniform float uWhitePoint;
 uniform float uGamma;
+uniform float uCropBottom;
 uniform float uInvert;
 
 out vec4 fragColor;
@@ -108,6 +112,10 @@ void main() {
 
   vec2 uv = (cellCentre / uResolution - 0.5) / scale + 0.5;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+
+  // the source has a few stray specks well below the paddle; uv.y counts from the bottom,
+  // so this trims the base of the frame without touching the subject
+  if (uv.y < uCropBottom) discard;
 
   vec3 rgb = texture(uVideo, vec2(uv.x, 1.0 - uv.y)).rgb;
   float lum = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -295,6 +303,7 @@ const draw = (): void => {
   context.uniform1f(set('uBlackPoint'), props.blackPoint);
   context.uniform1f(set('uWhitePoint'), props.whitePoint);
   context.uniform1f(set('uGamma'), props.gamma);
+  context.uniform1f(set('uCropBottom'), props.cropBottom);
   context.uniform1f(set('uInvert'), props.invert ? 1 : 0);
 
   context.drawArrays(context.TRIANGLES, 0, 6);

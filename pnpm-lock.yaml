@@ -20,9 +20,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@neondatabase/serverless@1.1.0)(@upstash/redis@1.38.2)
-      lottie-web:
-        specifier: ^5.13.0
-        version: 5.13.0
       nuxt:
         specifier: ^4.5.2
         version: 4.5.2(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@oxc-project/types@0.146.0)(@types/node@26.3.0)(@upstash/redis@1.38.2)(@vue/compiler-sfc@3.5.41)(cac@7.0.0)(commander@14.0.3)(db0@0.3.4(drizzle-orm@0.45.2(@neondatabase/serverless@1.1.0)(@upstash/redis@1.38.2)))(drizzle-orm@0.45.2(@neondatabase/serverless@1.1.0)(@upstash/redis@1.38.2))(esbuild@0.28.2)(eslint@10.9.1(jiti@2.7.0))(ioredis@5.11.1)(lightningcss@1.33.0)(magicast@0.5.4)(meow@14.1.0)(optionator@0.9.4)(rolldown@1.2.5)(rollup-plugin-visualizer@7.1.1(rolldown@1.2.5)(rollup@4.63.0))(rollup@4.63.0)(srvx@0.11.22)(stylelint@17.14.1(typescript@6.0.3))(terser@5.50.0)(tsx@4.23.12)(typescript@6.0.3)(vite@8.2.2(@types/node@26.3.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))(vue-tsc@3.3.11(typescript@6.0.3))(yaml@2.9.0)
@@ -42,6 +39,9 @@ importers:
       '@commitlint/cli':
         specifier: ^21.2.2
         version: 21.2.2(@types/node@26.3.0)(conventional-commits-parser@7.1.2)(typescript@6.0.3)
+      '@iconify-json/lucide':
+        specifier: ^1.2.128
+        version: 1.2.128
       '@jens-johnson/style-guide':
         specifier: github:jens-johnson/jens-johnson#v0.9.2
         version: https://codeload.github.com/jens-johnson/jens-johnson/tar.gz/bc38f4687b5101868fcef45b63c1ba6d5e81aa84(@typescript-eslint/utils@8.68.0(eslint@10.9.1(jiti@2.7.0))(typescript@6.0.3))(eslint@10.9.1(jiti@2.7.0))(postcss-html@2.0.0(postcss@8.5.26))(prettier@3.9.6)(stylelint@17.14.1(typescript@6.0.3))(typescript@6.0.3)
@@ -1200,6 +1200,9 @@ packages:
   '@humanwhocodes/retry@0.4.3':
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
+
+  '@iconify-json/lucide@1.2.128':
+    resolution: {integrity: sha512-s8tZ6BIQfkwl6INcdHMri3bokShU/MwOVM8cyFUgE7QJ3EuwmIhXFsrqtA0WD8YrhoII1K+KA5EEIJ4x0JWIdw==}
 
   '@iconify/collections@1.0.728':
     resolution: {integrity: sha512-vzRn5TOgHv5cp/gpXQ42FfywPxa2htotIypQfSVt7GXiMHeYzmawMDii2IYHFYNmpWyamuMzvMci/JlNz9epkw==}
@@ -4497,9 +4500,6 @@ packages:
     resolution: {integrity: sha512-Ajzxb8CM6WAnFjgiloPsI3bF+WCxcvhdIG3KNA2KN962+tdBsHcuQ4k4qX/EcS/2CRkcc0iAkR956Nib6aXU/Q==}
     engines: {node: '>=0.10.0'}
 
-  lottie-web@5.13.0:
-    resolution: {integrity: sha512-+gfBXl6sxXMPe8tKQm7qzLnUy5DUPJPKIyRHwtpCpyUEYjHYRJC/5gjUvdkuO2c3JllrPtHXH5UJJK8LRYl5yQ==}
-
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
 
@@ -7214,6 +7214,10 @@ snapshots:
   '@humanwhocodes/module-importer@1.0.1': {}
 
   '@humanwhocodes/retry@0.4.3': {}
+
+  '@iconify-json/lucide@1.2.128':
+    dependencies:
+      '@iconify/types': 2.0.0
 
   '@iconify/collections@1.0.728':
     dependencies:
@@ -10847,8 +10851,6 @@ snapshots:
       is-unicode-supported: 0.1.0
 
   longest@2.0.1: {}
-
-  lottie-web@5.13.0: {}
 
   lru-cache@10.4.3: {}
 
