@@ -39,3 +39,9 @@ CHANGELOG.md
 *.min.js
 *.min.css
 .claude/
+
+# ─── Animation assets ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+# Lottie exports ship minified; Prettier re-indents them and roughly doubles the transfer size for no benefit, since
+# nobody reads or hand-edits a keyframe table
+public/dither
