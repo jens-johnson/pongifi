@@ -57,7 +57,8 @@
   --color-brand-soft-ink: #194576;
   --color-accent: #f26419;
   --color-accent-hover: #d24e0c;
-  --color-accent-ink: #fff;
+  --color-accent-ink: #0d1117;
+  --color-accent-strong: #a93d0a;
 
   /* ── The playing surface ───────────────────────────────────────────────────────────────────────────────────────── */
   --color-table-felt: #1f5697;
@@ -143,6 +144,7 @@
   --color-accent: #ff7f3f;
   --color-accent-hover: #ffa26f;
   --color-accent-ink: #0d1117;
+  --color-accent-strong: #ff7f3f;
 
   --color-table-felt: #143659;
   --color-table-line: #dde1e8;
