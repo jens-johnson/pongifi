@@ -105,7 +105,7 @@ onBeforeUnmount((): void => {
 <template>
   <section
     id="how-it-works"
-    class="px-16 py-24"
+    class="px-6 py-16 md:px-16 md:py-24"
   >
     <div class="mx-auto max-w-[1120px]">
       <h2 class="font-display text-h1 font-medium tracking-tight">How it works</h2>

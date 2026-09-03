@@ -178,7 +178,7 @@ onBeforeUnmount((): void => {
 <template>
   <section
     v-if="visible"
-    class="border-border border-y px-16 py-16"
+    class="border-border border-y px-6 py-12 md:px-16 md:py-16"
   >
     <div class="mx-auto grid max-w-[1120px] gap-10 sm:grid-cols-2 lg:grid-cols-4">
       <div

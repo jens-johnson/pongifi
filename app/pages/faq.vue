@@ -20,7 +20,7 @@ useHead({ title: 'FAQ · Pongifi' });
 </script>
 
 <template>
-  <main class="px-16 pt-22 pb-26">
+  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
     <div class="max-w-[680px]">
       <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
 

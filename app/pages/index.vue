@@ -1,6 +1,6 @@
 <template>
   <main>
-    <section class="relative overflow-hidden px-16 pt-22 pb-26">
+    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
       <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
         <ClientOnly>
           <HeroShader />
