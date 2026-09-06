@@ -199,12 +199,12 @@ onBeforeUnmount((): void => {
           />
         </button>
 
-        <a
+        <NuxtLink
           class="text-accent-strong hover:text-accent text-body hidden whitespace-nowrap transition-colors md:inline"
-          href="#"
+          :to="SIGN_IN_ROUTE"
         >
           Sign In / Register
-        </a>
+        </NuxtLink>
 
         <button
           ref="trigger"
@@ -293,12 +293,12 @@ onBeforeUnmount((): void => {
               </span>
             </button>
 
-            <a
+            <NuxtLink
               class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg mt-8 block rounded-md px-6 py-4 text-center font-medium transition-colors"
-              href="#"
+              :to="SIGN_IN_ROUTE"
             >
               Sign In / Register
-            </a>
+            </NuxtLink>
           </div>
         </div>
       </div>

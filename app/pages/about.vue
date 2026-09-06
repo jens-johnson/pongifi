@@ -91,26 +91,7 @@ useHead({
             </a>
           </div>
 
-          <!--
-            The closing call to action is specified to branch on auth state -- a signed-in reader being told to start
-            over reads as the product not knowing who they are. There is no session to read yet, so this is the
-            signed-out branch; the signed-in variant ("Back to your leagues" pointing at /leagues) goes in once
-            authentication lands.
-          -->
-          <div class="border-border bg-surface rounded-2xl border p-6 md:p-10">
-            <h2 class="font-display text-h2 font-medium tracking-tight">Ready for a real leaderboard?</h2>
-
-            <p class="text-ink-muted text-body mt-3">
-              Start a league, invite the people you already play against, and let the table settle it.
-            </p>
-
-            <a
-              class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg mt-6 inline-block rounded-md px-6 py-3 font-medium transition-colors"
-              href="#"
-            >
-              Start a league
-            </a>
-          </div>
+          <MarketingCta />
         </div>
       </div>
     </section>
