@@ -3,14 +3,14 @@
     <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
       <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
         <ClientOnly>
-          <HeroShader />
+          <PrimitivesHeroShader />
         </ClientOnly>
       </div>
 
       <div class="relative z-10 max-w-[620px]">
         <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
         <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <HeroHeadline />
+          <WidgetsHomeHeroHeadline />
         </h1>
 
         <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
@@ -39,8 +39,8 @@
       </div>
     </section>
 
-    <StatsBar />
+    <DataStatsBar />
 
-    <HowItWorks />
+    <WidgetsHomeHowItWorks />
   </main>
 </template>

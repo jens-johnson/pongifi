@@ -16,11 +16,18 @@
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-/** Maximum tilt, in degrees, reached at the far edge of the visual. */
+
+/* ─── Constants ──────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The maximum tilt, in degrees (º), reached at the far edge of the visual.
+ * @internal
+ * @constant
+ */
 const TILT_DEGREES: number = 7;
 
 /** The element the pointer is measured against. */
-const surface = ref<HTMLElement | null>(null);
+const surface: Ref<HTMLElement | null> = ref<HTMLElement | null>(null);
 
 /** Current tilt about the horizontal axis. */
 const tiltX = ref<number>(0);

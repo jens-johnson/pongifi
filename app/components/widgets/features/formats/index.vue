@@ -16,7 +16,7 @@
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-import type { TFeaturesFormat } from './FeaturesFormatsDiagram.vue';
+import type { TFeaturesFormat } from '../formats-diagram/index.vue';
 
 /** One compact fact about a format. */
 interface IFormatStat {
@@ -256,7 +256,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
           </div>
 
           <div class="bg-brand-soft flex min-h-[320px] items-center p-4 sm:p-8">
-            <FeaturesFormatsDiagram
+            <WidgetsFeaturesFormatsDiagram
               :key="current.id"
               :format="current.id"
             />

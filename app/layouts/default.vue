@@ -171,7 +171,7 @@ onBeforeUnmount((): void => {
         class="text-ink hover:text-accent-strong block transition-colors"
         to="/"
       >
-        <PongifiWordmark class="h-7 w-auto" />
+        <BrandPongifiWordmark class="h-7 w-auto" />
       </NuxtLink>
 
       <div class="text-ink-muted text-body hidden items-center gap-8 md:flex">
@@ -241,7 +241,7 @@ onBeforeUnmount((): void => {
             to="/"
             @click="close"
           >
-            <PongifiWordmark class="h-7 w-auto" />
+            <BrandPongifiWordmark class="h-7 w-auto" />
           </NuxtLink>
 
           <button

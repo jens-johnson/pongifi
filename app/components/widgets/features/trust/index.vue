@@ -59,7 +59,7 @@ const ELIGIBILITY: readonly string[] = [
         </p>
       </div>
 
-      <FeaturesTrustDiagram />
+      <WidgetsFeaturesTrustDiagram />
 
       <div class="mt-12 grid gap-10 md:grid-cols-2">
         <div>

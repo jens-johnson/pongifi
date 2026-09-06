@@ -16,7 +16,8 @@
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-import type { TDifferenceDiagram } from './DifferenceDiagram.vue';
+
+import type { TDifferenceDiagram } from '../../../data/difference-diagram/index.vue';
 
 /**
  *
@@ -169,7 +170,7 @@ onBeforeUnmount((): void => {
             </div>
 
             <div class="bg-surface-raised rounded-xl p-6">
-              <DifferenceDiagram :variant="current.diagram" />
+              <DataDifferenceDiagram :variant="current.diagram" />
             </div>
           </div>
         </Transition>

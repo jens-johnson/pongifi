@@ -54,7 +54,7 @@ const CAPABILITIES: readonly ICapability[] = [
     class="scroll-mt-16 px-6 py-16 md:px-16 md:py-24"
   >
     <div class="mx-auto grid max-w-[1120px] gap-12 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-center">
-      <FeaturesLeagueDiagram />
+      <WidgetsFeaturesLeagueDiagram />
 
       <div>
         <h2

@@ -48,7 +48,7 @@ useHead({
           </p>
         </div>
 
-        <AboutRally />
+        <WidgetsAboutRally />
       </div>
     </section>
 
@@ -65,9 +65,9 @@ useHead({
       </div>
     </section>
 
-    <DifferenceCarousel />
+    <WidgetsAboutDifferenceCarousel />
 
-    <PlayContexts />
+    <WidgetsAboutPlayContexts />
 
     <section class="border-border border-t px-6 py-16 md:px-16 md:py-24">
       <div class="mx-auto max-w-[1120px]">
@@ -91,7 +91,7 @@ useHead({
             </a>
           </div>
 
-          <MarketingCta />
+          <WidgetsMarketingCta />
         </div>
       </div>
     </section>

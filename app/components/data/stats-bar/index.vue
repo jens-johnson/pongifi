@@ -16,7 +16,7 @@
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-import type { IPublicStats } from '../../server/api/stats.get';
+import type { IPublicStats } from '../../../../server/api/stats.get';
 
 /**
  *

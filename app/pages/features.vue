@@ -33,7 +33,7 @@ useHead({
     <section class="relative overflow-hidden px-6 pt-12 pb-14 md:px-16 md:pt-16 md:pb-18">
       <div class="pointer-events-none absolute inset-y-0 right-16 hidden w-[38%] overflow-hidden xl:block">
         <ClientOnly>
-          <HeroShader />
+          <PrimitivesHeroShader />
         </ClientOnly>
       </div>
 
@@ -50,28 +50,28 @@ useHead({
             them into standings you can argue about less.
           </p>
 
-          <MarketingCta compact />
+          <WidgetsMarketingCta compact />
         </div>
       </div>
     </section>
 
-    <FeaturesAnchorNav />
+    <WidgetsFeaturesAnchorNav />
 
-    <FeaturesScoring />
+    <WidgetsFeaturesScoring />
 
-    <FeaturesFormats />
+    <WidgetsFeaturesFormats />
 
-    <FeaturesLeague />
+    <WidgetsFeaturesLeague />
 
-    <FeaturesTrust />
+    <WidgetsFeaturesTrust />
 
-    <FeaturesRatings />
+    <WidgetsFeaturesRatings />
 
-    <FeaturesLimits />
+    <WidgetsFeaturesLimits />
 
     <section class="border-border border-t px-6 py-16 md:px-16 md:py-24">
       <div class="mx-auto max-w-[820px]">
-        <MarketingCta show-faq />
+        <WidgetsMarketingCta show-faq />
       </div>
     </section>
   </main>
