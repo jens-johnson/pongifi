@@ -69,7 +69,7 @@ import { TRUST_DIAGRAM_STEPS } from './constants';
           class="step relative flex items-center gap-3 sm:block sm:text-center"
         >
           <span
-            class="relative z-10 grid size-8 shrink-0 place-items-center rounded-full"
+            class="relative z-10 grid size-8 shrink-0 place-items-center rounded-full sm:mx-auto"
             :class="
               index === 0 ? 'bg-positive text-ink-inverse' : 'border-border-strong bg-surface text-ink-muted border'
             "
