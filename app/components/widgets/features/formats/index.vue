@@ -10,118 +10,86 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #components/FeaturesFormats.vue ██████████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/features/formats/index.vue ███████████████████████████████████
  *
- * Singles, doubles and cutthroat section for the Features page.
+ * Game format explorer for the Features page: a tab list over singles, doubles and cutthroat.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-import type { TFeaturesFormat } from '../formats-diagram/index.vue';
 
-/** One compact fact about a format. */
-interface IFormatStat {
-  label: string;
-  value: string;
-}
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/** Copy, controls and facts for one mode in the explorer. */
-interface IFormat {
-  description: string;
-  icon: string;
-  id: TFeaturesFormat;
-  stats: readonly IFormatStat[];
-  title: string;
+import { FEATURES_FORMATS, FEATURES_RULE_COLUMNS } from './constants';
+import type { IFeaturesFormat } from './types';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The format currently shown in the explorer. It changes only when the visitor asks it to
+ * @internal
+ * @constant
+ */
+const active: Ref<number> = ref<number>(0);
+
+/**
+ * Announced only when the adjacent controls change the panel without moving focus to a tab
+ * @internal
+ * @constant
+ */
+const announcement: Ref<string | null> = ref<string | null>(null);
+
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The current format. The index is always wrapped before it reaches this computed value
+ * @internal
+ * @constant
+ */
+const current: ComputedRef<IFeaturesFormat | undefined> = computed<IFeaturesFormat | undefined>(
+  (): IFeaturesFormat | undefined => FEATURES_FORMATS[active.value],
+);
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Selects one of the three formats, wrapping at either end
+ * @internal
+ * @function
+ * @param index - The format to show; values outside the range wrap
+ * @param announce - Whether the change needs announcing, for controls that do not move focus
+ */
+function select(index: number, announce: boolean = false): void {
+  active.value = (index + FEATURES_FORMATS.length) % FEATURES_FORMATS.length;
+  announcement.value = announce ? `${FEATURES_FORMATS[active.value]?.title ?? 'Format'} selected.` : null;
 }
 
 /**
- *
+ * Moves relative to the current format, for the previous and next controls
+ * @internal
+ * @function
+ * @param offset - How far to move, in formats
  */
-const FORMATS: readonly IFormat[] = [
-  {
-    description: "One against one. First to the target, win by the margin, service changing on your league's interval.",
-    icon: 'lucide:user',
-    id: 'singles',
-    stats: [
-      { label: 'Players', value: '2' },
-      { label: 'Shape', value: '1 vs 1' },
-      { label: 'Service', value: 'League interval' },
-    ],
-    title: 'Singles',
-  },
-  {
-    description:
-      'Two against two. Pongifi tracks the full service and receiving order, including the receiving pair swapping order in the deciding game.',
-    icon: 'lucide:users',
-    id: 'doubles',
-    stats: [
-      { label: 'Players', value: '4' },
-      { label: 'Shape', value: '2 vs 2' },
-      { label: 'Service', value: 'Fixed order' },
-    ],
-    title: 'Doubles',
-  },
-  {
-    description:
-      'One against two, on a fixed rotation. Only the server can score. Optional time cap: an outright leader wins when it elapses; tied leaders take service in rotation until one of them wins a rally as server. House rules, and we say so.',
-    icon: 'lucide:users-round',
-    id: 'cutthroat',
-    stats: [
-      { label: 'Players', value: '3' },
-      { label: 'Shape', value: '1 vs 2' },
-      { label: 'Scoring', value: 'Server only' },
-    ],
-    title: 'Cutthroat',
-  },
-];
-
-/** The format currently shown in the explorer. It changes only when the visitor asks it to. */
-const active = ref<number>(0);
-
-/** Announced only when the adjacent controls change the panel without moving focus to a tab. */
-const announcement = ref<string | null>(null);
-
-/** The current format. The index is always wrapped before it reaches this computed value. */
-const current = computed<IFormat | undefined>((): IFormat | undefined => FORMATS[active.value]);
-
-/** Selects one of the three formats. */
-const select = (index: number, announce: boolean = false): void => {
-  active.value = (index + FORMATS.length) % FORMATS.length;
-  announcement.value = announce ? `${FORMATS[active.value]?.title ?? 'Format'} selected.` : null;
-};
-
-/** Moves relative to the current format, wrapping at either end. */
-const move = (offset: number): void => {
+function move(offset: number): void {
   select(active.value + offset, true);
-};
+}
 
-/** Selects a tab and puts keyboard focus on it. */
-const selectAndFocus = (index: number): void => {
+/**
+ * Selects a tab and puts keyboard focus on it, as a horizontal tab list is expected to
+ * @internal
+ * @function
+ * @param index - The tab to select and focus
+ */
+function selectAndFocus(index: number): void {
   select(index);
 
   void nextTick((): void => {
-    const format: IFormat | undefined = FORMATS[active.value];
+    const format: IFeaturesFormat | undefined = FEATURES_FORMATS[active.value];
 
     if (format !== undefined) {
       document.getElementById(`format-tab-${format.id}`)?.focus();
     }
   });
-};
-
-/**
- *
- */
-const RULES: readonly string[] = [
-  "Service changing on the league's interval, and every point at deuce (singles and doubles).",
-  'Change of ends between games, and at the midpoint of a deciding game in a best-of match.',
-  'Doubles service and receiving order, including the deciding-game reversal.',
-  'Cutthroat rotation, server-only scoring, and the time cap.',
-  'The expedite system, when a league allows it (singles and doubles).',
-  'Lets, service doubt warnings and faults, timeouts, towel breaks.',
-  'Retirement, with the score at that moment standing; in cutthroat the leader at that moment wins.',
-];
-
-/** Independent columns keep wrapped rules from changing the vertical rhythm beside them. */
-const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.slice(4)];
+}
 </script>
 
 <template>
@@ -152,7 +120,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
           role="tablist"
         >
           <button
-            v-for="(format, index) in FORMATS"
+            v-for="(format, index) in FEATURES_FORMATS"
             :id="`format-tab-${format.id}`"
             :key="format.id"
             :aria-selected="active === index"
@@ -162,7 +130,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
             :tabindex="active === index ? 0 : -1"
             type="button"
             @click="select(index)"
-            @keydown.end.prevent="selectAndFocus(FORMATS.length - 1)"
+            @keydown.end.prevent="selectAndFocus(FEATURES_FORMATS.length - 1)"
             @keydown.home.prevent="selectAndFocus(0)"
             @keydown.left.prevent="selectAndFocus(active - 1)"
             @keydown.right.prevent="selectAndFocus(active + 1)"
@@ -193,7 +161,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
         >
           <div class="flex flex-col p-6 sm:p-8 lg:p-10">
             <span class="text-accent-strong text-caption font-mono uppercase">
-              {{ String(active + 1).padStart(2, '0') }} / {{ String(FORMATS.length).padStart(2, '0') }}
+              {{ String(active + 1).padStart(2, '0') }} / {{ String(FEATURES_FORMATS.length).padStart(2, '0') }}
             </span>
 
             <h3 class="font-display text-h2 mt-4 font-medium tracking-tight">{{ current.title }}</h3>
@@ -246,7 +214,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
                 class="ml-2 flex items-center gap-2"
               >
                 <span
-                  v-for="format in FORMATS"
+                  v-for="format in FEATURES_FORMATS"
                   :key="format.id"
                   :class="current.id === format.id ? 'bg-accent w-6' : 'bg-border-strong w-2'"
                   class="h-2 rounded-full transition-all"
@@ -269,7 +237,7 @@ const RULE_COLUMNS: readonly (readonly string[])[] = [RULES.slice(0, 4), RULES.s
 
         <div class="mt-8 grid gap-x-12 gap-y-4 md:grid-cols-2">
           <ul
-            v-for="(rules, columnIndex) in RULE_COLUMNS"
+            v-for="(rules, columnIndex) in FEATURES_RULE_COLUMNS"
             :key="columnIndex"
             class="grid content-start gap-4"
           >

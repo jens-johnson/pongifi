@@ -10,42 +10,14 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #components/FeaturesLeague.vue ███████████████████████████████████████████
+ * ███████████████████████████████████ #components/widgets/features/league/index.vue ███████████████████████████████████
  *
  * League configuration section for the Features page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-interface ICapability {
-  description: string;
-  title: string;
-}
 
-/**
- *
- */
-const CAPABILITIES: readonly ICapability[] = [
-  {
-    description:
-      'Which formats the league plays, points to win for each, winning margin, service interval, best-of format, expedite, and the cutthroat time cap.',
-    title: 'Formats and rules',
-  },
-  {
-    description:
-      'Three roles: commissioner, manager, player. Decide whether players or managers create games and record results.',
-    title: 'Who does what',
-  },
-  {
-    description:
-      'Invite by link or email, with expiry dates and use limits. Private by default; discoverable if you want people to find you.',
-    title: 'Invitations and visibility',
-  },
-  {
-    description:
-      'Whether results need confirmation and how long they wait before automatic acceptance, how long they stay open for amendment, whether the league is rated, and how long a new player is provisional.',
-    title: 'Results and ratings policy',
-  },
-];
+import { LEAGUE_CAPABILITIES } from './constants';
 </script>
 
 <template>
@@ -72,7 +44,7 @@ const CAPABILITIES: readonly ICapability[] = [
 
         <dl class="mt-10 grid gap-x-8 gap-y-7 sm:grid-cols-2">
           <div
-            v-for="capability in CAPABILITIES"
+            v-for="capability in LEAGUE_CAPABILITIES"
             :key="capability.title"
           >
             <dt class="text-body font-medium">{{ capability.title }}</dt>

@@ -10,45 +10,14 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████ #components/FeaturesRatingsDiagram.vue ███████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/features/ratings-diagram/index.vue ███████████████████████████████
  *
- * Qualitative leaderboard movement illustration for the Features page.
+ * Leaderboard illustration for the ratings section.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-interface IPlayerRow {
-  movement: 'down' | 'none' | 'up';
-  name: string;
-  provisional?: boolean;
-  rank: number;
-}
 
-/**
- *
- */
-const PLAYERS: readonly IPlayerRow[] = [
-  {
-    movement: 'down',
-    name: 'Sam',
-    rank: 1,
-  },
-  {
-    movement: 'none',
-    name: 'Rin',
-    rank: 2,
-  },
-  {
-    movement: 'up',
-    name: 'Maya',
-    provisional: true,
-    rank: 3,
-  },
-  {
-    movement: 'none',
-    name: 'Alex',
-    rank: 4,
-  },
-];
+import { RATINGS_PLAYERS } from './constants';
 </script>
 
 <template>
@@ -84,7 +53,7 @@ const PLAYERS: readonly IPlayerRow[] = [
 
     <ol class="mt-6 space-y-2">
       <li
-        v-for="player in PLAYERS"
+        v-for="player in RATINGS_PLAYERS"
         :key="player.name"
         class="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-3"
         :class="player.movement === 'up' ? 'bg-positive-soft' : 'bg-surface'"

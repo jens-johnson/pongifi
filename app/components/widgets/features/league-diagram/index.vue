@@ -10,65 +10,14 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #components/FeaturesLeagueDiagram.vue ███████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/features/league-diagram/index.vue ███████████████████████████████
  *
- * Example league and rulebook illustration for the Features page.
+ * Roster and settings illustration for the league configuration section.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-interface IMember {
-  initials: string;
-  name: string;
-  role: string;
-}
 
-/**
- *
- */
-const MEMBERS: readonly IMember[] = [
-  {
-    initials: 'MJ',
-    name: 'Maya',
-    role: 'Commissioner',
-  },
-  {
-    initials: 'SK',
-    name: 'Sam',
-    role: 'Manager',
-  },
-  {
-    initials: 'AL',
-    name: 'Alex',
-    role: 'Player',
-  },
-  {
-    initials: 'RN',
-    name: 'Rin',
-    role: 'Player',
-  },
-  {
-    initials: 'TK',
-    name: 'Taylor',
-    role: 'Player',
-  },
-  {
-    initials: 'JO',
-    name: 'Jordan',
-    role: 'Player',
-  },
-];
-
-/**
- *
- */
-const RULES: readonly string[] = [
-  'Singles · Doubles',
-  'First to 11, win by 2',
-  'Best of 3',
-  'Results need confirmation · 48 h',
-  'Amendments · 24 h',
-  'Players record their own games',
-];
+import { LEAGUE_MEMBERS, LEAGUE_RULES } from './constants';
 </script>
 
 <template>
@@ -110,7 +59,7 @@ const RULES: readonly string[] = [
 
       <ul class="mt-4 grid gap-3 sm:grid-cols-2">
         <li
-          v-for="member in MEMBERS"
+          v-for="member in LEAGUE_MEMBERS"
           :key="member.name"
           class="flex min-w-0 items-center gap-3"
         >
@@ -143,7 +92,7 @@ const RULES: readonly string[] = [
 
       <ul class="mt-4 space-y-3">
         <li
-          v-for="rule in RULES"
+          v-for="rule in LEAGUE_RULES"
           :key="rule"
           class="text-ink-muted text-body-sm flex items-start gap-3"
         >

@@ -10,13 +10,14 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #components/FeaturesTrustDiagram.vue ████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/features/trust-diagram/index.vue ████████████████████████████████
  *
- * Result acceptance workflow illustration for the Features page.
+ * Illustration of a result moving from recorded to accepted and into the standings.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-const STEPS: readonly string[] = ['Recorded', 'Accepted', 'In the standings'];
+
+import { TRUST_DIAGRAM_STEPS } from './constants';
 </script>
 
 <template>
@@ -63,7 +64,7 @@ const STEPS: readonly string[] = ['Recorded', 'Accepted', 'In the standings'];
 
       <ol class="mt-8 grid gap-4 sm:grid-cols-3 sm:gap-0">
         <li
-          v-for="(step, index) in STEPS"
+          v-for="(step, index) in TRUST_DIAGRAM_STEPS"
           :key="step"
           class="step relative flex items-center gap-3 sm:block sm:text-center"
         >

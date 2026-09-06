@@ -10,18 +10,14 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #components/FeaturesLimits.vue ███████████████████████████████████████████
+ * ███████████████████████████████████ #components/widgets/features/limits/index.vue ███████████████████████████████████
  *
- * Features deliberately held beyond the first release.
+ * Launch-scope limits strip for the Features page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-/** Capabilities deliberately held beyond the first release. */
-const LATER: readonly string[] = [
-  'Achievements and badges',
-  'Ranking across leagues rather than within one',
-  'Anything paid',
-];
+
+import { LATER_CAPABILITIES } from './constants';
 </script>
 
 <template>
@@ -35,7 +31,7 @@ const LATER: readonly string[] = [
 
       <ul class="grid gap-4 sm:grid-cols-3">
         <li
-          v-for="item in LATER"
+          v-for="item in LATER_CAPABILITIES"
           :key="item"
           class="text-ink-muted text-body flex items-center gap-3"
         >

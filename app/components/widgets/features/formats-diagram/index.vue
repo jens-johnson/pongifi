@@ -1,4 +1,4 @@
-<script lang="ts">
+<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,35 +10,35 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████ #components/FeaturesFormatsDiagram.vue ███████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/features/formats-diagram/index.vue ███████████████████████████████
  *
- * Interactive table diagrams for singles, doubles and cutthroat.
+ * Table formation illustrations for singles, doubles and cutthroat.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-export type TFeaturesFormat = 'cutthroat' | 'doubles' | 'singles';
-</script>
 
-<script setup lang="ts">
-/** Props for the selected format illustration. */
-interface IProps {
-  format: TFeaturesFormat;
-}
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/** The selected format. */
-const props = defineProps<IProps>();
+import { FEATURES_FORMAT_DESCRIPTIONS } from './constants';
+import type { IFeaturesFormatsDiagramProps } from './types';
 
-/** Human-readable descriptions keep the changing diagrams useful beyond their visual treatment. */
-const descriptions: Readonly<Record<TFeaturesFormat, string>> = {
-  cutthroat:
-    'Cutthroat places one server opposite a receiving pair. The three players rotate clockwise, and only the server can score.',
-  doubles:
-    'Doubles places two players on each side. Numbered paths show the four-player service and receiving rotation.',
-  singles: 'Singles places one player on each side, with the rally moving directly across the net.',
-};
+/* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/** Accessible name for whichever diagram is on show. */
-const label = computed<string>(
+/**
+ * Component props; the format the diagram illustrates
+ * @internal
+ * @constant
+ */
+const props: Readonly<IFeaturesFormatsDiagramProps> = defineProps<IFeaturesFormatsDiagramProps>();
+
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Accessible name for whichever diagram is on show
+ * @internal
+ * @constant
+ */
+const label: ComputedRef<string> = computed<string>(
   (): string => `${props.format.charAt(0).toUpperCase()}${props.format.slice(1)} table diagram`,
 );
 </script>
@@ -54,7 +54,7 @@ const label = computed<string>(
     >
       <title id="format-diagram-title">{{ label }}</title>
 
-      <desc id="format-diagram-description">{{ descriptions[format] }}</desc>
+      <desc id="format-diagram-description">{{ FEATURES_FORMAT_DESCRIPTIONS[format] }}</desc>
 
       <defs>
         <marker

@@ -10,12 +10,13 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████ #components/FeaturesScoringDiagram.vue ███████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/features/scoring-diagram/index.vue ███████████████████████████████
  *
- * Engine-derived interactive scoring demo for the Features page.
+ * Interactive scoring demo, replayed through the application's own rules engine.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
 import type { TMatchEvent } from '#shared/rules-engine';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -26,10 +27,10 @@ import type { TMatchEvent } from '#shared/rules-engine';
 const initialEvents: TMatchEvent[] = buildScoringFixtureEvents();
 
 /** The demo's current event log. Every displayed state is replayed from this sequence. */
-const events = ref<TMatchEvent[]>([...initialEvents]);
+const events: Ref<TMatchEvent[]> = ref<TMatchEvent[]>([...initialEvents]);
 
 /** The last interaction, included in the live announcement so a score change has context. */
-const lastAction = ref<string | null>(null);
+const lastAction: Ref<string | null> = ref<string | null>(null);
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -59,37 +60,37 @@ const announcement = computed<string>((): string =>
   [lastAction.value, fixture.value.description].filter(Boolean).join(' '),
 );
 
-/* ─── Actions ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Actions ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /** Awards the next rally to a player through the same rules engine used by the application. */
-const award = (player: IScoringFixturePlayer): void => {
+function award(player: IScoringFixturePlayer): void {
   if (fixture.value.isComplete) {
     return;
   }
 
   events.value = scoreScoringFixturePoint(events.value, player.name);
   lastAction.value = `${player.name} won the rally.`;
-};
+}
 
 /** Removes the visitor's most recent rally without changing the fixture's starting state. */
-const undo = (): void => {
+function undo(): void {
   if (!hasChanges.value) {
     return;
   }
 
   events.value = events.value.slice(0, -1);
   lastAction.value = 'Last rally undone.';
-};
+}
 
 /** Returns the demo to its ten-all starting state. */
-const reset = (): void => {
+function reset(): void {
   if (!hasChanges.value) {
     return;
   }
 
   events.value = [...initialEvents];
   lastAction.value = 'Scoring demo reset.';
-};
+}
 </script>
 
 <template>

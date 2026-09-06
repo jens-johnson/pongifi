@@ -10,50 +10,28 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #components/FeaturesAnchorNav.vue █████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/features/anchor-nav/index.vue █████████████████████████████████
  *
- * Sticky, accessible navigation between the five Features page sections.
+ * Sticky section navigation for the Features page, tracking whichever section is crossing the viewport's top third.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-/* ─── Types ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/** One entry in the navigation: the section it points at and the label it shows. */
-interface ISectionLink {
-  /* The section's `id`, which is also the fragment the link carries */
-  id: string;
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-  /* The label on the chip */
-  label: string;
-}
-
-/* ─── Constants ──────────────────────────────────────────────────────────────────────────────────────────────────── */
-
-/** The five sections, in page order. Each `id` is matched by a section on the page and a heading `${id}-heading`. */
-const SECTIONS: readonly ISectionLink[] = [
-  { id: 'scoring', label: 'Scoring' },
-  { id: 'formats', label: 'Formats' },
-  { id: 'league', label: 'Your league' },
-  { id: 'trust', label: 'Trust' },
-  { id: 'ratings', label: 'Ratings' },
-];
-
-/**
- * The observation band, expressed as a root margin: a zero-height line across the viewport's top third. A section
- * intersects it exactly while it is the one crossing that line, which is the active-state rule in the specification.
- */
-const TOP_THIRD_BAND: string = '-32% 0px -66% 0px';
+import { FEATURES_SECTIONS, TOP_THIRD_BAND } from './constants';
+import type { IFeaturesSectionLink } from './types';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /** The section currently crossing the top third, or null while the reader is still above the first one. */
-const active = ref<string | null>(null);
+const active: Ref<string | null> = ref<string | null>(null);
 
 /** The scrolling row the chips sit in; the active chip is centered inside it rather than in the viewport. */
-const scroller = ref<HTMLElement | null>(null);
+const scroller: Ref<HTMLElement | null> = ref<HTMLElement | null>(null);
 
 /** Whether motion is welcome. Set on mount, because the query needs a window. */
-const animating = ref<boolean>(false);
+const animating: Ref<boolean> = ref<boolean>(false);
 
 /** Watches the sections; held so it can be disconnected. */
 let observer: IntersectionObserver | null = null;
@@ -61,7 +39,9 @@ let observer: IntersectionObserver | null = null;
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /** How a scroll should behave, given the reader's motion preference. */
-const behavior = computed<ScrollBehavior>((): ScrollBehavior => (animating.value ? 'smooth' : 'auto'));
+const behavior: ComputedRef<ScrollBehavior> = computed<ScrollBehavior>((): ScrollBehavior =>
+  animating.value ? 'smooth' : 'auto',
+);
 
 /* ─── Functions ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -71,7 +51,7 @@ const behavior = computed<ScrollBehavior>((): ScrollBehavior => (animating.value
  * `scrollIntoView` would satisfy the horizontal scroll but is also entitled to scroll the page to do it, which would
  * fight the reader. Setting `scrollLeft` on the row cannot move anything else.
  */
-const centerActiveChip = (): void => {
+function centerActiveChip(): void {
   const row: HTMLElement | null = scroller.value;
 
   if (row === null || active.value === null) {
@@ -85,7 +65,7 @@ const centerActiveChip = (): void => {
   }
 
   row.scrollTo({ behavior: behavior.value, left: chip.offsetLeft - (row.clientWidth - chip.offsetWidth) / 2 });
-};
+}
 
 /**
  * Sends the reader to a section and puts their focus on its heading.
@@ -94,7 +74,7 @@ const centerActiveChip = (): void => {
  * adds the two things the browser does not do: focus lands on the destination heading rather than staying on the chip,
  * and the fragment is recorded without the instant jump that assigning to `location.hash` causes.
  */
-const onSelect = (id: string, event: MouseEvent): void => {
+function onSelect(id: string, event: MouseEvent): void {
   // a modified click is a request to open the link some other way, and belongs to the browser
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return;
@@ -113,7 +93,7 @@ const onSelect = (id: string, event: MouseEvent): void => {
 
   // the heading carries tabindex="-1" for exactly this; preventScroll leaves the smooth scroll above in charge
   document.getElementById(`${id}-heading`)?.focus({ preventScroll: true });
-};
+}
 
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -140,7 +120,7 @@ onMounted((): void => {
    * tick is what makes them findable.
    */
   void nextTick((): void => {
-    SECTIONS.forEach((section: ISectionLink): void => {
+    FEATURES_SECTIONS.forEach((section: IFeaturesSectionLink): void => {
       const element: HTMLElement | null = document.getElementById(section.id);
 
       if (element !== null) {
@@ -170,7 +150,7 @@ onBeforeUnmount((): void => {
       class="nav__row mx-auto flex max-w-[1120px] gap-2 overflow-x-auto px-6 py-2 md:justify-center md:gap-1 md:overflow-visible md:px-16 md:py-0"
     >
       <a
-        v-for="section in SECTIONS"
+        v-for="section in FEATURES_SECTIONS"
         :key="section.id"
         :aria-current="active === section.id ? 'true' : undefined"
         :class="
