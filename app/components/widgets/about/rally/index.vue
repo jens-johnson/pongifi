@@ -10,40 +10,64 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████ #components/AboutRally.vue █████████████████████████████████████████████
+ * █████████████████████████████████████ #components/widgets/about/rally/index.vue █████████████████████████████████████
  *
- * The About page hero: a table drawn in perspective, with a ball looping a rally across the net.
+ * Pointer-reactive paddle rally illustration for the About page.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <WidgetsAboutRally />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/* ─── Constants ──────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { Ref } from 'vue';
+
+import { TILT_DEGREES } from './constants';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The maximum tilt, in degrees (º), reached at the far edge of the visual.
+ * The element the pointer is measured against.
  * @internal
  * @constant
  */
-const TILT_DEGREES: number = 7;
+const surface: Ref<HTMLElement | null> = ref(null);
 
-/** The element the pointer is measured against. */
-const surface: Ref<HTMLElement | null> = ref<HTMLElement | null>(null);
+/**
+ * Current tilt about the horizontal axis.
+ * @internal
+ * @constant
+ */
+const tiltX: Ref<number> = ref(0);
 
-/** Current tilt about the horizontal axis. */
-const tiltX = ref<number>(0);
+/**
+ * Current tilt about the vertical axis.
+ * @internal
+ * @constant
+ */
+const tiltY: Ref<number> = ref(0);
 
-/** Current tilt about the vertical axis. */
-const tiltY = ref<number>(0);
+/**
+ * Whether pointer-driven tilt is enabled; reduced-motion preference disables this vestibular effect.
+ * @internal
+ * @constant
+ */
+const tilting: Ref<boolean> = ref(false);
 
-/** Whether the tilt responds at all. Pointer-driven parallax is a vestibular trigger, so it is opt-out. */
-const tilting = ref<boolean>(false);
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Leans the table towards the pointer.
  *
  * The offsets are normalised to -0.5..0.5 across the element so the tilt is the same at every viewport width.
+ * @internal
+ * @function
+ * @param event - Pointer position relative to the viewport.
  */
-const track = (event: PointerEvent): void => {
+function onPointerMove(event: PointerEvent): void {
   const element: HTMLElement | null = surface.value;
 
   if (element === null || !tilting.value) {
@@ -57,15 +81,19 @@ const track = (event: PointerEvent): void => {
   // a positive horizontal offset should swing the far edge away, which is a positive rotation about Y
   tiltY.value = offsetX * TILT_DEGREES * 2;
   tiltX.value = -offsetY * TILT_DEGREES * 2;
-};
+}
 
 /**
  * Returns the table to square when the pointer leaves.
+ * @internal
+ * @function
  */
-const rest = (): void => {
+function onPointerLeave(): void {
   tiltX.value = 0;
   tiltY.value = 0;
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
   tilting.value = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -76,8 +104,8 @@ onMounted((): void => {
   <div
     ref="surface"
     class="rally"
-    @pointerleave="rest"
-    @pointermove="track"
+    @pointerleave="onPointerLeave"
+    @pointermove="onPointerMove"
   >
     <svg
       aria-hidden="true"

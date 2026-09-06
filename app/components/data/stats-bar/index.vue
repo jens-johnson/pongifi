@@ -10,78 +10,77 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████ #components/StatsBar.vue ██████████████████████████████████████████████
+ * ███████████████████████████████████████ #components/data/stats-bar/index.vue ████████████████████████████████████████
  *
- * Live usage figures for the landing page, counted up on load and hidden until the numbers are worth showing.
+ * Live landing-page usage figures, counted up on load and hidden until meaningful.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <DataStatsBar />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { ComputedRef, Ref } from 'vue';
+
 import type { IPublicStats } from '../../../../server/api/stats.get';
+import { COUNT_MS, MINIMUM_GAMES, POLL_MS, STAT_UNITS, STATS } from './constants';
+import type { IStatUnit } from './types';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- *
+ * The active route, used to expose the design preview override.
+ * @internal
+ * @constant
  */
-interface IStat {
-  key: keyof Pick<IPublicStats, 'gamesRecorded' | 'leaguesActiveThisWeek' | 'minutesLogged' | 'pointsScored'>;
-  label: string;
-  suffix?: string;
-}
+const route: ReturnType<typeof useRoute> = useRoute();
 
 /**
- *
- */
-const STATS: readonly IStat[] = [
-  { key: 'gamesRecorded', label: 'games recorded' },
-  { key: 'pointsScored', label: 'points scored' },
-  { key: 'minutesLogged', label: 'minutes at the table' },
-  { key: 'leaguesActiveThisWeek', label: 'leagues active this week' },
-];
-
-/**
- * Games needed before the figures are shown at all.
- *
- * Totals are social proof, and social proof at zero argues against you. Below this the section stays hidden rather than
- * announcing that nobody has played yet.
- */
-const MINIMUM_GAMES: number = 25;
-
-/** How long the count up runs. */
-const COUNT_MS: number = 1400;
-
-/** How often the figures are refreshed once the page is open. */
-const POLL_MS: number = 30000;
-
-/**
- *
- */
-const route = useRoute();
-
-/**
- *
+ * Public statistics and their refresh command.
+ * @internal
+ * @constant
  */
 const { data, refresh } = await useFetch<IPublicStats>('/api/stats');
 
 /**
- *
+ * Values currently shown while the count-up animation runs.
+ * @internal
+ * @constant
  */
-const displayed = ref<Record<string, number>>({});
+const displayed: Ref<Record<string, number>> = ref({});
 
 /**
- *
+ * The active animation frame, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let frame: number | null = null;
+
 /**
- *
+ * The active polling interval, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let poll: ReturnType<typeof setInterval> | null = null;
 
-/** `?stats=preview` shows the section whatever the figures say, for reviewing the design before there is data. */
-const previewing = computed<boolean>((): boolean => route.query.stats === 'preview');
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- *
+ * Whether the route forces the stats bar visible for design review.
+ * @internal
+ * @constant
  */
-const visible = computed<boolean>((): boolean => {
+const previewing: ComputedRef<boolean> = computed((): boolean => route.query.stats === 'preview');
+
+/**
+ * Whether the current figures are substantial enough to present as social proof.
+ * @internal
+ * @constant
+ */
+const visible: ComputedRef<boolean> = computed((): boolean => {
   if (previewing.value) {
     return true;
   }
@@ -89,34 +88,38 @@ const visible = computed<boolean>((): boolean => {
   return (data.value?.available ?? false) && (data.value?.gamesRecorded ?? 0) >= MINIMUM_GAMES;
 });
 
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
 /**
  * Abbreviates a figure once it outgrows its space.
  *
  * Points and minutes are expected to reach seven figures or more, and a run of digits that long stops being read as a
  * quantity and starts being read as a serial number.
+ * @internal
+ * @function
+ * @param value - Numeric statistic to abbreviate.
+ * @returns The locale-formatted or abbreviated value.
  */
-const format = (value: number): string => {
-  const units: readonly { divisor: number; suffix: string }[] = [
-    { divisor: 1e9, suffix: 'B' },
-    { divisor: 1e6, suffix: 'M' },
-    { divisor: 1e3, suffix: 'K' },
-  ];
-
-  const unit = units.find((candidate): boolean => value >= candidate.divisor * 10);
+function formatStat(value: number): string {
+  const unit: IStatUnit | undefined = STAT_UNITS.find(
+    (candidate: IStatUnit): boolean => value >= candidate.divisor * 10,
+  );
 
   if (unit === undefined) {
     return value.toLocaleString('en-US');
   }
 
   return `${(value / unit.divisor).toFixed(1).replace(/\.0$/, '')}${unit.suffix}`;
-};
+}
 
 /**
  * Runs the count up towards the latest figures.
  *
  * Eased out rather than linear, so the number decelerates into its final value instead of stopping dead.
+ * @internal
+ * @function
  */
-const animate = (): void => {
+function animateStats(): void {
   const target: IPublicStats | null = data.value ?? null;
 
   if (target === null) {
@@ -150,10 +153,12 @@ const animate = (): void => {
   };
 
   frame = requestAnimationFrame(step);
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
-  animate();
+  animateStats();
 
   poll = setInterval((): void => {
     void refresh();
@@ -161,7 +166,7 @@ onMounted((): void => {
 });
 
 watch(data, (): void => {
-  animate();
+  animateStats();
 });
 
 onBeforeUnmount((): void => {
@@ -187,7 +192,7 @@ onBeforeUnmount((): void => {
         class="flex flex-col gap-2"
       >
         <span class="font-display text-display text-accent-strong font-medium tracking-tight tabular-nums">
-          {{ format(displayed[stat.key] ?? 0) }}
+          {{ formatStat(displayed[stat.key] ?? 0) }}
         </span>
 
         <span class="text-ink-muted text-body-sm">{{ stat.label }}</span>
@@ -198,7 +203,7 @@ onBeforeUnmount((): void => {
       v-if="previewing"
       class="text-ink-subtle text-caption mx-auto mt-8 max-w-[1120px]"
     >
-      Preview mode — this section is normally hidden until there are at least {{ MINIMUM_GAMES }} recorded games.
+      Preview mode: this section is normally hidden until there are at least {{ MINIMUM_GAMES }} recorded games.
     </p>
   </section>
 </template>

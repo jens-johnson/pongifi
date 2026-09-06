@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,50 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/about/difference-carousel/types.ts ███████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Content types for the About page difference carousel.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+import type { TDifferenceDiagram } from '../../../data/difference-diagram/types';
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+/**
+ * Optional inline citation attached to a difference claim.
+ * @internal
+ * @interface
+ */
+export interface IDifferenceLink {
+  /* Copy rendered after the linked label */
+  after: string;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* External destination for the citation */
+  href: string;
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Linked citation text */
+  label: string;
+}
+
+/**
+ * One claim presented by the About page difference carousel.
+ * @internal
+ * @interface
+ */
+export interface IDifference {
+  /* Supporting copy rendered before an optional citation */
+  body: string;
+
+  /* Illustration paired with the claim */
+  diagram: TDifferenceDiagram;
+
+  /* Optional inline citation */
+  link?: IDifferenceLink;
+
+  /* Claim heading */
+  title: string;
+}

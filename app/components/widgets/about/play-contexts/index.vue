@@ -10,179 +10,70 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████████ #components/PlayContexts.vue ████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/about/play-contexts/index.vue █████████████████████████████████
  *
- * Who It Is For, as a table whose players glide into a new arrangement per playing context.
+ * Interactive selector showing the settings and groups Pongifi supports.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <WidgetsAboutPlayContexts />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-interface ISeat {
-  /** Whether this player is present in the arrangement at all. */
-  on: boolean;
-  /** Position in the diagram's own coordinates. */
-  x: number;
-  /** Position in the diagram's own coordinates. */
-  y: number;
-}
 
-/**
- *
- */
-interface IContext {
-  /** The line shown beneath the table when this context is chosen. */
-  blurb: string;
-  /** The chip label. */
-  label: string;
-  /**
-   * Where each of the four players stands.
-   *
-   * Every context supplies all four seats even when it does not use them, so a player leaving the arrangement glides
-   * off rather than blinking out of existence.
-   */
-  seats: readonly ISeat[];
-}
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/**
- * The four places a league tends to live.
- *
- * Deliberately broader than the office the product started in — the office is where it began rather than where it has
- * to stay.
- */
-const CONTEXTS: readonly IContext[] = [
-  {
-    blurb: 'Winner stays on, and the queue is half the fun.',
-    label: 'The office',
-    seats: [
-      {
-        on: true,
-        x: 52,
-        y: 130,
-      },
-      {
-        on: true,
-        x: 428,
-        y: 130,
-      },
-      {
-        on: true,
-        x: 196,
-        y: 238,
-      },
-      {
-        on: true,
-        x: 246,
-        y: 238,
-      },
-    ],
-  },
-  {
-    blurb: 'Two paddles, one table, and a rivalry that predates the app.',
-    label: 'The family',
-    seats: [
-      {
-        on: true,
-        x: 52,
-        y: 130,
-      },
-      {
-        on: true,
-        x: 428,
-        y: 130,
-      },
-      {
-        on: false,
-        x: 150,
-        y: 260,
-      },
-      {
-        on: false,
-        x: 330,
-        y: 260,
-      },
-    ],
-  },
-  {
-    blurb: 'Doubles, ladders, and people who already keep score properly.',
-    label: 'The club',
-    seats: [
-      {
-        on: true,
-        x: 52,
-        y: 98,
-      },
-      {
-        on: true,
-        x: 428,
-        y: 98,
-      },
-      {
-        on: true,
-        x: 52,
-        y: 162,
-      },
-      {
-        on: true,
-        x: 428,
-        y: 162,
-      },
-    ],
-  },
-  {
-    blurb: 'Late nights, questionable lighting, genuine stakes.',
-    label: 'The garage',
-    seats: [
-      {
-        on: true,
-        x: 52,
-        y: 130,
-      },
-      {
-        on: true,
-        x: 428,
-        y: 130,
-      },
-      {
-        on: true,
-        x: 300,
-        y: 238,
-      },
-      {
-        on: false,
-        x: 330,
-        y: 260,
-      },
-    ],
-  },
-];
+import type { ComputedRef, Ref } from 'vue';
 
-/** How long a context holds before moving on by itself. */
-const DWELL_MS: number = 5000;
+import { CONTEXTS, DWELL_MS } from './constants';
+import type { IPlayContext } from './types';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * The context on show.
+ * @internal
+ * @constant
  */
-const active = ref<number>(0);
+const active: Ref<number> = ref(0);
 
 /**
  * Set once someone picks a context themselves, which retires the automatic rotation.
+ * @internal
+ * @constant
  */
-const paused = ref<boolean>(false);
+const paused: Ref<boolean> = ref(false);
 
 /**
- *
+ * The active interval, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** The context currently rendered. Indexing is always in range; the union satisfies the type checker. */
-const current = computed<IContext | undefined>((): IContext | undefined => CONTEXTS[active.value]);
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Moves to a specific context and stops the rotation.
+ * The play context currently rendered; the fallback satisfies indexed-access typing.
+ * @internal
+ * @constant
  */
-const select = (index: number): void => {
+const current: ComputedRef<IPlayContext | undefined> = computed((): IPlayContext | undefined => CONTEXTS[active.value]);
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Moves to a specific context and stops automatic rotation.
+ * @internal
+ * @function
+ * @param index - Play-context index selected by the visitor.
+ */
+function selectContext(index: number): void {
   active.value = index;
   paused.value = true;
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -209,7 +100,7 @@ onBeforeUnmount((): void => {
       <h2 class="font-display text-h1 font-medium tracking-tight">Who it is for</h2>
 
       <p class="text-ink-muted text-body-lg mt-4 max-w-[680px]">
-        Pongifi can be played anywhere you have a table and a paddle — from office matches to late night garage
+        Pongifi can be played anywhere you have a table and a paddle, from office matches to late night garage
         competitions and everywhere in between. Create a league with your friends, family, clubs, and coworkers, or
         discover leagues that fit your interest and skill level.
       </p>
@@ -226,7 +117,7 @@ onBeforeUnmount((): void => {
           "
           class="text-body-sm cursor-pointer rounded-full border px-4 py-2 font-medium transition-colors"
           type="button"
-          @click="select(index)"
+          @click="selectContext(index)"
         >
           {{ context.label }}
         </button>

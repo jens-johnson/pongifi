@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,45 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/about/play-contexts/types.ts ██████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Content types for the About page play-context selector.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * One player position in a play-context table arrangement.
+ * @internal
+ * @interface
+ */
+export interface IPlayContextSeat {
+  /* Whether the player is present in the arrangement */
+  on: boolean;
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+  /* Horizontal position in diagram coordinates */
+  x: number;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* Vertical position in diagram coordinates */
+  y: number;
+}
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+/**
+ * One setting presented by the About page play-context selector.
+ * @internal
+ * @interface
+ */
+export interface IPlayContext {
+  /* Supporting line shown when the context is selected */
+  blurb: string;
+
+  /* Selector label */
+  label: string;
+
+  /* All four animated player positions, including hidden seats */
+  seats: readonly IPlayContextSeat[];
+}

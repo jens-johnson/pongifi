@@ -1,4 +1,4 @@
-<script lang="ts">
+<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,26 +10,36 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #components/DifferenceDiagram.vue █████████████████████████████████████████
+ * ███████████████████████████████████ #components/data/difference-diagram/index.vue ███████████████████████████████████
  *
- * The three illustrations behind the What Makes It Different carousel, drawn as animated SVG.
+ * Animated visual explanation for an About page product claim.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <DataDifferenceDiagram :variant="item.diagram" />
+ *
+ * ─── PROPS ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ *   • variant
+ *     - Description: claim illustrated by the diagram
+ *     - Type: TDifferenceDiagram
+ *     - Required: true
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-/** Which of the three claims the diagram illustrates. */
-export type TDifferenceDiagram = 'agreed' | 'ratings' | 'rules';
-</script>
 
-<script setup lang="ts">
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { IDifferenceDiagramProps } from './types';
+
+/* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
 /**
- *
+ * Selects the visual that supports the active About page claim.
+ * @internal
+ * @constant
  */
-interface IProps {
-  /** Which of the three claims the diagram illustrates. */
-  variant: TDifferenceDiagram;
-}
-
-defineProps<IProps>();
+const props: Readonly<IDifferenceDiagramProps> = defineProps<IDifferenceDiagramProps>();
 </script>
 
 <template>
@@ -40,7 +50,7 @@ defineProps<IProps>();
     viewBox="0 0 400 200"
   >
     <!-- ── Scores are agreed upon ─────────────────────────────────────────────────────────────────────────────── -->
-    <template v-if="variant === 'agreed'">
+    <template v-if="props.variant === 'agreed'">
       <circle
         class="diagram__player diagram__player--one"
         cx="52"
@@ -86,7 +96,7 @@ defineProps<IProps>();
         x="200"
         y="103"
       >
-        11–9
+        11-9
       </text>
 
       <g class="diagram__seal">
@@ -114,7 +124,7 @@ defineProps<IProps>();
     </template>
 
     <!-- ── True to the rules ──────────────────────────────────────────────────────────────────────────────────── -->
-    <template v-else-if="variant === 'rules'">
+    <template v-else-if="props.variant === 'rules'">
       <rect
         class="diagram__felt"
         height="112"

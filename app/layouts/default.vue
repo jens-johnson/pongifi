@@ -12,93 +12,110 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ███████████████████████████████████████████████ #layouts/default.vue ████████████████████████████████████████████████
  *
- * Default layout: the marketing navigation shared by the landing page and the standalone About, Features and FAQ
- * routes.
+ * Default application shell with navigation, theming, and mobile focus management.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Applied automatically to routed pages without an explicit layout.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-type TTheme = 'light' | 'dark';
+
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { Ref } from 'vue';
+
+import type { TTheme } from '~/types/layout';
+import { DESKTOP_QUERY, FOCUSABLE, NAV_LINKS } from '~/utils/default-layout';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- *
+ * Active application theme.
+ * @internal
+ * @constant
  */
-const NAV_LINKS: readonly { label: string; to: string }[] = [
-  { label: 'About', to: '/about' },
-  { label: 'Features', to: '/features' },
-  { label: 'FAQ', to: '/faq' },
-];
-
-/** The elements a keyboard user can reach inside the mobile panel, in document order. */
-const FOCUSABLE: string = 'a[href], button:not([disabled])';
-
-/** Matches the `md` breakpoint, above which the panel is replaced by the inline navigation. */
-const DESKTOP_QUERY: string = '(min-width: 48rem)';
-
-/**
- *
- */
-const theme = ref<TTheme>('light');
+const theme: Ref<TTheme> = ref('light');
 
 /**
  * Whether the mobile navigation panel is open.
+ * @internal
+ * @constant
  */
-const open = ref<boolean>(false);
+const open: Ref<boolean> = ref(false);
 
 /**
  * The panel itself, used to find the elements the focus trap cycles between.
+ * @internal
+ * @constant
  */
-const panel = ref<HTMLElement | null>(null);
+const panel: Ref<HTMLElement | null> = ref(null);
 
 /**
  * The list of navigation links, which is where focus lands when the panel opens.
  *
  * Focus goes here rather than to the first focusable element, which is the home link in the panel's own header: the
  * point of opening the menu is to reach the menu.
+ * @internal
+ * @constant
  */
-const links = ref<HTMLElement | null>(null);
+const links: Ref<HTMLElement | null> = ref(null);
 
 /**
  * The control that opened the panel, so focus can be handed back when it closes.
+ * @internal
+ * @constant
  */
-const trigger = ref<HTMLButtonElement | null>(null);
+const trigger: Ref<HTMLButtonElement | null> = ref(null);
 
 /**
- *
+ * Active route, observed so navigation dismisses the mobile panel.
+ * @internal
+ * @constant
  */
-const route = useRoute();
+const route: ReturnType<typeof useRoute> = useRoute();
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Flips the palette.
  *
  * A development affordance only -- real theme resolution (system preference, persistence) is not designed yet, so this
  * writes the attribute directly rather than pretending to be the eventual implementation.
+ * @internal
+ * @function
  */
-const toggleTheme = (): void => {
+function toggleTheme(): void {
   theme.value = theme.value === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme.value;
-};
+}
 
 /**
  * Closes the panel and returns focus to the control that opened it.
  *
  * Without the hand-back, dismissing the panel drops a keyboard user at the top of the document.
+ * @internal
+ * @function
  */
-const close = (): void => {
+function closeMobileNavigation(): void {
   if (!open.value) {
     return;
   }
 
   open.value = false;
   trigger.value?.focus();
-};
+}
 
 /**
  * Keeps Tab inside the panel while it is open.
  *
  * The panel covers the page but does not remove what is underneath from the tab order, so the wrap has to be applied
  * by hand.
+ * @internal
+ * @function
+ * @param event - Keyboard event produced by the active panel.
  */
-const trapFocus = (event: KeyboardEvent): void => {
+function trapFocus(event: KeyboardEvent): void {
   if (panel.value === null) {
     return;
   }
@@ -118,25 +135,30 @@ const trapFocus = (event: KeyboardEvent): void => {
     event.preventDefault();
     first.focus();
   }
-};
+}
 
 /**
  * Handles the keys the panel owns while it is open.
+ * @internal
+ * @function
+ * @param event - Keyboard event dispatched by the window.
  */
-const onKeydown = (event: KeyboardEvent): void => {
+function onKeydown(event: KeyboardEvent): void {
   if (!open.value) {
     return;
   }
 
   if (event.key === 'Escape') {
-    close();
+    closeMobileNavigation();
   } else if (event.key === 'Tab') {
     trapFocus(event);
   }
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // navigating is a dismissal: the panel covers the page the link just loaded
-watch((): string => route.fullPath, close);
+watch((): string => route.fullPath, closeMobileNavigation);
 
 watch(open, (isOpen: boolean): void => {
   // the page behind the panel must not scroll under it
@@ -153,12 +175,12 @@ onMounted((): void => {
   window.addEventListener('keydown', onKeydown);
 
   // crossing into the desktop layout hides the panel by CSS, which would otherwise strand the scroll lock
-  window.matchMedia(DESKTOP_QUERY).addEventListener('change', close);
+  window.matchMedia(DESKTOP_QUERY).addEventListener('change', closeMobileNavigation);
 });
 
 onBeforeUnmount((): void => {
   window.removeEventListener('keydown', onKeydown);
-  window.matchMedia(DESKTOP_QUERY).removeEventListener('change', close);
+  window.matchMedia(DESKTOP_QUERY).removeEventListener('change', closeMobileNavigation);
   document.body.style.overflow = '';
 });
 </script>
@@ -239,7 +261,7 @@ onBeforeUnmount((): void => {
             aria-label="Pongifi home"
             class="text-ink block"
             to="/"
-            @click="close"
+            @click="closeMobileNavigation"
           >
             <BrandPongifiWordmark class="h-7 w-auto" />
           </NuxtLink>
@@ -248,7 +270,7 @@ onBeforeUnmount((): void => {
             aria-label="Close menu"
             class="text-ink-muted hover:text-accent-strong flex size-9 cursor-pointer items-center justify-center rounded-md transition-colors"
             type="button"
-            @click="close"
+            @click="closeMobileNavigation"
           >
             <Icon
               class="size-5"
@@ -268,7 +290,7 @@ onBeforeUnmount((): void => {
               :to="link.to"
               active-class="text-accent-strong"
               class="font-display text-h1 hover:text-accent-strong border-border border-b py-5 font-medium tracking-tight transition-colors"
-              @click="close"
+              @click="closeMobileNavigation"
             >
               {{ link.label }}
             </NuxtLink>

@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,26 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ██████████████████████████████████████████████ #types/layout/enums.ts ███████████████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Theme values supported by the default application shell.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Re-exported through the layout type barrel.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * Themes available from the default layout.
+ * @internal
+ * @enum
+ */
+export enum Theme {
+  /* Dark surface and light ink */
+  DARK = 'dark',
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
-
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
-
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Light surface and dark ink */
+  LIGHT = 'light',
+}

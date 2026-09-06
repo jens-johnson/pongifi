@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,16 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ██████████████████████████████████████████████ #types/layout/index.ts ███████████████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Barrel for default-layout types.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the default layout and related utilities.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
-
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
-
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
-
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+export * from './enums';
+export * from './types';

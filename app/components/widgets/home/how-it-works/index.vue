@@ -10,78 +10,74 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████ #components/HowItWorks.vue █████████████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/home/how-it-works/index.vue ██████████████████████████████████
  *
- * The four step explainer, as a tablist that advances on its own until someone picks a step.
+ * Interactive landing-page walkthrough from league creation to ratings.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <WidgetsHomeHowItWorks />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-interface IStep {
-  body: string;
-  icon: string;
-  label: string;
-  title: string;
-}
+
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { ComputedRef, Ref } from 'vue';
+
+import { DWELL_MS, STEPS } from './constants';
+import type { IHowItWorksStep } from './types';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- *
+ * The selected workflow step index.
+ * @internal
+ * @constant
  */
-const STEPS: readonly IStep[] = [
-  {
-    body: 'Name it, set the rules once, and decide who can record results. Everything after this inherits those settings.',
-    icon: 'lucide:trophy',
-    label: 'Create a league',
-    title: 'Create a league',
-  },
-  {
-    body: 'Share a link or a QR code. They sign in with Google and they are in — no accounts to set up, no passwords to forget.',
-    icon: 'lucide:user-plus',
-    label: 'Invite your friends',
-    title: 'Invite your friends',
-  },
-  {
-    body: 'Score live at the table, or enter a result afterwards. Every game is confirmed by the person you played, so the numbers hold up.',
-    icon: 'lucide:clipboard-check',
-    label: 'Record games',
-    title: 'Record games',
-  },
-  {
-    body: 'Ratings update after every confirmed result. Beat someone better than you and it shows — the ladder settles who is actually best.',
-    icon: 'lucide:trending-up',
-    label: 'Climb the leaderboard',
-    title: 'Climb the leaderboard',
-  },
-];
-
-/** How long each step holds before advancing. */
-const DWELL_MS: number = 6000;
+const active: Ref<number> = ref(0);
 
 /**
- *
+ * Whether visitor input has retired automatic advance.
+ * @internal
+ * @constant
  */
-const active = ref<number>(0);
-/**
- *
- */
-const paused = ref<boolean>(false);
+const paused: Ref<boolean> = ref(false);
 
 /**
- *
+ * The active interval, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** The step currently expanded. Indexing is always in range; the fallback satisfies the type checker. */
-const current = computed<IStep | undefined>((): IStep | undefined => STEPS[active.value]);
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The workflow step currently expanded; the fallback satisfies indexed-access typing.
+ * @internal
+ * @constant
+ */
+const current: ComputedRef<IHowItWorksStep | undefined> = computed(
+  (): IHowItWorksStep | undefined => STEPS[active.value],
+);
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Moves to a specific step and stops the automatic advance.
  *
  * Once someone has chosen a step, continuing to rotate underneath them would be taking the control back.
+ * @internal
+ * @function
+ * @param index - Workflow step index selected by the visitor.
  */
-const select = (index: number): void => {
+function selectStep(index: number): void {
   active.value = index;
   paused.value = true;
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -129,7 +125,7 @@ onBeforeUnmount((): void => {
             class="flex cursor-pointer items-center gap-4 rounded-lg border-l-2 px-5 py-4 text-left transition-colors"
             role="tab"
             type="button"
-            @click="select(index)"
+            @click="selectStep(index)"
           >
             <span
               :class="active === index ? 'bg-accent text-accent-ink' : 'bg-surface-raised text-ink-subtle'"

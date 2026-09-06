@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,59 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ██████████████████████████████████████ #components/data/stats-bar/constants.ts ██████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Display labels, thresholds, and timing constants for public statistics.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+import type { IStat, IStatUnit } from './types';
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+/**
+ * Duration of the count-up animation in milliseconds.
+ * @internal
+ * @constant
+ */
+export const COUNT_MS: number = 1400;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+/**
+ * Games required before social-proof figures appear.
+ * @internal
+ * @constant
+ */
+export const MINIMUM_GAMES: number = 25;
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+/**
+ * Refresh interval for public statistics in milliseconds.
+ * @internal
+ * @constant
+ */
+export const POLL_MS: number = 30000;
+
+/**
+ * Public statistics rendered in presentation order.
+ * @internal
+ * @constant
+ */
+export const STATS: readonly IStat[] = [
+  { key: 'gamesRecorded', label: 'games recorded' },
+  { key: 'pointsScored', label: 'points scored' },
+  { key: 'minutesLogged', label: 'minutes at the table' },
+  { key: 'leaguesActiveThisWeek', label: 'leagues active this week' },
+];
+
+/**
+ * Magnitudes used to abbreviate large values, ordered largest first.
+ * @internal
+ * @constant
+ */
+export const STAT_UNITS: readonly IStatUnit[] = [
+  { divisor: 1e9, suffix: 'B' },
+  { divisor: 1e6, suffix: 'M' },
+  { divisor: 1e3, suffix: 'K' },
+];

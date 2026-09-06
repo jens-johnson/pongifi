@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,40 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ████████████████████████████████████████ #utils/default-layout/constants.ts █████████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Routes, storage keys, and navigation links for the default application shell.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the default layout through the sibling barrel.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+import type { INavigationLink } from '~/types/layout';
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+/**
+ * Media query at which the mobile panel is replaced by inline navigation.
+ * @internal
+ * @constant
+ */
+export const DESKTOP_QUERY: string = '(min-width: 48rem)';
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+/**
+ * Selector for controls reachable by keyboard inside the mobile panel.
+ * @internal
+ * @constant
+ */
+export const FOCUSABLE: string = 'a[href], button:not([disabled])';
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+/**
+ * Marketing routes exposed by desktop and mobile navigation.
+ * @internal
+ * @constant
+ */
+export const NAV_LINKS: readonly INavigationLink[] = [
+  { label: 'About', to: '/about' },
+  { label: 'Features', to: '/features' },
+  { label: 'FAQ', to: '/faq' },
+];

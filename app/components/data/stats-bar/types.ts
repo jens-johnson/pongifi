@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,44 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ████████████████████████████████████████ #components/data/stats-bar/types.ts ████████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Display unit types for public statistics.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+import type { IPublicStats } from '../../../../server/api/stats.get';
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+/**
+ * One public statistic rendered by the landing page stats bar.
+ * @internal
+ * @interface
+ */
+export interface IStat {
+  /* Numeric API field displayed by the item */
+  key: keyof Pick<IPublicStats, 'gamesRecorded' | 'leaguesActiveThisWeek' | 'minutesLogged' | 'pointsScored'>;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* Human-readable label */
+  label: string;
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Optional suffix appended to the formatted value */
+  suffix?: string;
+}
+
+/**
+ * One magnitude used to abbreviate large public statistics.
+ * @internal
+ * @interface
+ */
+export interface IStatUnit {
+  /* Smallest power represented by the suffix */
+  divisor: number;
+
+  /* Abbreviation appended to the scaled value */
+  suffix: string;
+}

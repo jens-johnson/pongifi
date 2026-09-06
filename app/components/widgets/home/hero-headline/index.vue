@@ -10,44 +10,49 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████████ #components/HeroHeadline.vue ████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/home/hero-headline/index.vue ██████████████████████████████████
  *
- * Hero headline that rotates through a set of lines on an interval, with a slide and fade between them.
+ * Rotating landing-page headline that cycles through Pongifi play contexts.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <WidgetsHomeHeroHeadline />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { ComputedRef, Ref } from 'vue';
+
+import { HEADLINES, INTERVAL_MS } from './constants';
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
 /**
- * The rotating hero lines.
- *
- * The first is the one that matters: it renders server-side, so it is what search engines and a visitor on a slow
- * connection see. The rest are variations on the same promise rather than new claims.
+ * Index of the hero line currently shown.
+ * @internal
+ * @constant
  */
-const HEADLINES: readonly string[] = [
-  'Ping pong,\nproperly scored.',
-  'Make every\ngame count.',
-  'Crown the next\noffice champion.',
-  'Bragging rights\nstart here.',
-  'From lunch break\nto leaderboard.',
-  'Winner\nstays on.',
-  'Settle it\non the table.',
-  'The table tennis app\nyou actually needed.',
-];
-
-/** How long each line holds before the next slides in. */
-const INTERVAL_MS: number = 5000;
+const index: Ref<number> = ref(0);
 
 /**
- *
- */
-const index = ref<number>(0);
-
-/**
- *
+ * The active interval, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** The line currently on screen. Indexing is always in range, so the fallback is only for the type checker. */
-const current = computed<string>((): string => HEADLINES[index.value] ?? '');
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The hero line currently shown; the fallback satisfies indexed-access typing.
+ * @internal
+ * @constant
+ */
+const current: ComputedRef<string> = computed((): string => HEADLINES[index.value] ?? '');
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
   // rotating copy is motion; when it is suppressed the first line simply stays

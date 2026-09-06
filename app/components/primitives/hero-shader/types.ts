@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,66 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ████████████████████████████████████ #components/primitives/hero-shader/types.ts ████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Props and renderer state types for the dithered hero.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * Props controlling the dithered hero renderer.
+ * @internal
+ * @interface
+ */
+export interface IHeroShaderProps {
+  /* Luminance at or below which the source becomes transparent */
+  blackPoint?: number;
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+  /* Fraction of the video height removed from the bottom */
+  cropBottom?: number;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* Dot diameter as a fraction of each dither cell */
+  dotFill?: number;
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Midtone shaping applied after the levels stretch */
+  gamma?: number;
+
+  /* Whether dark source values render as ink */
+  invert?: boolean;
+
+  /* Dither cell pitch in CSS pixels */
+  pitch?: number;
+
+  /* Radius of the pointer highlight in CSS pixels */
+  pointerRadius?: number;
+
+  /* Public video source */
+  src?: string;
+
+  /* Luminance at or above which the source becomes solid ink */
+  whitePoint?: number;
+}
+
+/**
+ * Latest pointer position in viewport coordinates.
+ * @internal
+ * @interface
+ */
+export interface IHeroShaderPointer {
+  /* Horizontal viewport coordinate, or null outside the window */
+  x: number | null;
+
+  /* Vertical viewport coordinate, or null outside the window */
+  y: number | null;
+}
+
+/**
+ * Normalized red, green, and blue color channels.
+ * @internal
+ */
+export type TColorChannels = [number, number, number];

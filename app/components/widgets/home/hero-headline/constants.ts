@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,36 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ████████████████████████████████ #components/widgets/home/hero-headline/constants.ts ████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Rotating labels and timing for the landing-page headline.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * Hero lines in rotation order; the first line is rendered server-side.
+ * @internal
+ * @constant
+ */
+export const HEADLINES: readonly string[] = [
+  'Ping pong,\nproperly scored.',
+  'Make every\ngame count.',
+  'Crown the next\noffice champion.',
+  'Bragging rights\nstart here.',
+  'From lunch break\nto leaderboard.',
+  'Winner\nstays on.',
+  'Settle it\non the table.',
+  'The table tennis app\nyou actually needed.',
+];
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
-
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
-
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+/**
+ * Milliseconds each hero line remains visible before rotation.
+ * @internal
+ * @constant
+ */
+export const INTERVAL_MS: number = 5000;

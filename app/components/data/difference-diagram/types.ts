@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,45 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ███████████████████████████████████ #components/data/difference-diagram/types.ts ████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Variants and props for the About page difference diagram.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component and About widgets.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * Illustrations available to the About page difference carousel.
+ * @internal
+ * @enum
+ */
+export enum DifferenceDiagram {
+  /* Agreement flow between two players */
+  AGREED = 'agreed',
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+  /* Rating movement after a result */
+  RATINGS = 'ratings',
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* Official rules applied to a match */
+  RULES = 'rules',
+}
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+/**
+ * String values accepted by the difference diagram variant prop.
+ * @internal
+ */
+export type TDifferenceDiagram = `${DifferenceDiagram}`;
+
+/**
+ * Props accepted by the difference diagram.
+ * @internal
+ * @interface
+ */
+export interface IDifferenceDiagramProps {
+  /* Which of the three About page claims the diagram illustrates */
+  variant: TDifferenceDiagram;
+}

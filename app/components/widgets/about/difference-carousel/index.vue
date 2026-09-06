@@ -10,95 +10,77 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████ #components/DifferenceCarousel.vue █████████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/about/difference-carousel/index.vue ██████████████████████████████
  *
- * What Makes It Different, as a carousel that advances on its own until someone drives it.
+ * Self-advancing carousel for the About page product differences.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * <WidgetsAboutDifferenceCarousel />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { TDifferenceDiagram } from '../../../data/difference-diagram/index.vue';
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-/**
- *
- */
-interface IDifference {
-  /** The claim's supporting text, up to the point a link interrupts it. */
-  body: string;
-  /** Which illustration accompanies the claim. */
-  diagram: TDifferenceDiagram;
-  /** An optional citation set mid-sentence: `body`, then the anchor, then `after`. */
-  link?: {
-    after: string;
-    href: string;
-    label: string;
-  };
-  /** The claim itself. */
-  title: string;
-}
+import type { ComputedRef, Ref } from 'vue';
 
-/**
- * The three claims, in the order the specification states them.
- *
- * These are the reusable core of the marketing copy — the Features page is meant to be the expanded version of the
- * same three points rather than a second set that drifts away from these.
- */
-const DIFFERENCES: readonly IDifference[] = [
-  {
-    body: 'Every recorded game waits for the other player to confirm it, and nothing reaches the standings on one person’s word alone. It is the difference between a leaderboard people trust and one they argue about.',
-    diagram: 'agreed',
-    title: 'Scores are agreed upon, not claimed',
-  },
-  {
-    body: 'Pongifi goes much further than a casual “first to 11, win by 2”, drawing on the ',
-    diagram: 'rules',
-    link: {
-      after:
-        '. From the expedite system and change of ends to service order in doubles and retirement, Pongifi models the official structure of the game, so an unusual match still scores correctly instead of needing an asterisk and a group chat argument.',
-      href: 'https://www.ittf.com/statutes/',
-      label: 'legal rules of the game put forward by the ITTF',
-    },
-    title: 'True to the rules',
-  },
-  {
-    body: 'Beating someone better than you moves your rating further than beating someone worse. New players settle quickly, established ones move deliberately. The ladder answers who is actually best, not who played the most.',
-    diagram: 'ratings',
-    title: 'Ratings that move for the right reasons',
-  },
-];
+import { DIFFERENCES, DWELL_MS } from './constants';
+import type { IDifference } from './types';
 
-/** How long a slide holds before advancing on its own. */
-const DWELL_MS: number = 7000;
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * The slide on show.
+ * @internal
+ * @constant
  */
-const active = ref<number>(0);
+const active: Ref<number> = ref(0);
 
 /**
  * Set once someone drives the carousel themselves, which retires the automatic advance for good.
+ * @internal
+ * @constant
  */
-const paused = ref<boolean>(false);
+const paused: Ref<boolean> = ref(false);
 
 /**
  * Which way the last change moved, so the transition can slide the right way.
+ * @internal
+ * @constant
  */
-const reversing = ref<boolean>(false);
+const reversing: Ref<boolean> = ref(false);
 
 /**
- *
+ * The active interval, retained so teardown can cancel it.
+ * @internal
+ * @constant
  */
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** The slide currently rendered. Indexing is always in range; the union satisfies the type checker. */
-const current = computed<IDifference | undefined>((): IDifference | undefined => DIFFERENCES[active.value]);
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The claim currently rendered; the fallback satisfies indexed-access typing.
+ * @internal
+ * @constant
+ */
+const current: ComputedRef<IDifference | undefined> = computed(
+  (): IDifference | undefined => DIFFERENCES[active.value],
+);
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
  * Moves to a specific slide, wrapping at either end.
  *
  * `manual` marks the changes a person made, which is what stops the carousel advancing underneath them.
+ * @internal
+ * @function
+ * @param index - Requested claim index before wrapping.
+ * @param manual - Whether a visitor initiated the change.
  */
-const go = (index: number, manual: boolean): void => {
+function selectSlide(index: number, manual: boolean): void {
   const next: number = (index + DIFFERENCES.length) % DIFFERENCES.length;
 
   reversing.value = next < active.value;
@@ -107,7 +89,9 @@ const go = (index: number, manual: boolean): void => {
   if (manual) {
     paused.value = true;
   }
-};
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted((): void => {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -116,7 +100,7 @@ onMounted((): void => {
 
   timer = setInterval((): void => {
     if (!paused.value) {
-      go(active.value + 1, false);
+      selectSlide(active.value + 1, false);
     }
   }, DWELL_MS);
 });
@@ -181,7 +165,7 @@ onBeforeUnmount((): void => {
           aria-label="Previous point"
           class="border-border text-ink-muted hover:border-accent hover:text-accent-strong flex size-9 cursor-pointer items-center justify-center rounded-full border transition-colors"
           type="button"
-          @click="go(active - 1, true)"
+          @click="selectSlide(active - 1, true)"
         >
           <Icon
             class="size-4"
@@ -193,7 +177,7 @@ onBeforeUnmount((): void => {
           aria-label="Next point"
           class="border-border text-ink-muted hover:border-accent hover:text-accent-strong flex size-9 cursor-pointer items-center justify-center rounded-full border transition-colors"
           type="button"
-          @click="go(active + 1, true)"
+          @click="selectSlide(active + 1, true)"
         >
           <Icon
             class="size-4"
@@ -210,7 +194,7 @@ onBeforeUnmount((): void => {
             :class="active === index ? 'bg-accent w-6' : 'bg-border-strong hover:bg-ink-subtle w-2'"
             class="h-2 cursor-pointer rounded-full transition-all"
             type="button"
-            @click="go(index, true)"
+            @click="selectSlide(index, true)"
           />
         </div>
       </div>

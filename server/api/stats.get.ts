@@ -59,33 +59,42 @@ const ACTIVE_WINDOW_DAYS: number = 7;
  *
  * Redis is an optimisation here, not a dependency: a landing page that fell over because a cache was unavailable would
  * be worse than one that queries Postgres a little more often.
+ * @internal
+ * @function
+ * @returns The cached public statistics, or null when no usable cache value exists.
  */
-const readCache = async (): Promise<IPublicStats | null> => {
+async function readCache(): Promise<IPublicStats | null> {
   try {
     return (await useCache().get<IPublicStats>(CACHE_KEY)) ?? null;
   } catch {
     return null;
   }
-};
+}
 
 /**
  * Writes the aggregate to the cache, ignoring failures for the same reason.
+ * @internal
+ * @function
+ * @param stats - Fresh public statistics to cache.
  */
-const writeCache = async (stats: IPublicStats): Promise<void> => {
+async function writeCache(stats: IPublicStats): Promise<void> {
   try {
     await useCache().set(CACHE_KEY, stats, { ex: CACHE_TTL_SECONDS });
   } catch {
     // a cold cache costs one query, not a broken page
   }
-};
+}
 
 /**
  * Aggregates the public figures from confirmed, completed games.
  *
  * Only COMPLETE games count. Drafts, abandoned matches and games still awaiting confirmation are deliberately excluded:
  * a number on the landing page should be one nobody would dispute.
+ * @internal
+ * @function
+ * @returns Aggregated public statistics from completed games.
  */
-const readStats = async (): Promise<IPublicStats> => {
+async function readStats(): Promise<IPublicStats> {
   const database = useDatabase();
   const since: Date = new Date(Date.now() - ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const completed = eq(games.status, GameStatus.COMPLETE);
@@ -117,7 +126,7 @@ const readStats = async (): Promise<IPublicStats> => {
     pointsScored: points?.pointsScored ?? 0,
     updatedAt: new Date().toISOString(),
   };
-};
+}
 
 export default defineEventHandler(async (): Promise<IPublicStats> => {
   const cached: IPublicStats | null = await readCache();

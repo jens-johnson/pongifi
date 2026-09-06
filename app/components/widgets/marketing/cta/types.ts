@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,26 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ████████████████████████████████████ #components/widgets/marketing/cta/types.ts █████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Props for the shared marketing call to action.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * Props accepted by the shared marketing call to action.
+ * @internal
+ * @interface
+ */
+export interface IMarketingCtaProps {
+  /* Renders only the primary command for compact placements such as a page hero */
+  compact?: boolean;
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
-
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
-
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Offers the FAQ beside the primary command */
+  showFaq?: boolean;
+}

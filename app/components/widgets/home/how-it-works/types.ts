@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,28 +9,32 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/home/how-it-works/types.ts ███████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Workflow step type for the landing-page walkthrough.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
-</script>
+/**
+ * One stage in the landing page product workflow.
+ * @internal
+ * @interface
+ */
+export interface IHowItWorksStep {
+  /* Supporting explanation */
+  body: string;
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
+  /* Iconify identifier */
+  icon: string;
 
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
+  /* Accessible tab label */
+  label: string;
 
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
-</template>
+  /* Visible step heading */
+  title: string;
+}
