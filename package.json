@@ -2,7 +2,7 @@
   "name": "pongifi",
   "type": "module",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The social ping pong competition app: create leagues, record games, and track your statistics",
   "engines": {
     "node": ">=24.0.0",
