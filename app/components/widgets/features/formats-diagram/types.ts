@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,24 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/features/formats-diagram/types.ts ███████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the format illustrations: the format union and the component's props.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+/**
+ * The game formats the diagram can depict
+ * @public
+ */
+export type TFeaturesFormat = 'cutthroat' | 'doubles' | 'singles';
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+/**
+ * Props for the format illustration
+ * @public
+ */
+export interface IFeaturesFormatsDiagramProps {
+  /* Which of the three formats to draw */
+  format: TFeaturesFormat;
+}

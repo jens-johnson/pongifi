@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,61 +9,134 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/about/play-contexts/constants.ts ████████████████████████████████
  *
- * Public Pongifi landing page.
+ * Play-context content and animation timing.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+import type { IPlayContext } from './types';
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+/**
+ * The four settings in which Pongifi leagues commonly play.
+ * @internal
+ * @constant
+ */
+export const CONTEXTS: readonly IPlayContext[] = [
+  {
+    blurb: 'Winner stays on, and the queue is half the fun.',
+    label: 'The office',
+    seats: [
+      {
+        on: true,
+        x: 52,
+        y: 130,
+      },
+      {
+        on: true,
+        x: 428,
+        y: 130,
+      },
+      {
+        on: true,
+        x: 196,
+        y: 238,
+      },
+      {
+        on: true,
+        x: 246,
+        y: 238,
+      },
+    ],
+  },
+  {
+    blurb: 'Two paddles, one table, and a rivalry that predates the app.',
+    label: 'The family',
+    seats: [
+      {
+        on: true,
+        x: 52,
+        y: 130,
+      },
+      {
+        on: true,
+        x: 428,
+        y: 130,
+      },
+      {
+        on: false,
+        x: 150,
+        y: 260,
+      },
+      {
+        on: false,
+        x: 330,
+        y: 260,
+      },
+    ],
+  },
+  {
+    blurb: 'Doubles, ladders, and people who already keep score properly.',
+    label: 'The club',
+    seats: [
+      {
+        on: true,
+        x: 52,
+        y: 98,
+      },
+      {
+        on: true,
+        x: 428,
+        y: 98,
+      },
+      {
+        on: true,
+        x: 52,
+        y: 162,
+      },
+      {
+        on: true,
+        x: 428,
+        y: 162,
+      },
+    ],
+  },
+  {
+    blurb: 'Late nights, questionable lighting, genuine stakes.',
+    label: 'The garage',
+    seats: [
+      {
+        on: true,
+        x: 52,
+        y: 130,
+      },
+      {
+        on: true,
+        x: 428,
+        y: 130,
+      },
+      {
+        on: true,
+        x: 300,
+        y: 238,
+      },
+      {
+        on: false,
+        x: 330,
+        y: 260,
+      },
+    ],
+  },
+];
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
-
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
-
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
-
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
-</template>
+/**
+ * Milliseconds a play context remains visible before automatic advance.
+ * @internal
+ * @constant
+ */
+export const DWELL_MS: number = 5000;

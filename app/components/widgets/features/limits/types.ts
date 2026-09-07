@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,21 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ███████████████████████████████████ #components/widgets/features/limits/types.ts ████████████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the coming-soon section: one roadmap capability and its icon.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+/**
+ * One capability on the roadmap, with the icon that stands in for it
+ * @public
+ */
+export interface IFeaturesComingSoonItem {
+  /* Lucide icon name shown in the item's tile */
+  icon: string;
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+  /* The capability's name, as the section lists it */
+  label: string;
+}

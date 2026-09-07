@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,61 +9,59 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ██████████████████████████████████████ #components/data/stats-bar/constants.ts ██████████████████████████████████████
  *
- * Public Pongifi landing page.
+ * Display labels, thresholds, and timing constants for public statistics.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+import type { IStat, IStatUnit } from './types';
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+/**
+ * Duration of the count-up animation in milliseconds.
+ * @internal
+ * @constant
+ */
+export const COUNT_MS: number = 1400;
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
+/**
+ * Games required before social-proof figures appear.
+ * @internal
+ * @constant
+ */
+export const MINIMUM_GAMES: number = 25;
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
+/**
+ * Refresh interval for public statistics in milliseconds.
+ * @internal
+ * @constant
+ */
+export const POLL_MS: number = 30000;
 
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
+/**
+ * Public statistics rendered in presentation order.
+ * @internal
+ * @constant
+ */
+export const STATS: readonly IStat[] = [
+  { key: 'gamesRecorded', label: 'games recorded' },
+  { key: 'pointsScored', label: 'points scored' },
+  { key: 'minutesLogged', label: 'minutes at the table' },
+  { key: 'leaguesActiveThisWeek', label: 'leagues active this week' },
+];
 
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
-</template>
+/**
+ * Magnitudes used to abbreviate large values, ordered largest first.
+ * @internal
+ * @constant
+ */
+export const STAT_UNITS: readonly IStatUnit[] = [
+  { divisor: 1e9, suffix: 'B' },
+  { divisor: 1e6, suffix: 'M' },
+  { divisor: 1e3, suffix: 'K' },
+];

@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,27 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/features/ratings-diagram/types.ts ███████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the leaderboard illustration: one row of the depicted standings.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+/**
+ * One row of the depicted leaderboard
+ * @public
+ */
+export interface IRatingsPlayerRow {
+  /* Which way the player moved since the last recalculation */
+  movement: 'down' | 'none' | 'up';
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+  /* Display name */
+  name: string;
+
+  /* Whether the player is still inside their provisional period, during which ratings move faster */
+  provisional?: boolean;
+
+  /* Position on the leaderboard, counting from one */
+  rank: number;
+}

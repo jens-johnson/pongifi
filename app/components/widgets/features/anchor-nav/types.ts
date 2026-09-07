@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,21 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/features/anchor-nav/types.ts ██████████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the Features anchor navigation: one entry in the chip row.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+/**
+ * One entry in the navigation: the section it points at and the label it shows
+ * @public
+ */
+export interface IFeaturesSectionLink {
+  /* The section's `id`, which is also the fragment the link carries */
+  id: string;
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+  /* The label on the chip */
+  label: string;
+}

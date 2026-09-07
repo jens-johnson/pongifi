@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,61 +9,45 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/about/play-contexts/types.ts ██████████████████████████████████
  *
- * Public Pongifi landing page.
+ * Content types for the About page play-context selector.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+/**
+ * One player position in a play-context table arrangement.
+ * @internal
+ * @interface
+ */
+export interface IPlayContextSeat {
+  /* Whether the player is present in the arrangement */
+  on: boolean;
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+  /* Horizontal position in diagram coordinates */
+  x: number;
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
+  /* Vertical position in diagram coordinates */
+  y: number;
+}
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
+/**
+ * One setting presented by the About page play-context selector.
+ * @internal
+ * @interface
+ */
+export interface IPlayContext {
+  /* Supporting line shown when the context is selected */
+  blurb: string;
 
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
+  /* Selector label */
+  label: string;
 
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
-</template>
+  /* All four animated player positions, including hidden seats */
+  seats: readonly IPlayContextSeat[];
+}

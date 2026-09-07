@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,61 +9,32 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/home/how-it-works/types.ts ███████████████████████████████████
  *
- * Public Pongifi landing page.
+ * Workflow step type for the landing-page walkthrough.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+/**
+ * One stage in the landing page product workflow.
+ * @internal
+ * @interface
+ */
+export interface IHowItWorksStep {
+  /* Supporting explanation */
+  body: string;
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+  /* Iconify identifier */
+  icon: string;
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
+  /* Accessible tab label */
+  label: string;
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
-
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
-
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
-</template>
+  /* Visible step heading */
+  title: string;
+}

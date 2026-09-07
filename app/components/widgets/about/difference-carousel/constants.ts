@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,61 +9,51 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ████████████████████████████ #components/widgets/about/difference-carousel/constants.ts █████████████████████████████
  *
- * Public Pongifi landing page.
+ * Slides and timing constants for the About page difference carousel.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /
+ * Imported by the sibling component.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+import type { IDifference } from './types';
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+/**
+ * The three About page claims in their presentation order.
+ * @internal
+ * @constant
+ */
+export const DIFFERENCES: readonly IDifference[] = [
+  {
+    body: 'Every recorded game waits for the other player to confirm it, and nothing reaches the standings on one person’s word alone. It is the difference between a leaderboard people trust and one they argue about.',
+    diagram: 'agreed',
+    title: 'Scores are agreed upon, not claimed',
+  },
+  {
+    body: 'Pongifi goes much further than a casual “first to 11, win by 2”, drawing on the ',
+    diagram: 'rules',
+    link: {
+      after:
+        '. From the expedite system and change of ends to service order in doubles and retirement, Pongifi models the official structure of the game, so an unusual match still scores correctly instead of needing an asterisk and a group chat argument.',
+      href: 'https://www.ittf.com/statutes/',
+      label: 'legal rules of the game put forward by the ITTF',
+    },
+    title: 'True to the rules',
+  },
+  {
+    body: 'Beating someone better than you moves your rating further than beating someone worse. New players settle quickly, established ones move deliberately. The ladder answers who is actually best, not who played the most.',
+    diagram: 'ratings',
+    title: 'Ratings that move for the right reasons',
+  },
+];
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
-
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
-
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
-
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
-</template>
+/**
+ * Milliseconds a claim remains visible before automatic advance.
+ * @internal
+ * @constant
+ */
+export const DWELL_MS: number = 7000;

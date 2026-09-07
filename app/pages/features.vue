@@ -10,61 +10,70 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ████████████████████████████████████████████████ #pages/features.vue ████████████████████████████████████████████████
  *
- * Public Pongifi landing page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * GET /
+ * The Features page. Reachable from the marketing navigation and from inside the app.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+useHead({
+  meta: [
+    {
+      content:
+        'What Pongifi does: live rally-by-rally scoring for singles, doubles, and cutthroat, league rules set once, results checked the way your league decides, and ratings that move for the right reasons.',
+      name: 'description',
+    },
+  ],
+  title: 'Features · Pongifi',
+});
 </script>
 
 <template>
   <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
+    <section class="relative overflow-hidden px-6 pt-12 pb-14 md:px-16 md:pt-16 md:pb-18">
+      <div class="pointer-events-none absolute inset-y-0 right-16 hidden w-[38%] overflow-hidden xl:block">
         <ClientOnly>
           <PrimitivesHeroShader />
         </ClientOnly>
       </div>
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
+      <div class="relative z-10 mx-auto max-w-[1120px]">
+        <div class="max-w-[640px]">
+          <span class="text-accent-strong text-caption font-mono tracking-widest uppercase">Features</span>
 
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
+          <h1 class="font-display text-display mt-4 font-medium tracking-tight">
+            Everything between the first serve and the leaderboard.
+          </h1>
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
+          <p class="text-ink-muted text-body-lg mt-6">
+            Pongifi scores the game the way it is actually played, checks results the way your league decides, and turns
+            them into standings you can argue about less.
+          </p>
 
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
-            <Icon
-              class="size-4"
-              name="lucide:arrow-right"
-            />
-          </NuxtLink>
+          <WidgetsMarketingCta compact />
         </div>
       </div>
     </section>
 
-    <DataStatsBar />
+    <WidgetsFeaturesAnchorNav />
 
-    <WidgetsHomeHowItWorks />
+    <WidgetsFeaturesScoring />
+
+    <WidgetsFeaturesFormats />
+
+    <WidgetsFeaturesLeague />
+
+    <WidgetsFeaturesTrust />
+
+    <WidgetsFeaturesRatings />
+
+    <WidgetsFeaturesLimits />
+
+    <section class="border-border border-t px-6 py-16 md:px-16 md:py-24">
+      <div class="mx-auto max-w-[820px]">
+        <WidgetsMarketingCta show-faq />
+      </div>
+    </section>
   </main>
 </template>
