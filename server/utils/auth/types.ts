@@ -9,33 +9,78 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * ████████████████████████████████████████████ #server/utils/auth/types.ts ████████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * Types for Google callback validation and account persistence.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Where a signed-out visitor is sent to start a league.
- *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
- * @public
- * @constant
- */
-export const SIGN_IN_ROUTE: string = '/sign-in';
+import type { ISessionUser } from '#shared/auth';
 
 /**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
+ * The normalized Google identity accepted by Pongifi after provider response validation.
  * @public
- * @constant
+ * @interface
  */
-export const LEAGUES_ROUTE: string = '/leagues';
+export interface IVerifiedGoogleProfile {
+  /* The user's current Google profile image, or null when none is available */
+  avatarUrl: string | null;
+
+  /* The user's current Google display name */
+  displayName: string;
+
+  /* The user's verified, normalized Google email address */
+  email: string;
+
+  /* Google's stable subject identifier */
+  providerAccountId: string;
+}
 
 /**
- * The FAQ, offered as the secondary link beside the closing call to action
+ * The provider callback payload consumed by the Google route.
  * @public
- * @constant
+ * @interface
  */
-export const FAQ_ROUTE: string = '/faq';
+export interface IGoogleOAuthResult {
+  /* OAuth token response retained by the module but not stored by Pongifi */
+  tokens: unknown;
+
+  /* Untrusted Google userinfo response */
+  user: unknown;
+}
+
+/**
+ * A rejected Google userinfo response.
+ * @public
+ * @interface
+ */
+export interface IGoogleProfileValidationFailure {
+  /* The response did not satisfy Pongifi's identity requirements */
+  ok: false;
+}
+
+/**
+ * An accepted Google userinfo response.
+ * @public
+ * @interface
+ */
+export interface IGoogleProfileValidationSuccess {
+  /* The response satisfied Pongifi's identity requirements */
+  ok: true;
+
+  /* The normalized identity safe to persist */
+  value: IVerifiedGoogleProfile;
+}
+
+/**
+ * The result of validating an untrusted Google userinfo response.
+ * @public
+ */
+export type TGoogleProfileValidationResult = IGoogleProfileValidationFailure | IGoogleProfileValidationSuccess;
+
+/**
+ * The database response returned by the atomic Google account upsert.
+ * @public
+ */
+export type TSessionUserRow = ISessionUser & Record<string, unknown>;

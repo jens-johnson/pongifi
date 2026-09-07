@@ -9,33 +9,28 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * ███████████████████████████████████████████████ #shared/auth/types.ts ███████████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * The authenticated user identity shared by server sessions and client code.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Where a signed-out visitor is sent to start a league.
- *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
+ * The Pongifi identity stored in the sealed session and exposed to authenticated client code.
  * @public
- * @constant
+ * @interface
  */
-export const SIGN_IN_ROUTE: string = '/sign-in';
+export interface ISessionUser {
+  /* The user's current Google profile image, or null when none is available */
+  avatarUrl: string | null;
 
-/**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
- * @public
- * @constant
- */
-export const LEAGUES_ROUTE: string = '/leagues';
+  /* The user's current Google display name */
+  displayName: string;
 
-/**
- * The FAQ, offered as the secondary link beside the closing call to action
- * @public
- * @constant
- */
-export const FAQ_ROUTE: string = '/faq';
+  /* The user's verified Google email address */
+  email: string;
+
+  /* Pongifi's stable user identifier */
+  id: string;
+}
