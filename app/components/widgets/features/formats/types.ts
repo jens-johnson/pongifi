@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,44 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ███████████████████████████████████ #components/widgets/features/formats/types.ts ███████████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the Features format explorer: a format and the compact facts shown beside it.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+import type { TFeaturesFormat } from '../formats-diagram/types';
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+/**
+ * One compact fact about a format, rendered in the panel's definition list
+ * @public
+ */
+export interface IFeaturesFormatStat {
+  /* What the figure describes, i.e. "Players" */
+  label: string;
+
+  /* The figure itself, i.e. "4" */
+  value: string;
+}
+
+/**
+ * Copy, controls and facts for one mode in the format explorer
+ * @public
+ */
+export interface IFeaturesFormat {
+  /* How the format is played, as prose */
+  description: string;
+
+  /* Icon name for the format's tab */
+  icon: string;
+
+  /* Identifier shared with the diagram, and the basis of the tab and panel element ids */
+  id: TFeaturesFormat;
+
+  /* The facts shown beside the description */
+  stats: readonly IFeaturesFormatStat[];
+
+  /* The format's display name */
+  title: string;
+}

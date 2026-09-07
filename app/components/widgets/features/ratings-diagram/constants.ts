@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,40 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * █████████████████████████████ #components/widgets/features/ratings-diagram/constants.ts █████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * The depicted leaderboard, ordered by rank.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+import type { IRatingsPlayerRow } from './types';
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+/**
+ * The depicted leaderboard, ordered by rank
+ * @public
+ * @constant
+ */
+export const RATINGS_PLAYERS: readonly IRatingsPlayerRow[] = [
+  {
+    movement: 'down',
+    name: 'Sam',
+    rank: 1,
+  },
+  {
+    movement: 'none',
+    name: 'Rin',
+    rank: 2,
+  },
+  {
+    movement: 'up',
+    name: 'Maya',
+    provisional: true,
+    rank: 3,
+  },
+  {
+    movement: 'none',
+    name: 'Alex',
+    rank: 4,
+  },
+];

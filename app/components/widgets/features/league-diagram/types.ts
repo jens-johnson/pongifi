@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,24 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/features/league-diagram/types.ts ████████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * Types for the league illustration: one member of the depicted roster.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
+/**
+ * One member of the league the diagram depicts
+ * @public
+ */
+export interface ILeagueMember {
+  /* Two-letter monogram shown in the member's avatar */
+  initials: string;
 
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+  /* Display name */
+  name: string;
+
+  /* The role they hold in the league */
+  role: string;
+}

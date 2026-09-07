@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,22 +9,16 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ #app.vue ██████████████████████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/features/trust-diagram/constants.ts ██████████████████████████████
  *
- * Pongifi application root with the active layout and routed page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * Loaded automatically by Nuxt.
+ * The three states a result passes through.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
-</script>
 
-<template>
-  <NuxtRouteAnnouncer />
-
-  <NuxtLayout>
-    <NuxtPage />
-  </NuxtLayout>
-</template>
+/**
+ * The three states a result passes through, as the diagram labels them
+ * @public
+ * @constant
+ */
+export const TRUST_DIAGRAM_STEPS: readonly string[] = ['Recorded', 'Accepted', 'In the standings'];

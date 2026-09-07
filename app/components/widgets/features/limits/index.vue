@@ -10,61 +10,42 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ███████████████████████████████████ #components/widgets/features/limits/index.vue ███████████████████████████████████
  *
- * Public Pongifi landing page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * GET /
+ * Coming-soon strip for the Features page: capabilities beyond the first release.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+import { COMING_SOON_ITEMS } from './constants';
 </script>
 
 <template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
+  <section class="bg-surface-raised px-6 py-12 md:px-16">
+    <div class="mx-auto grid max-w-[1120px] gap-6 md:grid-cols-[minmax(0,0.65fr)_minmax(0,1.35fr)] md:items-center">
+      <div>
+        <span class="text-accent-strong text-caption font-mono tracking-widest uppercase">Later</span>
+
+        <h2 class="font-display text-h2 mt-3 font-medium tracking-tight">Coming soon</h2>
       </div>
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
-
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
-        </p>
-
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
-          >
-            Get Started
-          </a>
-
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
+      <ul class="grid gap-4 sm:grid-cols-3">
+        <li
+          v-for="item in COMING_SOON_ITEMS"
+          :key="item.label"
+          class="border-border bg-surface flex items-center gap-3 rounded-lg border p-4"
+        >
+          <span class="bg-brand-soft text-accent-strong grid size-9 shrink-0 place-items-center rounded-md">
             <Icon
-              class="size-4"
-              name="lucide:arrow-right"
+              aria-hidden="true"
+              class="size-5"
+              :name="item.icon"
             />
-          </NuxtLink>
-        </div>
-      </div>
-    </section>
+          </span>
 
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
+          <span class="text-ink text-body font-medium">{{ item.label }}</span>
+        </li>
+      </ul>
+    </div>
+  </section>
 </template>

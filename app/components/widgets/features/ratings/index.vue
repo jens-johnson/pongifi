@@ -10,61 +10,54 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████ #pages/index.vue ██████████████████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/features/ratings/index.vue ███████████████████████████████████
  *
- * Public Pongifi landing page.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * GET /
+ * Ratings and leaderboard section for the Features page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+import { RATING_CAPABILITIES } from './constants';
 </script>
 
 <template>
-  <main>
-    <section class="relative overflow-hidden px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-      <div class="pointer-events-none absolute inset-y-0 right-16 w-[38%] overflow-hidden">
-        <ClientOnly>
-          <PrimitivesHeroShader />
-        </ClientOnly>
-      </div>
+  <section
+    id="ratings"
+    class="scroll-mt-16 px-6 py-16 md:px-16 md:py-24"
+  >
+    <div class="mx-auto grid max-w-[1120px] gap-12 lg:grid-cols-2 lg:items-center">
+      <div>
+        <h2
+          id="ratings-heading"
+          class="font-display text-h1 font-medium tracking-tight"
+          tabindex="-1"
+        >
+          A leaderboard that means something.
+        </h2>
 
-      <div class="relative z-10 max-w-[620px]">
-        <!-- height is reserved for the longest line so a rotation never shifts the copy below it -->
-        <h1 class="font-display text-hero min-h-[140px] font-medium tracking-tight">
-          <WidgetsHomeHeroHeadline />
-        </h1>
-
-        <p class="text-ink-muted text-body-lg mt-6 max-w-[520px]">
-          Start a league. Compete with your family and friends. Climb the leaderboards.
+        <p class="text-ink-muted text-body-lg mt-6">
+          Beating someone better than you moves your rating further than beating someone worse. New players settle
+          quickly, established players move deliberately, and the table ends up saying who is actually best.
         </p>
 
-        <div class="mt-8 flex flex-wrap items-center gap-3">
-          <a
-            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg rounded-md px-6 py-3 font-medium transition-colors"
-            href="#"
+        <ul class="mt-9 space-y-4">
+          <li
+            v-for="capability in RATING_CAPABILITIES"
+            :key="capability"
+            class="text-ink-muted text-body flex gap-3"
           >
-            Get Started
-          </a>
-
-          <NuxtLink
-            class="text-accent-strong hover:text-accent text-body-lg flex items-center gap-1.5 rounded-md px-4 py-3 font-medium"
-            to="/features"
-          >
-            See how it works
             <Icon
-              class="size-4"
-              name="lucide:arrow-right"
+              aria-hidden="true"
+              class="text-accent mt-1 size-4 shrink-0"
+              name="lucide:trending-up"
             />
-          </NuxtLink>
-        </div>
+
+            <span>{{ capability }}</span>
+          </li>
+        </ul>
       </div>
-    </section>
 
-    <DataStatsBar />
-
-    <WidgetsHomeHowItWorks />
-  </main>
+      <WidgetsFeaturesRatingsDiagram />
+    </div>
+  </section>
 </template>

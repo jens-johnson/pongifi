@@ -1,0 +1,104 @@
+<script setup lang="ts">
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * █████████████████████████████████████████████████ #pages/about.vue ██████████████████████████████████████████████████
+ *
+ * About page describing Pongifi's purpose and supported play contexts.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * GET /about
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+useHead({
+  meta: [
+    {
+      content:
+        'Pongifi is the league and game management platform for table tennis: confirmed scores, the real rules of the game, and ratings that move for the right reasons.',
+      name: 'description',
+    },
+  ],
+  title: 'About · Pongifi',
+});
+</script>
+
+<template>
+  <main>
+    <section class="px-6 pt-12 pb-16 md:px-16 md:pt-16 md:pb-20">
+      <div class="mx-auto grid max-w-[1120px] items-center gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.85fr)]">
+        <div>
+          <span class="text-accent-strong text-caption font-mono tracking-widest uppercase">About</span>
+
+          <h1 class="font-display text-display mt-4 font-medium tracking-tight">
+            Pongifi: the social table tennis platform
+          </h1>
+
+          <p class="text-ink-muted text-body-lg mt-6">
+            Pongifi was a vision born out of a group of coworkers in San Diego, California. The need was simple: our
+            office ping pong league was getting too serious to keep managing on a whiteboard. We needed something
+            functional, informational, and useful for scheduling, scoring, and keeping track of our games. Being
+            software engineers, the solution was simple: we decided to digitize and revolutionize the table tennis
+            experience, complete with league management, game tracking, and more, and thus, Pongifi was born.
+          </p>
+        </div>
+
+        <WidgetsAboutRally />
+      </div>
+    </section>
+
+    <section class="bg-surface-raised px-6 py-16 md:px-16 md:py-20">
+      <div class="mx-auto max-w-[820px] text-center">
+        <h2 class="font-display text-h2 font-medium tracking-tight">What Pongifi is</h2>
+
+        <p class="text-ink-muted text-body-lg mt-6">
+          Pongifi is the all-in-one league and game management platform for table tennis. Create a league, invite the
+          people you already play against, and record games live as you play them or capture them as follow-up events.
+          Every result is confirmed by your opponent, ratings update on their own, and the standings end up reflecting
+          what actually happened at the table.
+        </p>
+      </div>
+    </section>
+
+    <WidgetsAboutDifferenceCarousel />
+
+    <WidgetsAboutPlayContexts />
+
+    <section class="border-border border-t px-6 py-16 md:px-16 md:py-24">
+      <div class="mx-auto max-w-[1120px]">
+        <div class="grid gap-12 lg:grid-cols-2 lg:items-center">
+          <div>
+            <h2 class="font-display text-h1 font-medium tracking-tight">Get in touch</h2>
+
+            <p class="text-ink-muted text-body-lg mt-4">
+              Found a bug, want a feature, or think we got a rule wrong? We would genuinely like to hear it.
+            </p>
+
+            <a
+              class="text-accent-strong hover:text-accent text-body-lg mt-6 inline-flex items-center gap-2 font-medium transition-colors"
+              href="mailto:jens@jens-johnson.com"
+            >
+              <Icon
+                class="size-4"
+                name="lucide:mail"
+              />
+              jens@jens-johnson.com
+            </a>
+          </div>
+
+          <WidgetsMarketingCta />
+        </div>
+      </div>
+    </section>
+  </main>
+</template>
