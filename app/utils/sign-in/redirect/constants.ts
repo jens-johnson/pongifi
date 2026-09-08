@@ -9,33 +9,18 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * ███████████████████████████████████████ #utils/sign-in/redirect/constants.ts ████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * The provider command the sign-in page points at.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Where a signed-out visitor is sent to start a league.
+ * Where the Google command sends the visitor.
  *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
+ * A server route rather than a page, so it is reached with a document navigation instead of client-side routing
  * @public
  * @constant
  */
-export const SIGN_IN_ROUTE: string = '/sign-in';
-
-/**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
- * @public
- * @constant
- */
-export const LEAGUES_ROUTE: string = '/leagues';
-
-/**
- * The FAQ, offered as the secondary link beside the closing call to action
- * @public
- * @constant
- */
-export const FAQ_ROUTE: string = '/faq';
+export const SIGN_IN_GOOGLE_COMMAND: string = '/auth/google';
