@@ -129,7 +129,7 @@ function onSelectGroup(groupId: string, event: MouseEvent): void {
   }
 
   event.preventDefault();
-  window.history.replaceState(null, '', `#${groupId}`);
+  window.history.replaceState(window.history.state, '', `#${groupId}`);
   group.scrollIntoView({ behavior: scrollBehavior.value, block: 'start' });
   focusCurrentFragment();
 }
