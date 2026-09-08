@@ -9,57 +9,30 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * ███████████████████████████████████████████ #middleware/session.global.ts ███████████████████████████████████████████
  *
- * The application's named routes, declared once so no surface can disagree about one.
+ * Routes every request according to the session behind it, before the page renders.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Where a signed-out visitor is sent to start a league.
- *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
- * @public
- * @constant
- */
-export const SIGN_IN_ROUTE: string = '/sign-in';
+import type { RouteLocationNormalized } from 'vue-router';
 
-/**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
- * @public
- * @constant
- */
-export const LEAGUES_ROUTE: string = '/leagues';
+export default defineNuxtRouteMiddleware((to: RouteLocationNormalized): ReturnType<typeof navigateTo> | undefined => {
+  const { loggedIn, user }: ReturnType<typeof useUserSession> = useUserSession();
 
-/**
- * The FAQ, offered as the secondary link beside the closing call to action
- * @public
- * @constant
- */
-export const FAQ_ROUTE: string = '/faq';
+  const destination: string | null = resolveSessionGate({
+    fullPath: to.fullPath,
+    loggedIn: loggedIn.value,
+    needsWelcome: user.value?.needsWelcome ?? false,
+    path: to.path,
+    redirect: to.query.redirect,
+  });
 
-/**
- * The landing page signed out and the dashboard signed in, and the default destination after signing in.
- *
- * One route rather than a separate `/dashboard`, so a bookmark, a sign-in and a sign-out all resolve to the same
- * place and the session decides what it renders
- * @public
- * @constant
- */
-export const HOME_ROUTE: string = '/';
+  if (destination === null) {
+    return undefined;
+  }
 
-/**
- * The signed-in player's own account page
- * @public
- * @constant
- */
-export const PROFILE_ROUTE: string = '/profile';
-
-/**
- * The one-time step between a first sign-in and the rest of the product
- * @public
- * @constant
- */
-export const WELCOME_ROUTE: string = '/welcome';
+  // Replace rather than push: a gated route should not sit in history for the back button to return to
+  return navigateTo(destination, { replace: true });
+});

@@ -46,7 +46,7 @@ import {
   upsertGoogleUser,
   validateGoogleProfile,
 } from '#utils/auth';
-import { LEAGUES_ROUTE, SIGN_IN_ROUTE } from '~/utils/marketing/routes';
+import { HOME_ROUTE, SIGN_IN_ROUTE } from '~/utils/marketing/routes';
 import { resolveSignInRedirect } from '~/utils/sign-in/redirect';
 
 /**
@@ -72,7 +72,7 @@ function consumeAuthDestination(event: H3Event): string {
  * @returns The sign-in failure page location
  */
 function buildAuthFailureRedirect(destination: string): string {
-  if (destination === LEAGUES_ROUTE) {
+  if (destination === HOME_ROUTE) {
     return `${SIGN_IN_ROUTE}?error=oauth`;
   }
 
