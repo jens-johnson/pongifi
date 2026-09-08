@@ -36,12 +36,8 @@ const { loggedIn }: ReturnType<typeof useUserSession> = useUserSession();
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // A response that depends on the session must not be reused for anyone else; the signed-out landing keeps its caching
-if (import.meta.server && loggedIn.value) {
-  const event: ReturnType<typeof useRequestEvent> = useRequestEvent();
-
-  if (event) {
-    setResponseHeader(event, 'Cache-Control', 'private, no-store');
-  }
+if (loggedIn.value) {
+  useResponseHeader('Cache-Control').value = 'private, no-store';
 }
 </script>
 
