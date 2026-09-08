@@ -17,6 +17,19 @@ persists across deployments rather than a fresh one per deploy.
 `preview.pongifi.com` exists because Google OAuth rejects wildcards in redirect URIs. Per-deployment preview URLs are
 random and cannot be registered, so previews point their callback at that one fixed host.
 
+### Migrations
+
+`vercel.json` sets the build command to `pnpm db:migrate && pnpm build`, so every deployment applies the checked-in
+migrations to its own environment's database before the build produces any output. Nothing else applies them: Vercel
+deploys from its GitHub integration rather than from CI, so there is no separate step to run and none to forget.
+
+Two consequences worth knowing. A failing migration fails the build, which is the point — shipping code against a
+schema that is not there is the exact failure this prevents. And because the Neon integration gives each git branch
+its own database branch, a `feat/*` preview migrates its own branch rather than a shared one.
+
+`drizzle-kit` prefers `DATABASE_URL_UNPOOLED` over `DATABASE_URL` (see `drizzle.config.ts`), because migrations need
+a direct connection rather than the pooled one the request path uses.
+
 ## Branching
 
 ```text
