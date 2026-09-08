@@ -9,9 +9,9 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████████████████ auth.d.ts █████████████████████████████████████████████████████
+ * ██████████████████████████████████████████████ #shared/auth/auth.d.ts ███████████████████████████████████████████████
  *
- * Nuxt Auth Utils declaration augmentation for Pongifi's session user contract.
+ * Augments the Nuxt Auth Utils session user with Pongifi's identity fields.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -36,6 +36,9 @@ declare module '#auth-utils' {
 
     /* Pongifi's stable user identifier */
     id: ISessionUser['id'];
+
+    /* Whether the player still has to complete /welcome */
+    needsWelcome: ISessionUser['needsWelcome'];
   }
 }
 
