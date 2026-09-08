@@ -22,8 +22,8 @@
 
 import type { H3Event } from 'h3';
 
+import type { ILeagueMembership } from '#shared/profile';
 import { runUpstream } from '#utils/http';
-import type { ILeagueMembership } from '#utils/profile';
 import { readMemberships } from '#utils/profile';
 
 export default defineEventHandler(async (event: H3Event): Promise<ILeagueMembership[]> => {

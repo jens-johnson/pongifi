@@ -16,6 +16,8 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import type { LeagueRole } from '#shared/domain';
+
 /**
  * The current user's account as `/api/me` returns it.
  *
@@ -75,3 +77,25 @@ export interface IDisplayNameValidationSuccess {
  * @public
  */
 export type TDisplayNameValidationResult = IDisplayNameValidationFailure | IDisplayNameValidationSuccess;
+
+/**
+ * One league the signed-in player belongs to, as the home and leagues panels render it.
+ * @public
+ * @interface
+ */
+export interface ILeagueMembership {
+  /* The league's short form, shown where the full name will not fit */
+  abbreviation: string;
+
+  /* The league's identifier */
+  id: string;
+
+  /* When the player joined, as an ISO string */
+  joinedAt: string;
+
+  /* The league's name */
+  name: string;
+
+  /* The player's role in this league */
+  role: LeagueRole;
+}

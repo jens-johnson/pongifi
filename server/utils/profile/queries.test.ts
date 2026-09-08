@@ -26,11 +26,10 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LeagueRole } from '#shared/domain';
-import type { IProfile } from '#shared/profile';
+import type { ILeagueMembership, IProfile } from '#shared/profile';
 import { symbolName } from '#shared/utils/symbol';
 
 import { completeProfile, readMemberships, readProfile, updateDisplayName } from './queries';
-import type { ILeagueMembership } from './types';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 

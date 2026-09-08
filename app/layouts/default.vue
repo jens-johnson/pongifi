@@ -23,10 +23,16 @@
 
 /* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-import type { Ref } from 'vue';
+import type { ComputedRef, Ref } from 'vue';
 
-import type { TTheme } from '~/types/layout';
-import { DESKTOP_QUERY, FOCUSABLE, NAV_LINKS } from '~/utils/default-layout';
+import type { INavigationLink, TTheme } from '~/types/layout';
+import {
+  DESKTOP_QUERY,
+  FOCUSABLE,
+  NAV_LINKS,
+  SIGNED_IN_NAV_LINKS,
+  SIGNED_IN_PANEL_LINKS,
+} from '~/utils/default-layout';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -74,6 +80,50 @@ const trigger: Ref<HTMLButtonElement | null> = ref(null);
  * @constant
  */
 const route: ReturnType<typeof useRoute> = useRoute();
+
+/**
+ * The visitor's session, which decides whether the bar sells the product or navigates it.
+ * @internal
+ * @constant
+ */
+const { loggedIn }: ReturnType<typeof useUserSession> = useUserSession();
+
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The links the desktop bar shows for this session.
+ * @internal
+ * @constant
+ */
+const barLinks: ComputedRef<readonly INavigationLink[]> = computed((): readonly INavigationLink[] =>
+  loggedIn.value ? SIGNED_IN_NAV_LINKS : NAV_LINKS,
+);
+
+/**
+ * The links the mobile panel shows for this session.
+ * @internal
+ * @constant
+ */
+const panelLinks: ComputedRef<readonly INavigationLink[]> = computed((): readonly INavigationLink[] =>
+  loggedIn.value ? SIGNED_IN_PANEL_LINKS : NAV_LINKS,
+);
+
+/**
+ * Whether the account menu should offer only Sign out.
+ *
+ * On the welcome page Profile would send the player straight back to the welcome page, because the gate holds them
+ * there until they finish
+ * @internal
+ * @constant
+ */
+const signOutOnly: ComputedRef<boolean> = computed((): boolean => route.path === WELCOME_ROUTE);
+
+/**
+ * Ends the session and returns to the public landing page.
+ * @internal
+ * @constant
+ */
+const signOut: ReturnType<typeof useSignOut> = useSignOut();
 
 /* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -198,7 +248,7 @@ onBeforeUnmount((): void => {
 
       <div class="text-ink-muted text-body hidden items-center gap-8 md:flex">
         <NuxtLink
-          v-for="link in NAV_LINKS"
+          v-for="link in barLinks"
           :key="link.to"
           :to="link.to"
           active-class="text-accent-strong"
@@ -221,7 +271,13 @@ onBeforeUnmount((): void => {
           />
         </button>
 
+        <WidgetsAccountMenu
+          v-if="loggedIn"
+          :sign-out-only="signOutOnly"
+        />
+
         <NuxtLink
+          v-else
           class="text-accent-strong hover:text-accent text-body hidden whitespace-nowrap transition-colors md:inline"
           :to="SIGN_IN_ROUTE"
         >
@@ -285,7 +341,7 @@ onBeforeUnmount((): void => {
             class="flex flex-col"
           >
             <NuxtLink
-              v-for="link in NAV_LINKS"
+              v-for="link in panelLinks"
               :key="link.to"
               :to="link.to"
               active-class="text-accent-strong"
@@ -315,7 +371,27 @@ onBeforeUnmount((): void => {
               </span>
             </button>
 
+            <template v-if="loggedIn">
+              <NuxtLink
+                v-if="!signOutOnly"
+                class="border-border text-body-lg block border-b py-5"
+                :to="PROFILE_ROUTE"
+                @click="closeMobileNavigation"
+              >
+                Profile
+              </NuxtLink>
+
+              <button
+                class="text-accent-strong text-body-lg mt-8 block w-full cursor-pointer text-left font-medium"
+                type="button"
+                @click="signOut()"
+              >
+                Sign out
+              </button>
+            </template>
+
             <NuxtLink
+              v-else
               class="bg-accent text-accent-ink hover:bg-accent-hover text-body-lg mt-8 block rounded-md px-6 py-4 text-center font-medium transition-colors"
               :to="SIGN_IN_ROUTE"
             >

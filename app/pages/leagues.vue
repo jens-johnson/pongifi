@@ -1,3 +1,4 @@
+<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -9,34 +10,29 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #server/utils/profile/types.ts ███████████████████████████████████████████
+ * ████████████████████████████████████████████████ #pages/leagues.vue █████████████████████████████████████████████████
  *
- * Row and payload shapes for the profile queries.
+ * The leagues the signed-in player belongs to.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * GET /leagues
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * A user row as the profile queries select it, before timestamps are rendered for the browser.
- * @public
- * @interface
- */
-export interface IProfileRow {
-  /* The provider-owned profile image, or null when Google supplied none */
-  avatarUrl: string | null;
+useHead({ title: 'Your leagues · Pongifi' });
+</script>
 
-  /* When the account was created */
-  createdAt: Date;
+<template>
+  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
+    <div class="max-w-[720px]">
+      <h1 class="font-display text-display font-medium tracking-tight">Your leagues</h1>
 
-  /* The player's chosen display name */
-  displayName: string;
-
-  /* The verified Google address */
-  email: string;
-
-  /* Pongifi's stable user identifier */
-  id: string;
-
-  /* When the player finished /welcome, or null while the step is outstanding */
-  profileCompletedAt: Date | null;
-}
+      <!-- The dashboard's panel as a page; when discovery and entry ship, this page grows and the panel does not -->
+      <div class="mt-10">
+        <WidgetsLeaguesPanel :show-heading="false" />
+      </div>
+    </div>
+  </main>
+</template>

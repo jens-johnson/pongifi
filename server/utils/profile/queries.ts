@@ -20,13 +20,13 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import type { LeagueRole } from '#shared/domain';
 import { MembershipStatus } from '#shared/domain';
-import type { IProfile } from '#shared/profile';
+import type { ILeagueMembership, IProfile } from '#shared/profile';
 import { defineSymbol } from '#shared/utils/symbol';
 import { useDatabase } from '#utils/db';
 
 import { leagues, memberships } from '../../db/schema';
 import { users } from '../../db/schema/users';
-import type { ILeagueMembership, IProfileRow } from './types';
+import type { IProfileRow } from './types';
 
 /**
  * The columns `/api/me` is allowed to return.
