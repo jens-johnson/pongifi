@@ -24,9 +24,11 @@
 /* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 import type { ComputedRef, Ref, ShallowRef } from 'vue';
+import type { Router } from 'vue-router';
 
 import { FAQ_CONTACT_URL, FAQ_GROUPS, TOP_THIRD_BAND } from './constants';
 import type { IFaqGroup } from './types';
+import { replaceFaqFragment } from './utils';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -50,6 +52,13 @@ const isMotionEnabled: Ref<boolean> = ref(false);
  * @constant
  */
 const observer: ShallowRef<IntersectionObserver | null> = shallowRef(null);
+
+/**
+ * The application router used for fragment navigation.
+ * @internal
+ * @constant
+ */
+const router: Router = useRouter();
 
 /**
  * The horizontal navigation row.
@@ -117,7 +126,7 @@ function focusCurrentFragment(): void {
  * @param groupId - Stable fragment identifier of the selected FAQ group
  * @param event - Pointer event raised by the group link
  */
-function onSelectGroup(groupId: string, event: MouseEvent): void {
+async function onSelectGroup(groupId: string, event: MouseEvent): Promise<void> {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return;
   }
@@ -129,7 +138,7 @@ function onSelectGroup(groupId: string, event: MouseEvent): void {
   }
 
   event.preventDefault();
-  window.history.replaceState(window.history.state, '', `#${groupId}`);
+  await replaceFaqFragment(router, groupId);
   group.scrollIntoView({ behavior: scrollBehavior.value, block: 'start' });
   focusCurrentFragment();
 }
