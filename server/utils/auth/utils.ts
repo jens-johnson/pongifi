@@ -72,7 +72,8 @@ export function buildGoogleUserUpsert(profile: IVerifiedGoogleProfile): SQL {
           "users"."avatar_url" AS "avatarUrl",
           "users"."display_name" AS "displayName",
           "users"."email",
-          "users"."id"
+          "users"."id",
+          ("users"."profile_completed_at" IS NULL) AS "needsWelcome"
       ),
       "new_or_matching_user" AS (
         INSERT INTO "users" ("email", "display_name", "avatar_url")
@@ -88,7 +89,8 @@ export function buildGoogleUserUpsert(profile: IVerifiedGoogleProfile): SQL {
           "users"."avatar_url" AS "avatarUrl",
           "users"."display_name" AS "displayName",
           "users"."email",
-          "users"."id"
+          "users"."id",
+          ("users"."profile_completed_at" IS NULL) AS "needsWelcome"
       ),
       "linked_account" AS (
         INSERT INTO "user_accounts" ("user_id", "provider", "provider_account_id")

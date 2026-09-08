@@ -147,6 +147,19 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
     });
 
+    it('reports that a brand new account still has to complete the welcome step', async (): Promise<void> => {
+      expect(await signIn()).toMatchObject({ needsWelcome: true });
+    });
+
+    it('stops reporting the welcome step once the player has completed it', async (): Promise<void> => {
+      await signIn();
+
+      // Completing /welcome stamps the column the flag is derived from
+      await database.execute(sql`UPDATE "users" SET "profile_completed_at" = NOW()`);
+
+      expect(await signIn()).toMatchObject({ needsWelcome: false });
+    });
+
     it('returns no row when the linked account is soft-deleted', async (): Promise<void> => {
       await signIn();
 

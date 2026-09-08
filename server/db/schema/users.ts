@@ -33,6 +33,8 @@ export const users = pgTable(
     email: text('email').notNull(),
     displayName: text('display_name').notNull(),
     avatarUrl: text('avatar_url'),
+    /* When the player finished /welcome; null means they have not, which is what routes them there once */
+    profileCompletedAt: timestamp('profile_completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
