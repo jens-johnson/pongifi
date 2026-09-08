@@ -67,14 +67,19 @@ const googleCommand: ComputedRef<string> = computed((): string => buildGoogleSig
  */
 const failed: ComputedRef<boolean> = computed((): boolean => route.query.error === 'oauth');
 
-// someone who is already signed in has nothing to do here; send them where they were going
-if (loggedIn.value) {
-  await navigateTo(destination.value);
-}
-
+// Keep the public authentication route out of search results while giving it a useful browser title
 useHead({
   meta: [{ content: 'noindex', name: 'robots' }],
   title: 'Sign in · Pongifi',
+});
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+onMounted(async (): Promise<void> => {
+  // Someone who is already signed in has nothing to do here; send them where they were going
+  if (loggedIn.value) {
+    await navigateTo(destination.value);
+  }
 });
 </script>
 
