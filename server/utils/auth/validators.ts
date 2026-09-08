@@ -9,33 +9,46 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * █████████████████████████████████████████ #server/utils/auth/validators.ts ██████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * Boundary validator that normalizes Google's userinfo response.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Where a signed-out visitor is sent to start a league.
- *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
- * @public
- * @constant
- */
-export const SIGN_IN_ROUTE: string = '/sign-in';
+import { defineSymbol } from '#shared/utils/symbol';
+
+import { GOOGLE_PROFILE_SCHEMA } from './constants';
+import type { IVerifiedGoogleProfile, TGoogleProfileValidationResult } from './types';
 
 /**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
+ * Validates Google's untrusted userinfo response and rebuilds the provider fields into Pongifi's identity shape.
  * @public
- * @constant
+ * @function
+ * @param input - The untrusted value returned by Google's userinfo endpoint
+ * @returns An accepted normalized profile, or `{ ok: false }` when required identity fields are absent or invalid
  */
-export const LEAGUES_ROUTE: string = '/leagues';
+export function validateGoogleProfile(input: unknown): TGoogleProfileValidationResult {
+  const result: ReturnType<typeof GOOGLE_PROFILE_SCHEMA.safeParse> = GOOGLE_PROFILE_SCHEMA.safeParse(input);
 
-/**
- * The FAQ, offered as the secondary link beside the closing call to action
- * @public
- * @constant
- */
-export const FAQ_ROUTE: string = '/faq';
+  if (!result.success) {
+    return { ok: false };
+  }
+
+  const profile: IVerifiedGoogleProfile = {
+    avatarUrl: result.data.picture ?? null,
+    displayName: result.data.name,
+    email: result.data.email.toLowerCase(),
+    providerAccountId: result.data.sub,
+  };
+
+  return { ok: true, value: profile };
+}
+
+/* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+// Register a readable name/description so the unit suite can title its describe block from the source symbol
+defineSymbol(validateGoogleProfile, {
+  name: 'Validate Google Profile',
+  description: 'Validates and normalizes the identity fields returned by Google.',
+});

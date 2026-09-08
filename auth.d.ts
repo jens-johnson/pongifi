@@ -9,33 +9,34 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
+ * █████████████████████████████████████████████████████ auth.d.ts █████████████████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * Nuxt Auth Utils declaration augmentation for Pongifi's session user contract.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Where a signed-out visitor is sent to start a league.
- *
- * The page starts Google sign-in through `nuxt-auth-utils`. It is named here, once, so the marketing surface agrees
- * with itself and renaming it is a one-line change
- * @public
- * @constant
- */
-export const SIGN_IN_ROUTE: string = '/sign-in';
+import type { ISessionUser } from '#shared/auth';
 
-/**
- * Where a signed-in visitor is sent instead; both marketing calls to action branch to this destination
- * @public
- * @constant
- */
-export const LEAGUES_ROUTE: string = '/leagues';
+declare module '#auth-utils' {
+  /**
+   * The Pongifi user exposed through Nuxt Auth Utils.
+   * @public
+   * @interface
+   */
+  interface User {
+    /* The user's current Google profile image, or null when none is available */
+    avatarUrl: ISessionUser['avatarUrl'];
 
-/**
- * The FAQ, offered as the secondary link beside the closing call to action
- * @public
- * @constant
- */
-export const FAQ_ROUTE: string = '/faq';
+    /* The user's current Google display name */
+    displayName: ISessionUser['displayName'];
+
+    /* The user's verified Google email address */
+    email: ISessionUser['email'];
+
+    /* Pongifi's stable user identifier */
+    id: ISessionUser['id'];
+  }
+}
+
+export {};
