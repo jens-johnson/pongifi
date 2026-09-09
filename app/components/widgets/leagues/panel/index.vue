@@ -40,6 +40,7 @@ import type { TPropsWithDefaults } from '@jens-johnson/style-guide/types/vue';
 import type { ComputedRef } from 'vue';
 
 import type { ILeagueMembership } from '#shared/profile';
+import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
 
 import { SKELETON_ROWS } from './constants';
 import type { ILeaguesPanelProps } from './types';
@@ -73,11 +74,19 @@ const {
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Whether the request is still in flight.
+ * What the panel draws: the list, its zero state, a skeleton, a retryable failure, or nothing while sign-in is being
+ * reached.
+ *
+ * The panel reads the same private data the profile page does, and its endpoint refuses a session whose account has
+ * gone. Without the unauthorized state, that refusal would render as a failure the player could only retry forever
  * @internal
  * @constant
  */
-const loading: ComputedRef<boolean> = computed((): boolean => status.value === 'pending');
+const readState: ComputedRef<AccountReadState> = useAccountReadState((): IAccountReadStateInput => ({
+  errorStatusCode: error.value?.statusCode ?? null,
+  hasData: Boolean(leagues.value),
+  status: status.value,
+}));
 
 /**
  * Whether the panel has nothing to show because the player has joined nothing.
@@ -98,7 +107,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
       <h2 class="font-display text-h3 font-medium tracking-tight">Your leagues</h2>
 
       <span
-        v-if="!error && !loading && (leagues?.length ?? 0) > 1"
+        v-if="readState === AccountReadState.READY && (leagues?.length ?? 0) > 1"
         class="text-ink-subtle text-caption"
       >
         {{ leagues?.length }} leagues
@@ -107,7 +116,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
 
     <!-- Error is checked before empty: a request that failed must never render as "you have no leagues" -->
     <div
-      v-if="error"
+      v-if="readState === AccountReadState.FAILED"
       class="mt-6"
       role="alert"
     >
@@ -124,7 +133,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
 
     <!-- Skeletons rather than a spinner, so the panel keeps its height and the layout does not jump -->
     <ul
-      v-else-if="loading"
+      v-else-if="readState === AccountReadState.PENDING"
       aria-hidden="true"
       class="mt-6 space-y-3"
     >
@@ -136,7 +145,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
     </ul>
 
     <div
-      v-else-if="empty"
+      v-else-if="readState === AccountReadState.READY && empty"
       class="mt-6"
     >
       <p class="text-ink text-body font-medium">No leagues yet.</p>
@@ -151,7 +160,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
     </div>
 
     <ul
-      v-else
+      v-else-if="readState === AccountReadState.READY"
       class="mt-6 space-y-3"
     >
       <li

@@ -26,15 +26,25 @@
 import type { ComputedRef } from 'vue';
 
 import type { IProfile } from '#shared/profile';
+import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
+import { SessionHandoff } from '~/utils/session/handoff';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The signed-in player's account, read from the database rather than the session so the page shows stored truth.
+ * The signed-in player's account, read from the database rather than the session so the page shows stored truth, with
+ * the request status the page's states are drawn from.
  * @internal
  * @constant
  */
-const { data: profile, refresh }: ReturnType<typeof useFetch<IProfile>> = useFetch<IProfile>('/api/me');
+const { data: profile, error, refresh, status }: ReturnType<typeof useFetch<IProfile>> = useFetch<IProfile>('/api/me');
+
+/**
+ * The client's copy of the session, refreshed by hand after a rename replaces the sealed cookie.
+ * @internal
+ * @constant
+ */
+const { fetch: refreshSession, user }: ReturnType<typeof useUserSession> = useUserSession();
 
 /**
  * Ends the session and returns to the public landing page.
@@ -54,13 +64,30 @@ const memberSince: ComputedRef<string> = computed((): string =>
   profile.value ? toMonthYear(profile.value.createdAt) : '',
 );
 
+/**
+ * What the page draws: the account card, a skeleton, a retryable failure, or nothing while sign-in is being reached.
+ *
+ * The composable also leaves for sign-in when the read comes back unauthorized, which is the one state a retry
+ * cannot recover
+ * @internal
+ * @constant
+ */
+const readState: ComputedRef<AccountReadState> = useAccountReadState((): IAccountReadStateInput => ({
+  errorStatusCode: error.value?.statusCode ?? null,
+  hasData: Boolean(profile.value),
+  status: status.value,
+}));
+
 /* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Saves a new display name and refreshes the page's copy of the account.
+ * Saves a new display name and brings both copies of the account back in line.
  *
- * The endpoint refreshes the session itself, so the account menu updates without a reload; this only has to bring the
- * page's own data back in line.
+ * The endpoint replaces the sealed cookie, but the account menu renders from the client's copy of the session, which
+ * is a cache the server cannot write to. Both are refreshed here, so the menu and the greeting change with the page
+ * rather than at the next reload. Neither refresh is allowed to fail the save that already happened: a refresh that
+ * produced no session leaves the client believing nobody is signed in, and the page is rendered from the cookie
+ * instead.
  * @internal
  * @function
  * @param displayName - The validated name to save
@@ -68,7 +95,16 @@ const memberSince: ComputedRef<string> = computed((): string =>
 async function save(displayName: string): Promise<void> {
   await $fetch<IProfile>('/api/me', { body: { displayName }, method: 'PATCH' });
 
-  await refresh();
+  await Promise.all([refresh(), refreshSession()]);
+
+  const handoff: SessionHandoff = resolveSessionHandoff({
+    needsWelcome: user.value?.needsWelcome ?? true,
+    refreshed: user.value !== null,
+  });
+
+  if (handoff === SessionHandoff.RELOAD) {
+    reloadNuxtApp({ persistState: false });
+  }
 }
 
 useHead({ title: 'Your profile · Pongifi' });
@@ -83,8 +119,40 @@ useHead({ title: 'Your profile · Pongifi' });
 
       <p class="text-ink-muted text-body-lg mt-6">How you appear in standings, and what Pongifi knows about you.</p>
 
+      <!-- Failure is drawn before the card: a heading with nothing under it reads as an account that has vanished -->
       <div
-        v-if="profile"
+        v-if="readState === AccountReadState.FAILED"
+        class="border-border bg-surface mt-10 rounded-lg border p-6 md:p-8"
+        role="alert"
+      >
+        <p class="text-ink text-body">Could not load your profile.</p>
+
+        <p class="text-ink-muted text-body mt-2">You are still signed in, and nothing has changed.</p>
+
+        <button
+          class="border-border text-ink hover:border-accent text-body-sm mt-4 rounded-md border px-4 py-2 font-medium transition-colors"
+          type="button"
+          @click="refresh()"
+        >
+          Retry
+        </button>
+      </div>
+
+      <!-- A skeleton at the card's height rather than a spinner, so the page does not resize when the answer arrives -->
+      <div
+        v-else-if="readState === AccountReadState.PENDING"
+        aria-hidden="true"
+        class="border-border bg-surface mt-10 rounded-lg border p-6 md:p-8"
+      >
+        <div class="bg-surface-raised h-14 animate-pulse rounded-md" />
+
+        <div class="bg-surface-raised mt-8 h-28 animate-pulse rounded-md" />
+
+        <div class="bg-surface-raised mt-8 h-24 animate-pulse rounded-md" />
+      </div>
+
+      <div
+        v-else-if="readState === AccountReadState.READY && profile"
         class="border-border bg-surface mt-10 rounded-lg border p-6 md:p-8"
       >
         <div class="flex items-center gap-4">
@@ -127,7 +195,7 @@ useHead({ title: 'Your profile · Pongifi' });
         </dl>
       </div>
 
-      <!-- Also in the account menu; a profile page is where people look for it -->
+      <!-- Also in the account menu; a profile page is where people look for it, and a failed read does not hide it -->
       <button
         class="border-border text-ink hover:border-accent text-body mt-8 rounded-md border px-6 py-3 font-medium transition-colors"
         type="button"

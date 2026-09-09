@@ -109,7 +109,16 @@ vi.mock('@upstash/ratelimit', (): Record<string, unknown> => {
  */
 const CACHE: object = { redis: true };
 
-vi.mock('#utils/cache', (): Record<string, unknown> => ({ useCache: (): object => CACHE }));
+/**
+ * The cache double, hoisted so one case can make it fail the way an unconfigured deployment does.
+ * @internal
+ * @constant
+ */
+const cacheMocks: { useCache: Mock<() => object> } = vi.hoisted((): { useCache: Mock<() => object> } => ({
+  useCache: vi.fn((): object => CACHE),
+}));
+
+vi.mock('#utils/cache', (): Record<string, unknown> => ({ ...cacheMocks }));
 
 /**
  * The host every accepted request in this suite arrives on
@@ -335,6 +344,22 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect.objectContaining({ prefix: WRITE_RATE_LIMIT_PREFIX, redis: CACHE }),
       );
       expect(rateLimitMocks.slidingWindow).toHaveBeenCalledWith(WRITE_RATE_LIMIT_REQUESTS, WRITE_RATE_LIMIT_WINDOW);
+    });
+
+    it('reports a cache it could not even build as unavailable, rather than as an opaque failure', async (): Promise<void> => {
+      // The client throws synchronously when its credentials are absent, before any promise exists to guard
+      vi.resetModules();
+      cacheMocks.useCache.mockImplementationOnce((): never => {
+        throw new Error('Upstash Redis credentials are not configured.');
+      });
+
+      const fresh: typeof import('./utils') = await import('./utils');
+      const { event }: IRequestDouble = requestWith({ host: HOST });
+
+      const error: H3Error = await refusalFrom((): Promise<void> => fresh.assertWithinWriteRateLimit(event, USER_ID));
+
+      expect(error.statusCode).toBe(502);
+      expect(error.statusMessage).toBe(RATE_LIMIT_UNAVAILABLE_MESSAGE);
     });
   });
 });

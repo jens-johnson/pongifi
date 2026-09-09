@@ -80,6 +80,22 @@ function useWriteRateLimiter(): TRatelimit {
 }
 
 /**
+ * Asks the limiter about one request, building it if this is the first.
+ *
+ * Async so that building the limiter is inside the returned promise rather than before it: the cache client throws
+ * synchronously when its credentials are absent, and a throw raised while assembling an argument never reaches the
+ * guard that argument is being passed to. Unwrapped, a deployment missing its Redis configuration answered a write
+ * with an opaque 500 instead of the message this module publishes
+ * @internal
+ * @function
+ * @param userId - The identifier taken from the verified session, never from the request
+ * @returns The limiter's verdict on this request
+ */
+async function checkWriteRateLimit(userId: string): Promise<IRateLimitVerdict> {
+  return useWriteRateLimiter().limit(userId);
+}
+
+/**
  * Refuses a state-changing request that did not come from this deployment.
  *
  * A sealed session cookie is sent by the browser whether or not the page that triggered the request belongs to
@@ -110,13 +126,10 @@ export function assertSameOrigin(event: H3Event): void {
  * @function
  * @param event - The request being handled, for the `Retry-After` hint
  * @param userId - The identifier taken from the verified session, never from the request
- * @throws 429 when the account is over the limit, or 502 when the limiter cannot be reached
+ * @throws 429 when the account is over the limit, or 502 when the limiter cannot be reached or configured
  */
 export async function assertWithinWriteRateLimit(event: H3Event, userId: string): Promise<void> {
-  const verdict: IRateLimitVerdict = await runUpstream(
-    useWriteRateLimiter().limit(userId),
-    RATE_LIMIT_UNAVAILABLE_MESSAGE,
-  );
+  const verdict: IRateLimitVerdict = await runUpstream(checkWriteRateLimit(userId), RATE_LIMIT_UNAVAILABLE_MESSAGE);
 
   if (verdict.success) {
     return;

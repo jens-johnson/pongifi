@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
 import { symbolName } from '#shared/utils/symbol';
 
 import type { ISessionGateInput } from './types';
-import { resolveSessionGate } from './utils';
+import { buildGatedReturnPath, resolveSessionGate } from './utils';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -168,6 +168,34 @@ describe(getTestFileName(import.meta.url), (): void => {
           }),
         ),
       ).toBe('/');
+    });
+  });
+
+  describe(symbolName(buildGatedReturnPath), (): void => {
+    it('carries the requested path back as a return value', (): void => {
+      expect(buildGatedReturnPath('/sign-in', '/profile')).toBe('/sign-in?redirect=%2Fprofile');
+    });
+
+    it('encodes a path carrying its own query, so the destination survives the round trip intact', (): void => {
+      expect(buildGatedReturnPath('/sign-in', '/leagues?invite=abc123')).toBe(
+        '/sign-in?redirect=%2Fleagues%3Finvite%3Dabc123',
+      );
+    });
+
+    it('encodes a path that would otherwise close the query and add parameters of its own', (): void => {
+      expect(buildGatedReturnPath('/sign-in', '/profile&next=https://elsewhere.example')).not.toContain('&next=');
+    });
+
+    it('builds the same destination a page reaches for as the gate does', (): void => {
+      const gated: string | null = resolveSessionGate({
+        fullPath: '/profile',
+        loggedIn: false,
+        needsWelcome: false,
+        path: '/profile',
+        redirect: undefined,
+      });
+
+      expect(gated).toBe(buildGatedReturnPath('/sign-in', '/profile'));
     });
   });
 });
