@@ -184,9 +184,28 @@ describe(getTestFileName(import.meta.url), (): void => {
       // Confirm shared-branch data remains intact
       await expect(runNeonPreviewCleanup(options)).resolves.toEqual({
         deleted: false,
-        message: 'Skipped Neon preview cleanup: Git branch feat/ratings still belongs to another open pull request',
+        message: 'Skipped Neon preview cleanup: Git branch feat/ratings still belongs to an open pull request',
       });
       expect(options.fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('skips deletion when the final open-list read observes the triggering pull request reopened', async (): Promise<void> => {
+      // Keep both individual reads closed, then expose the reopened triggering pull request in the final list read
+      const options: INeonPreviewCleanupOptions = buildOptions({
+        fetchOpenPullRequests: vi
+          .fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([{ ...CLOSED_PULL_REQUEST, state: 'open' }]),
+      });
+
+      // Confirm the freshest open-list evidence prevents the provider mutation
+      await expect(runNeonPreviewCleanup(options)).resolves.toEqual({
+        deleted: false,
+        message: 'Skipped Neon preview cleanup: Git branch feat/ratings gained an open pull request',
+      });
+      expect(options.fetchPullRequest).toHaveBeenCalledTimes(2);
+      expect(options.fetchOpenPullRequests).toHaveBeenCalledTimes(2);
+      expect(options.fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     it('skips long-lived and local-development Git branches', async (): Promise<void> => {

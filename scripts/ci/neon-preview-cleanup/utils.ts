@@ -78,19 +78,17 @@ export async function runNeonPreviewCleanup(options: INeonPreviewCleanupOptions)
     return buildSkippedResult(`Git branch ${pullRequest.head.ref} is retained by policy`);
   }
 
-  // Keep a shared Git branch alive while any other pull request still uses it
+  // Keep a Git branch alive while any open pull request still uses it
   const openPullRequests: IPullRequest[] = validatePullRequestList(
     await options.fetchOpenPullRequests(pullRequest.head.repo.owner.login, pullRequest.head.ref),
   );
-  const hasAnotherOpenPullRequest: boolean = openPullRequests.some(
+  const hasOpenPullRequest: boolean = openPullRequests.some(
     (candidate: IPullRequest): boolean =>
-      candidate.number !== pullRequest.number &&
-      candidate.head.ref === pullRequest.head.ref &&
-      candidate.head.repo.full_name === options.repository,
+      candidate.head.ref === pullRequest.head.ref && candidate.head.repo.full_name === options.repository,
   );
 
-  if (hasAnotherOpenPullRequest) {
-    return buildSkippedResult(`Git branch ${pullRequest.head.ref} still belongs to another open pull request`);
+  if (hasOpenPullRequest) {
+    return buildSkippedResult(`Git branch ${pullRequest.head.ref} still belongs to an open pull request`);
   }
 
   // Validate all owner-provided configuration before sending the credential to Neon
@@ -144,15 +142,13 @@ export async function runNeonPreviewCleanup(options: INeonPreviewCleanupOptions)
   const finalOpenPullRequests: IPullRequest[] = validatePullRequestList(
     await options.fetchOpenPullRequests(finalPullRequest.head.repo.owner.login, finalPullRequest.head.ref),
   );
-  const finalSharedHead: boolean = finalOpenPullRequests.some(
+  const finalOpenPullRequest: boolean = finalOpenPullRequests.some(
     (candidate: IPullRequest): boolean =>
-      candidate.number !== finalPullRequest.number &&
-      candidate.head.ref === finalPullRequest.head.ref &&
-      candidate.head.repo.full_name === options.repository,
+      candidate.head.ref === finalPullRequest.head.ref && candidate.head.repo.full_name === options.repository,
   );
 
-  if (finalSharedHead) {
-    return buildSkippedResult(`Git branch ${pullRequest.head.ref} gained another open pull request`);
+  if (finalOpenPullRequest) {
+    return buildSkippedResult(`Git branch ${pullRequest.head.ref} gained an open pull request`);
   }
 
   // Delete only the validated provider id; raw event branch names never enter a shell or mutation path

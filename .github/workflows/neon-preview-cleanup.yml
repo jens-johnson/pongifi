@@ -46,16 +46,27 @@ jobs:
             const moduleDirectory = path.join(process.env.RUNNER_TEMP, 'neon-preview-cleanup');
             await fileSystem.mkdir(moduleDirectory);
 
+            const { data: stagingReference } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              ref: 'heads/staging',
+              repo: context.repo.repo,
+            });
+            const trustedStagingCommit = stagingReference.object.sha;
+
+            if (typeof trustedStagingCommit !== 'string' || !/^[0-9a-f]{40}$/u.test(trustedStagingCommit)) {
+              throw new Error('Trusted staging reference did not resolve to an immutable Git commit SHA');
+            }
+
             for (const fileName of ['constants.ts', 'types.ts', 'utils.ts']) {
               const { data: cleanupModule } = await github.rest.repos.getContent({
                 owner: context.repo.owner,
                 path: `scripts/ci/neon-preview-cleanup/${fileName}`,
-                ref: context.payload.repository.default_branch,
+                ref: trustedStagingCommit,
                 repo: context.repo.repo,
               });
 
               if (Array.isArray(cleanupModule) || cleanupModule.type !== 'file' || !cleanupModule.content) {
-                throw new Error(`Trusted Neon cleanup module ${fileName} is missing from the repository default branch`);
+                throw new Error(`Trusted Neon cleanup module ${fileName} is missing from the resolved staging commit`);
               }
 
               await fileSystem.writeFile(path.join(moduleDirectory, fileName), Buffer.from(cleanupModule.content, 'base64'));

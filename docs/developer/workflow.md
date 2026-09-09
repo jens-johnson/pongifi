@@ -15,7 +15,7 @@ The Neon integration names a database branch after the **git** branch, so each o
 persists across deployments rather than a fresh one per deploy.
 
 When a same-repository pull request into `staging` closes, the `Retire Neon Preview Database` workflow rechecks the
-pull request state and any other open pull request using the same head branch, then deletes only the matching disposable
+pull request state and any open pull request using the same head branch, then deletes only the matching disposable
 `preview/<git-branch>` database by its validated Neon branch id. Production, staging, preview, release automation, and
 retained development branches are excluded. An already-absent database is a successful no-op; provider and
 configuration errors fail visibly.

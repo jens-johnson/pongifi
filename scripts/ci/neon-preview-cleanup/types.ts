@@ -53,7 +53,7 @@ export interface INeonPreviewCleanupOptions {
   /* The HTTP client used for Neon API requests */
   fetchImpl: typeof fetch;
 
-  /* The GitHub reader for other open pull requests sharing the head */
+  /* The GitHub reader for open pull requests sharing the head */
   fetchOpenPullRequests: TFetchOpenPullRequests;
 
   /* The GitHub reader for the triggering pull request's current state */
