@@ -233,6 +233,16 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(profileMocks.completeProfile).not.toHaveBeenCalled();
   });
 
+  it('refuses a write the limiter could not answer for without reading the body or persisting', async (): Promise<void> => {
+    /* The unavailable answer is not the over-the-limit one, and it reaches the handler the same way: `@upstash/ratelimit`
+       invents a successful verdict when its own timeout fires, so this is the path a stalled Redis takes */
+    writeBoundaryMocks.assertWithinWriteRateLimit.mockRejectedValue(createRefusal(502));
+
+    expect((await refusal()).statusCode).toBe(502);
+    expect(readBodyMock).not.toHaveBeenCalled();
+    expect(profileMocks.completeProfile).not.toHaveBeenCalled();
+  });
+
   it('checks the boundary before the session is trusted for anything else', async (): Promise<void> => {
     await handler(EVENT);
 

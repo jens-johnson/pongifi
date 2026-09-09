@@ -31,6 +31,8 @@ import {
   RATE_LIMITED_STATUS,
   WRITE_RATE_LIMIT_PREFIX,
   WRITE_RATE_LIMIT_REQUESTS,
+  WRITE_RATE_LIMIT_TIMEOUT,
+  WRITE_RATE_LIMIT_TIMEOUT_REASON,
   WRITE_RATE_LIMIT_WINDOW,
 } from './constants';
 import type { IRateLimitVerdict } from './types';
@@ -329,6 +331,49 @@ describe(getTestFileName(import.meta.url), (): void => {
       // A limit that lapses whenever its store does is not a limit
       expect(error.statusCode).toBe(502);
       expect(error.statusMessage).toBe(RATE_LIMIT_UNAVAILABLE_MESSAGE);
+    });
+
+    it('refuses the write when the limiter answered with its own timeout rather than a count', async (): Promise<void> => {
+      const { event, responseHeaders }: IRequestDouble = requestWith({ host: HOST });
+
+      /* What `@upstash/ratelimit` resolves when its timeout fires: an invented verdict, not a rejection. It reads
+         `success: true` with a zero allowance, so a check written against `success` alone waves the write through */
+      rateLimitMocks.limit.mockResolvedValue({
+        limit: 0,
+        reason: WRITE_RATE_LIMIT_TIMEOUT_REASON,
+        remaining: 0,
+        reset: 0,
+        success: true,
+      } as IRateLimitVerdict);
+
+      const error: H3Error = await refusalFrom((): Promise<void> => assertWithinWriteRateLimit(event, USER_ID));
+
+      // A limiter that did not answer in time has not counted the request, so nothing would stop the next one either
+      expect(error.statusCode).toBe(502);
+      expect(error.statusMessage).toBe(RATE_LIMIT_UNAVAILABLE_MESSAGE);
+
+      // Not a 429: the account is not over its allowance, so there is no window for it to be told to wait out
+      expect(responseHeaders['Retry-After']).toBeUndefined();
+    });
+
+    it('still accepts an ordinary verdict, which carries no reason at all', async (): Promise<void> => {
+      const { event }: IRequestDouble = requestWith({ host: HOST });
+
+      rateLimitMocks.limit.mockResolvedValue({ reset: NOW.getTime() + 60_000, success: true });
+
+      await expect(assertWithinWriteRateLimit(event, USER_ID)).resolves.toBeUndefined();
+    });
+
+    it('states the timeout it holds the limiter to rather than inheriting the library default', async (): Promise<void> => {
+      const { event }: IRequestDouble = requestWith({ host: HOST });
+
+      rateLimitMocks.limit.mockResolvedValue({ reset: NOW.getTime() + 60_000, success: true });
+
+      await assertWithinWriteRateLimit(event, USER_ID);
+
+      expect(rateLimitMocks.construct).toHaveBeenCalledWith(
+        expect.objectContaining({ timeout: WRITE_RATE_LIMIT_TIMEOUT }),
+      );
     });
 
     it('builds one limiter for the whole instance, from the published policy', async (): Promise<void> => {

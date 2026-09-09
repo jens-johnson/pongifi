@@ -64,6 +64,26 @@ export const WRITE_RATE_LIMIT_WINDOW: Duration = '1 m';
 export const WRITE_RATE_LIMIT_PREFIX: string = 'pongifi:write-rate-limit';
 
 /**
+ * How long the limiter may take to answer before its verdict is treated as unavailable, in milliseconds.
+ *
+ * Stated rather than inherited: `@upstash/ratelimit` applies a five-second timeout of its own by default, and pinning
+ * the value here keeps the number this module reasons about from moving underneath it on a dependency bump
+ * @public
+ * @constant
+ */
+export const WRITE_RATE_LIMIT_TIMEOUT: number = 5000;
+
+/**
+ * The `reason` `@upstash/ratelimit` stamps on the verdict it invents when its own timeout fires.
+ *
+ * That verdict arrives as `success: true`, so it reads as an allowance rather than the failure it is. It is matched by
+ * this reason and refused, because a limiter that could not be reached in time has not counted the request
+ * @public
+ * @constant
+ */
+export const WRITE_RATE_LIMIT_TIMEOUT_REASON: string = 'timeout';
+
+/**
  * The status a write over the limit is refused with.
  * @public
  * @constant

@@ -25,6 +25,9 @@
  * @interface
  */
 export interface IRateLimitVerdict {
+  /* Why the limiter answered the way it did, when it has something to say; absent on an ordinary counted verdict */
+  reason?: string;
+
   /* When the current window rolls over, as a millisecond timestamp */
   reset: number;
 

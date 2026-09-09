@@ -33,6 +33,8 @@ import {
   RATE_LIMITED_STATUS,
   WRITE_RATE_LIMIT_PREFIX,
   WRITE_RATE_LIMIT_REQUESTS,
+  WRITE_RATE_LIMIT_TIMEOUT,
+  WRITE_RATE_LIMIT_TIMEOUT_REASON,
   WRITE_RATE_LIMIT_WINDOW,
 } from './constants';
 import type { IRateLimitVerdict } from './types';
@@ -74,6 +76,7 @@ function useWriteRateLimiter(): TRatelimit {
     limiter: Ratelimit.slidingWindow(WRITE_RATE_LIMIT_REQUESTS, WRITE_RATE_LIMIT_WINDOW),
     prefix: WRITE_RATE_LIMIT_PREFIX,
     redis: useCache(),
+    timeout: WRITE_RATE_LIMIT_TIMEOUT,
   });
 
   return limiter;
@@ -85,14 +88,27 @@ function useWriteRateLimiter(): TRatelimit {
  * Async so that building the limiter is inside the returned promise rather than before it: the cache client throws
  * synchronously when its credentials are absent, and a throw raised while assembling an argument never reaches the
  * guard that argument is being passed to. Unwrapped, a deployment missing its Redis configuration answered a write
- * with an opaque 500 instead of the message this module publishes
+ * with an opaque 500 instead of the message this module publishes.
+ *
+ * A stalled Redis is rejected here rather than returned, so the one path that produces this module's unavailable
+ * answer stays in {@link assertWithinWriteRateLimit}'s guard. `@upstash/ratelimit` does not reject when its timeout
+ * fires: it resolves a verdict of its own invention that reads `success: true` with a zero allowance, which any check
+ * written against `success` alone accepts as room to write. That is the opposite of what happened — the request was
+ * never counted, so nothing stops the next one either
  * @internal
  * @function
  * @param userId - The identifier taken from the verified session, never from the request
+ * @throws When the limiter did not answer inside {@link WRITE_RATE_LIMIT_TIMEOUT}, for the guard to translate
  * @returns The limiter's verdict on this request
  */
 async function checkWriteRateLimit(userId: string): Promise<IRateLimitVerdict> {
-  return useWriteRateLimiter().limit(userId);
+  const verdict: IRateLimitVerdict = await useWriteRateLimiter().limit(userId);
+
+  if (verdict.reason === WRITE_RATE_LIMIT_TIMEOUT_REASON) {
+    throw new Error(`The write rate limiter did not answer within ${WRITE_RATE_LIMIT_TIMEOUT}ms.`);
+  }
+
+  return verdict;
 }
 
 /**
@@ -126,7 +142,8 @@ export function assertSameOrigin(event: H3Event): void {
  * @function
  * @param event - The request being handled, for the `Retry-After` hint
  * @param userId - The identifier taken from the verified session, never from the request
- * @throws 429 when the account is over the limit, or 502 when the limiter cannot be reached or configured
+ * @throws 429 when the account is over the limit, or 502 when the limiter cannot be reached, answered in time, or
+ * configured
  */
 export async function assertWithinWriteRateLimit(event: H3Event, userId: string): Promise<void> {
   const verdict: IRateLimitVerdict = await runUpstream(checkWriteRateLimit(userId), RATE_LIMIT_UNAVAILABLE_MESSAGE);
