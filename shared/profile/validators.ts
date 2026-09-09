@@ -18,8 +18,17 @@
 
 import { defineSymbol } from '#shared/utils/symbol';
 
-import { DISPLAY_NAME_EMPTY_MESSAGE, DISPLAY_NAME_MAX_LENGTH, DISPLAY_NAME_TOO_LONG_MESSAGE } from './constants';
-import type { TDisplayNameValidationResult } from './types';
+import {
+  DISPLAY_NAME_EMPTY_MESSAGE,
+  DISPLAY_NAME_MAX_LENGTH,
+  DISPLAY_NAME_REJECTED_STATUS,
+  DISPLAY_NAME_TOO_LONG_MESSAGE,
+  PROFILE_BODY_REJECTED_STATUS,
+  PROFILE_BODY_SHAPE_MESSAGE,
+  PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
+  PROFILE_WRITE_BODY_FIELDS,
+} from './constants';
+import type { TDisplayNameValidationResult, TProfileWriteBodyResult } from './types';
 
 /**
  * Validates an untrusted display name and returns the trimmed value to store.
@@ -51,10 +60,61 @@ export function validateDisplayName(input: unknown): TDisplayNameValidationResul
   return { ok: true, value: trimmed };
 }
 
+/**
+ * Validates an untrusted profile write body against the allowlist the endpoints publish.
+ *
+ * The contract for `PATCH /api/me` and `POST /api/me/complete` is `{ displayName }` and nothing else, so a body
+ * carrying anything further is refused rather than quietly filtered. Filtering is the more forgiving behaviour and the
+ * worse one: a client sending `email` or `id` would be told its request succeeded while the field it cared about was
+ * dropped on the floor. The two refusals carry different statuses because they are different failures - a body of the
+ * wrong shape is malformed, a well-formed body holding an unusable name is not
+ * @public
+ * @function
+ * @param body - The parsed request body, straight from the wire
+ * @returns The trimmed name to persist, or the message and status the request is refused with
+ */
+export function validateProfileWriteBody(body: unknown): TProfileWriteBodyResult {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return {
+      ok: false,
+      message: PROFILE_BODY_SHAPE_MESSAGE,
+      statusCode: PROFILE_BODY_REJECTED_STATUS,
+    };
+  }
+
+  const fields: string[] = Object.keys(body);
+
+  // The rejected names are not echoed back; the caller knows what it sent, and a response is a poor place to repeat it
+  if (fields.some((field: string): boolean => !PROFILE_WRITE_BODY_FIELDS.includes(field))) {
+    return {
+      ok: false,
+      message: PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
+      statusCode: PROFILE_BODY_REJECTED_STATUS,
+    };
+  }
+
+  const result: TDisplayNameValidationResult = validateDisplayName((body as Record<string, unknown>).displayName);
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      message: result.message,
+      statusCode: DISPLAY_NAME_REJECTED_STATUS,
+    };
+  }
+
+  return { ok: true, value: result.value };
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register a readable name/description so the unit suite can title its describe block from the source symbol
 defineSymbol(validateDisplayName, {
   name: 'Validate Display Name',
   description: 'Validates and trims an untrusted display name against the shared length rule.',
+});
+
+defineSymbol(validateProfileWriteBody, {
+  name: 'Validate Profile Write Body',
+  description: "Validates an untrusted profile write body against the endpoints' published allowlist.",
 });

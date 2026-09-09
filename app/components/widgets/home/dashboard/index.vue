@@ -65,7 +65,7 @@ const lede: ComputedRef<string> = computed((): string =>
 <template>
   <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
     <!-- Hello rather than Welcome back: someone arriving from /welcome has never been here -->
-    <h1 class="font-display text-display font-medium tracking-tight">Hello, {{ user?.displayName }}.</h1>
+    <h1 class="font-display text-display font-medium tracking-tight">Hello, {{ user?.displayName }}</h1>
 
     <p class="text-ink-muted text-body-lg mt-4 max-w-[560px]">{{ lede }}</p>
 

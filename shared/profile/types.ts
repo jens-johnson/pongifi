@@ -99,3 +99,38 @@ export interface ILeagueMembership {
   /* The player's role in this league */
   role: LeagueRole;
 }
+
+/**
+ * A rejected profile write body, carrying both the message and the status it is refused with.
+ * @public
+ * @interface
+ */
+export interface IProfileWriteBodyFailure {
+  /* The body did not satisfy the shape rule, the allowlist, or the name rule */
+  ok: false;
+
+  /* The message returned as the status message */
+  message: string;
+
+  /* The HTTP status this particular refusal uses */
+  statusCode: number;
+}
+
+/**
+ * An accepted profile write body, reduced to the one value the endpoints persist.
+ * @public
+ * @interface
+ */
+export interface IProfileWriteBodySuccess {
+  /* The body satisfied every rule */
+  ok: true;
+
+  /* The trimmed name to persist */
+  value: string;
+}
+
+/**
+ * The result of validating an untrusted profile write body.
+ * @public
+ */
+export type TProfileWriteBodyResult = IProfileWriteBodyFailure | IProfileWriteBodySuccess;

@@ -84,6 +84,26 @@ export async function readProfile(userId: string): Promise<IProfile | null> {
 }
 
 /**
+ * Whether the identifier from a session still names a live account.
+ *
+ * A cheaper companion to {@link readProfile} for handlers that need the session revalidated but have no use for the
+ * profile itself. Selecting the id alone keeps the check to an index lookup rather than a row read.
+ * @public
+ * @function
+ * @param userId - The identifier taken from the verified session, never from the request
+ * @returns Whether an account exists for the identifier and has not been soft-deleted
+ */
+export async function isActiveAccount(userId: string): Promise<boolean> {
+  const rows: { id: string }[] = await useDatabase()
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.id, userId), isNull(users.deletedAt)))
+    .limit(1);
+
+  return rows.length > 0;
+}
+
+/**
  * Saves a new display name for the signed-in player.
  *
  * The soft-delete guard is repeated here rather than trusted from the read: a session outlives the account it names,
@@ -169,6 +189,11 @@ export async function readMemberships(userId: string): Promise<ILeagueMembership
 defineSymbol(readProfile, {
   name: 'Read Profile',
   description: "Reads the signed-in player's own account.",
+});
+
+defineSymbol(isActiveAccount, {
+  name: 'Is Active Account',
+  description: 'Reports whether the identifier from a session still names a live account.',
 });
 
 defineSymbol(updateDisplayName, {

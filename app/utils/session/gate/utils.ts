@@ -25,13 +25,17 @@ import type { ISessionGateInput } from './types';
 
 /**
  * Builds a destination that carries the requested path back as a return value.
- * @internal
+ *
+ * Exported because the gate is not the only place a private page gets taken away from a visitor: a page whose own read
+ * comes back unauthorized has to send them to sign-in too, and it has to encode the return path the same way the gate
+ * does or the two disagree about where the visitor was going.
+ * @public
  * @function
  * @param route - The page to send the visitor to
- * @param returnPath - The path they were trying to reach
+ * @param returnPath - The full path they were trying to reach, query included
  * @returns The route with the return path encoded onto it
  */
-function withReturnPath(route: string, returnPath: string): string {
+export function buildGatedReturnPath(route: string, returnPath: string): string {
   return `${route}?redirect=${encodeURIComponent(returnPath)}`;
 }
 
@@ -58,7 +62,7 @@ export function resolveSessionGate(input: ISessionGateInput): string | null {
     }
 
     // The whole path travels, query included, so an invite is still waiting after the provider round trip
-    return withReturnPath(SIGN_IN_ROUTE, input.fullPath);
+    return buildGatedReturnPath(SIGN_IN_ROUTE, input.fullPath);
   }
 
   if (input.path === WELCOME_ROUTE) {
@@ -67,7 +71,7 @@ export function resolveSessionGate(input: ISessionGateInput): string | null {
   }
 
   if (input.needsWelcome) {
-    return withReturnPath(WELCOME_ROUTE, input.fullPath);
+    return buildGatedReturnPath(WELCOME_ROUTE, input.fullPath);
   }
 
   return null;
@@ -75,7 +79,12 @@ export function resolveSessionGate(input: ISessionGateInput): string | null {
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-// Register a readable name/description so the unit suite can title its describe block from the source symbol
+// Register readable names/descriptions so the unit suite can title its describe blocks from the source symbols
+defineSymbol(buildGatedReturnPath, {
+  name: 'Build Gated Return Path',
+  description: 'Builds a destination that carries the requested path back as a return value.',
+});
+
 defineSymbol(resolveSessionGate, {
   name: 'Resolve Session Gate',
   description: 'Decides whether a requested route may proceed, or where the visitor belongs instead.',
