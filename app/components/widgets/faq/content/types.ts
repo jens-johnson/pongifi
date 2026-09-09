@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,23 +9,48 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████████████ #pages/faq.vue ███████████████████████████████████████████████████
+ * █████████████████████████████████████ #components/widgets/faq/content/types.ts ██████████████████████████████████████
  *
- * Frequently asked questions for prospective Pongifi players and league organizers.
+ * Types for the FAQ groups and their questions.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * GET /faq
+ * Imported by the FAQ content constants and widget.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useSeoMeta({
-  description: 'Short answers about leagues, recording games, ratings and the rules Pongifi follows.',
-  title: 'FAQ · Pongifi',
-});
-</script>
+/**
+ * One question and answer within an FAQ group.
+ * @public
+ * @interface
+ */
+export interface IFaqQuestion {
+  /* The answer shown below the question */
+  answer: string;
 
-<template>
-  <WidgetsFaqContent />
-</template>
+  /* The stable fragment identifier for direct links */
+  id: string;
+
+  /* The question shown as a heading */
+  question: string;
+}
+
+/**
+ * One themed group in the FAQ and its navigation entry.
+ * @public
+ * @interface
+ */
+export interface IFaqGroup {
+  /* The stable fragment identifier for the group */
+  id: string;
+
+  /* The full group heading */
+  label: string;
+
+  /* The compact label used in the sticky navigation */
+  navigationLabel: string;
+
+  /* The questions shown in the group */
+  questions: readonly IFaqQuestion[];
+}
