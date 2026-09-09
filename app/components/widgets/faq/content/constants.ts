@@ -56,11 +56,6 @@ export const FAQ_GROUPS: readonly IFaqGroup[] = [
         id: 'how-many-people-do-i-need-to-start-a-league',
         question: 'How many people do I need to start a league?',
       },
-      {
-        answer: 'No. Pongifi cares about the scoring, not the furniture.',
-        id: 'do-i-need-a-regulation-table',
-        question: 'Do I need a regulation table?',
-      },
     ],
   },
   {
