@@ -26,11 +26,11 @@
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The visitor's session, read only to bounce someone who is already signed in
+ * The visitor's session, read only to bounce someone who is already signed in, and refreshed before that is trusted
  * @internal
  * @constant
  */
-const { loggedIn }: ReturnType<typeof useUserSession> = useUserSession();
+const { fetch: refreshSession, loggedIn }: ReturnType<typeof useUserSession> = useUserSession();
 
 /**
  * The current route, read for the return path and the callback's failure flag
@@ -76,6 +76,17 @@ useHead({
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 onMounted(async (): Promise<void> => {
+  // Someone with no session at all is exactly who this page is for
+  if (!loggedIn.value) {
+    return;
+  }
+
+  /* Confirmed against the cookie before it is acted on. The client's copy is a cache, and this bounce is the one place
+     where trusting a stale one costs more than a wrong hop: the destination is a private page, and a private page
+     whose session has ended sends the visitor back here, which would bounce them again. Whatever leaves the copy
+     stale, the sealed cookie settles it, and a refresh that finds no session leaves the visitor on this page */
+  await refreshSession();
+
   // Someone who is already signed in has nothing to do here; send them where they were going
   if (loggedIn.value) {
     await navigateTo(destination.value);
