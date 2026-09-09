@@ -14,6 +14,26 @@ Three long-lived branches, three environments.
 The Neon integration names a database branch after the **git** branch, so each one has a single database that
 persists across deployments rather than a fresh one per deploy.
 
+When a same-repository pull request into `staging` closes, the `Retire Neon Preview Database` workflow rechecks the
+pull request state and any other open pull request using the same head branch, then deletes only the matching disposable
+`preview/<git-branch>` database by its validated Neon branch id. Production, staging, preview, release automation, and
+retained development branches are excluded. An already-absent database is a successful no-op; provider and
+configuration errors fail visibly.
+
+The installed Vercel-managed Neon integration also cleans up a database after Vercel deletes the last deployment for
+its Git branch. Vercel can retain those deployments after a pull request closes, so this workflow releases the limited
+preview capacity at pull request closure instead. Activation requires a repository secret named `NEON_API_KEY` and a
+repository variable named `NEON_PROJECT_ID`; the latter must match the connected Pongifi resource,
+`red-mode-26063499`.
+
+Closing a pull request retires its disposable preview data. Reopening it requires a fresh Vercel deployment to recreate
+the database; a later deployment of the Git branch can recreate it as well. This workflow handles future pull request
+closures and does not sweep historical orphan branches. Historical cleanup remains an owner-reviewed Neon Console task
+with individually named branches.
+
+See [Neon's Vercel-managed integration lifecycle](https://neon.com/blog/big-dx-improvements-for-neon-users-on-vercel)
+and the [Neon branch deletion API](https://api-docs.neon.tech/reference/deleteprojectbranch).
+
 `preview.pongifi.com` exists because Google OAuth rejects wildcards in redirect URIs. Per-deployment preview URLs are
 random and cannot be registered, so previews point their callback at that one fixed host.
 

@@ -13,5 +13,5 @@
     "typeRoots": ["./node_modules/@types"],
     "types": ["node"]
   },
-  "include": ["env.d.ts", "drizzle.config.ts", "vitest.config.ts"]
+  "include": ["env.d.ts", "drizzle.config.ts", "scripts/**/*.ts", "vitest.config.ts"]
 }
