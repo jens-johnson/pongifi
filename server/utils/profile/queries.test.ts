@@ -29,7 +29,7 @@ import { LeagueRole } from '#shared/domain';
 import type { ILeagueMembership, IProfile } from '#shared/profile';
 import { symbolName } from '#shared/utils/symbol';
 
-import { completeProfile, readMemberships, readProfile, updateDisplayName } from './queries';
+import { completeProfile, isActiveAccount, readMemberships, readProfile, updateDisplayName } from './queries';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -229,6 +229,34 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     it('returns nothing for a player who belongs to no leagues', async (): Promise<void> => {
       expect(await readMemberships(await insertUser(PLAYER_EMAIL, 'Maya'))).toEqual([]);
+    });
+  });
+
+  describe(symbolName(isActiveAccount), (): void => {
+    it('reports a live account as active', async (): Promise<void> => {
+      expect(await isActiveAccount(await insertUser(PLAYER_EMAIL, 'Maya'))).toBe(true);
+    });
+
+    it('reports a soft-deleted account as inactive, so its sealed session stops resolving', async (): Promise<void> => {
+      const id: string = await insertUser(PLAYER_EMAIL, 'Maya');
+
+      await database.execute(sql`UPDATE "users" SET "deleted_at" = NOW() WHERE "id" = ${id}`);
+
+      expect(await isActiveAccount(id)).toBe(false);
+    });
+
+    it('reports an identifier naming no account as inactive', async (): Promise<void> => {
+      expect(await isActiveAccount('00000000-0000-0000-0000-000000000000')).toBe(false);
+    });
+
+    it('answers per account rather than for whoever exists', async (): Promise<void> => {
+      const mine: string = await insertUser(PLAYER_EMAIL, 'Maya');
+      const theirs: string = await insertUser(OTHER_EMAIL, 'Sam');
+
+      await database.execute(sql`UPDATE "users" SET "deleted_at" = NOW() WHERE "id" = ${mine}`);
+
+      expect(await isActiveAccount(mine)).toBe(false);
+      expect(await isActiveAccount(theirs)).toBe(true);
     });
   });
 });

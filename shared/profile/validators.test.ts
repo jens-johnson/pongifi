@@ -21,8 +21,17 @@ import { describe, expect, it } from 'vitest';
 
 import { symbolName } from '#shared/utils/symbol';
 
-import { DISPLAY_NAME_EMPTY_MESSAGE, DISPLAY_NAME_MAX_LENGTH, DISPLAY_NAME_TOO_LONG_MESSAGE } from './constants';
-import { validateDisplayName } from './validators';
+import {
+  DISPLAY_NAME_EMPTY_MESSAGE,
+  DISPLAY_NAME_MAX_LENGTH,
+  DISPLAY_NAME_REJECTED_STATUS,
+  DISPLAY_NAME_TOO_LONG_MESSAGE,
+  PROFILE_BODY_REJECTED_STATUS,
+  PROFILE_BODY_SHAPE_MESSAGE,
+  PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
+} from './constants';
+import type { IProfileWriteBodyFailure, TProfileWriteBodyResult } from './types';
+import { validateDisplayName, validateProfileWriteBody } from './validators';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -97,6 +106,75 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(validateDisplayName(`   ${LONGEST_ACCEPTED_NAME}   `)).toEqual({
         ok: true,
         value: LONGEST_ACCEPTED_NAME,
+      });
+    });
+  });
+
+  describe(symbolName(validateProfileWriteBody), (): void => {
+    it('accepts a body carrying only the allowlisted field', (): void => {
+      expect(validateProfileWriteBody({ displayName: ORDINARY_NAME })).toEqual({ ok: true, value: ORDINARY_NAME });
+    });
+
+    it('trims the name it returns, so the endpoints persist what the validator approved', (): void => {
+      expect(validateProfileWriteBody({ displayName: `  ${ORDINARY_NAME}  ` })).toEqual({
+        ok: true,
+        value: ORDINARY_NAME,
+      });
+    });
+
+    it('rejects a body carrying a field the endpoint does not accept', (): void => {
+      // Filtering would answer 200 while silently dropping the field the client cared about
+      expect(validateProfileWriteBody({ displayName: ORDINARY_NAME, email: 'attacker@example.com' })).toEqual({
+        ok: false,
+        message: PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
+        statusCode: PROFILE_BODY_REJECTED_STATUS,
+      });
+    });
+
+    it('does not echo a rejected field name back into the message', (): void => {
+      const result: TProfileWriteBodyResult = validateProfileWriteBody({ '<img src=x>': 'anything' });
+
+      expect(result.ok).toBe(false);
+      expect((result as IProfileWriteBodyFailure).message).not.toContain('<img');
+    });
+
+    it('rejects a body that is not an object', (): void => {
+      expect(validateProfileWriteBody('Maya')).toEqual({
+        ok: false,
+        message: PROFILE_BODY_SHAPE_MESSAGE,
+        statusCode: PROFILE_BODY_REJECTED_STATUS,
+      });
+    });
+
+    it('rejects a null body, which typeof alone would call an object', (): void => {
+      expect(validateProfileWriteBody(null)).toEqual({
+        ok: false,
+        message: PROFILE_BODY_SHAPE_MESSAGE,
+        statusCode: PROFILE_BODY_REJECTED_STATUS,
+      });
+    });
+
+    it('rejects an array body, whose indices would otherwise read as unknown fields', (): void => {
+      expect(validateProfileWriteBody([ORDINARY_NAME])).toEqual({
+        ok: false,
+        message: PROFILE_BODY_SHAPE_MESSAGE,
+        statusCode: PROFILE_BODY_REJECTED_STATUS,
+      });
+    });
+
+    it('refuses an unusable name with the name rule status, not the malformed-body status', (): void => {
+      expect(validateProfileWriteBody({ displayName: '   ' })).toEqual({
+        ok: false,
+        message: DISPLAY_NAME_EMPTY_MESSAGE,
+        statusCode: DISPLAY_NAME_REJECTED_STATUS,
+      });
+    });
+
+    it('treats a body with no fields at all as a well-formed request holding an unusable name', (): void => {
+      expect(validateProfileWriteBody({})).toEqual({
+        ok: false,
+        message: DISPLAY_NAME_EMPTY_MESSAGE,
+        statusCode: DISPLAY_NAME_REJECTED_STATUS,
       });
     });
   });
