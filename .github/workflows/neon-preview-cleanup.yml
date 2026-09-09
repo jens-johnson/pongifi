@@ -1,0 +1,103 @@
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+#
+#                                   ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+#                                   ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+#                                   ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+#                                   ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+#                                   ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+#                                   ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+#
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+# █████████████████████████████████████ .github/workflows/neon-preview-cleanup.yml █████████████████████████████████████
+#
+# Deletes eligible Neon preview databases after same-repository pull requests into staging close.
+#
+# ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+
+name: Retire Neon Preview Database
+
+on:
+  pull_request:
+    branches: [staging]
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  delete-neon-preview-branch:
+    name: Retire Neon preview database
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve and delete the closed pull request database
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          EXPECTED_NEON_PROJECT_ID: red-mode-26063499
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+        with:
+          script: |
+            const fileSystem = require('node:fs/promises');
+            const path = require('node:path');
+            const { pathToFileURL } = require('node:url');
+
+            const pullRequest = context.payload.pull_request;
+            const moduleDirectory = path.join(process.env.RUNNER_TEMP, 'neon-preview-cleanup');
+            await fileSystem.mkdir(moduleDirectory);
+
+            const { data: stagingReference } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              ref: 'heads/staging',
+              repo: context.repo.repo,
+            });
+            const trustedStagingCommit = stagingReference.object.sha;
+
+            if (typeof trustedStagingCommit !== 'string' || !/^[0-9a-f]{40}$/u.test(trustedStagingCommit)) {
+              throw new Error('Trusted staging reference did not resolve to an immutable Git commit SHA');
+            }
+
+            for (const fileName of ['constants.ts', 'types.ts', 'utils.ts']) {
+              const { data: cleanupModule } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                path: `scripts/ci/neon-preview-cleanup/${fileName}`,
+                ref: trustedStagingCommit,
+                repo: context.repo.repo,
+              });
+
+              if (Array.isArray(cleanupModule) || cleanupModule.type !== 'file' || !cleanupModule.content) {
+                throw new Error(`Trusted Neon cleanup module ${fileName} is missing from the resolved staging commit`);
+              }
+
+              await fileSystem.writeFile(path.join(moduleDirectory, fileName), Buffer.from(cleanupModule.content, 'base64'));
+            }
+
+            const modulePath = path.join(moduleDirectory, 'utils.ts');
+
+            const { runNeonPreviewCleanup } = await import(pathToFileURL(modulePath).href);
+            const result = await runNeonPreviewCleanup({
+              apiKey: process.env.NEON_API_KEY,
+              expectedProjectId: process.env.EXPECTED_NEON_PROJECT_ID,
+              fetchImpl: globalThis.fetch,
+              fetchOpenPullRequests: async (headOwner, headReference) =>
+                github.paginate(github.rest.pulls.list, {
+                  head: `${headOwner}:${headReference}`,
+                  owner: context.repo.owner,
+                  per_page: 100,
+                  repo: context.repo.repo,
+                  state: 'open',
+                }),
+              fetchPullRequest: async () => {
+                const { data } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  pull_number: pullRequest.number,
+                  repo: context.repo.repo,
+                });
+                return data;
+              },
+              projectId: process.env.NEON_PROJECT_ID,
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+            });
+
+            core.notice(result.message);
+            await core.summary.addHeading('Neon preview cleanup').addRaw(result.message).write();
