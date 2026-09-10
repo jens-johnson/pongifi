@@ -21,17 +21,12 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'FAQ · Pongifi' });
+useSeoMeta({
+  description: 'Short answers about leagues, recording games, ratings and the rules Pongifi follows.',
+  title: 'FAQ · Pongifi',
+});
 </script>
 
 <template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[680px]">
-      <h1 class="font-display text-display font-medium tracking-tight">FAQ</h1>
-
-      <p class="text-ink-muted text-body-lg mt-6">The questions people actually ask.</p>
-
-      <p class="text-ink-subtle text-body mt-10">Content for this page is being written.</p>
-    </div>
-  </main>
+  <WidgetsFaqContent />
 </template>

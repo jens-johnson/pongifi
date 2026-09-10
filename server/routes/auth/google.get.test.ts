@@ -197,6 +197,7 @@ const USER: ISessionUser = {
   displayName: 'Player One',
   email: 'player@example.com',
   id: 'user-1',
+  needsWelcome: false,
 };
 
 /**

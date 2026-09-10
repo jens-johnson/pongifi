@@ -69,21 +69,21 @@ const { loggedIn }: ReturnType<typeof useUserSession> = useUserSession();
  * @internal
  * @constant
  */
-const destination: ComputedRef<string> = computed((): string => (loggedIn.value ? LEAGUES_ROUTE : SIGN_IN_ROUTE));
+const destination: ComputedRef<string> = computed((): string => (loggedIn.value ? HOME_ROUTE : SIGN_IN_ROUTE));
 
 /**
  * The primary command label appropriate to the visitor's authentication state.
  * @internal
  * @constant
  */
-const label: ComputedRef<string> = computed((): string => (loggedIn.value ? 'Back to your leagues' : 'Start a league'));
+const label: ComputedRef<string> = computed((): string => (loggedIn.value ? 'Go to your dashboard' : 'Start a league'));
 </script>
 
 <template>
   <div :class="props.compact ? 'mt-8' : 'border-border bg-surface rounded-lg border p-6 md:p-10'">
     <template v-if="!props.compact">
       <h2 class="font-display text-h2 font-medium tracking-tight">
-        {{ loggedIn ? 'Back to your leagues' : 'Ready for a real leaderboard?' }}
+        {{ loggedIn ? 'Go to your dashboard' : 'Ready for a real leaderboard?' }}
       </h2>
 
       <p class="text-ink-muted text-body mt-3">

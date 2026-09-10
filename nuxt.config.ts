@@ -124,6 +124,20 @@ export default defineNuxtConfig({
   },
 
   /**
+   * Per-route response rules. The three routes here exist only for a signed-in player, so their rendered HTML carries
+   * that player's name, email or leagues and must never be held in a shared cache. `/` sets the same header from the
+   * page instead, because it is the one route that is public or private depending on the session behind it, and the
+   * signed-out landing keeps its ordinary caching. The private API responses set it in their handlers, beside the
+   * session check that makes them private.
+   * @see {@link https://nuxt.com/docs/4.x/api/nuxt-config#routerules}
+   */
+  routeRules: {
+    '/leagues': { headers: { 'Cache-Control': 'private, no-store' } },
+    '/profile': { headers: { 'Cache-Control': 'private, no-store' } },
+    '/welcome': { headers: { 'Cache-Control': 'private, no-store' } },
+  },
+
+  /**
    * Runtime config; public values are exposed to the client, private values are server-only. Every secret is read
    * through this object rather than `process.env` scattered through the codebase.
    * @see {@link https://nuxt.com/docs/guide/going-further/runtime-config}

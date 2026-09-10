@@ -18,7 +18,7 @@
 
 import { defineSymbol } from '#shared/utils/symbol';
 
-import { LEAGUES_ROUTE } from '../../marketing/routes';
+import { HOME_ROUTE, WELCOME_ROUTE } from '../../marketing/routes';
 import { SIGN_IN_GOOGLE_COMMAND } from './constants';
 
 /**
@@ -68,7 +68,7 @@ function hasUnsafeCharacter(value: string): boolean {
 export function buildGoogleSignInCommand(raw: unknown): string {
   const destination: string = resolveSignInRedirect(raw);
 
-  if (destination === LEAGUES_ROUTE) {
+  if (destination === HOME_ROUTE) {
     return SIGN_IN_GOOGLE_COMMAND;
   }
 
@@ -89,19 +89,42 @@ export function buildGoogleSignInCommand(raw: unknown): string {
  */
 export function resolveSignInRedirect(raw: unknown): string {
   if (typeof raw !== 'string' || raw.length === 0) {
-    return LEAGUES_ROUTE;
+    return HOME_ROUTE;
   }
 
   if (hasUnsafeCharacter(raw)) {
-    return LEAGUES_ROUTE;
+    return HOME_ROUTE;
   }
 
   // must be an absolute path, and must not be protocol-relative; browsers read a backslash here as a slash
   if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) {
-    return LEAGUES_ROUTE;
+    return HOME_ROUTE;
   }
 
   return raw;
+}
+
+/**
+ * Resolves where to send a player once they finish the welcome step.
+ *
+ * The same narrowing as {@link resolveSignInRedirect}, plus one extra rule: a destination that is itself `/welcome`
+ * is treated as absent. Without it a completed player who arrives at `/welcome?redirect=/welcome` is sent back to the
+ * page they just left, and the gate that keeps incomplete players on this page turns into a loop between the page and
+ * itself. The query string is discarded before the comparison, so a nested `/welcome?redirect=/welcome` is caught too
+ * @public
+ * @function
+ * @param raw - The candidate path, straight from the query string
+ * @returns A path that is safe to navigate to and is not this page
+ */
+export function resolveWelcomeRedirect(raw: unknown): string {
+  const destination: string = resolveSignInRedirect(raw);
+  const [path]: string[] = destination.split(/[?#]/u);
+
+  if (path === WELCOME_ROUTE) {
+    return HOME_ROUTE;
+  }
+
+  return destination;
 }
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -114,4 +137,9 @@ defineSymbol(buildGoogleSignInCommand, {
 defineSymbol(resolveSignInRedirect, {
   name: 'Resolve Sign In Redirect',
   description: 'Narrows an attacker-controlled return path to a same-origin path, or the default destination.',
+});
+
+defineSymbol(resolveWelcomeRedirect, {
+  name: 'Resolve Welcome Redirect',
+  description: 'Narrows a return path and refuses one that points back at the welcome page.',
 });

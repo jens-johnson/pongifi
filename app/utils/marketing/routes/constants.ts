@@ -11,7 +11,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ███████████████████████████████████████ #utils/marketing/routes/constants.ts ████████████████████████████████████████
  *
- * The destinations the marketing calls to action point at, named once so Features and About cannot disagree.
+ * The application's named routes, declared once so no surface can disagree about one.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -39,3 +39,27 @@ export const LEAGUES_ROUTE: string = '/leagues';
  * @constant
  */
 export const FAQ_ROUTE: string = '/faq';
+
+/**
+ * The landing page signed out and the dashboard signed in, and the default destination after signing in.
+ *
+ * One route rather than a separate `/dashboard`, so a bookmark, a sign-in and a sign-out all resolve to the same
+ * place and the session decides what it renders
+ * @public
+ * @constant
+ */
+export const HOME_ROUTE: string = '/';
+
+/**
+ * The signed-in player's own account page
+ * @public
+ * @constant
+ */
+export const PROFILE_ROUTE: string = '/profile';
+
+/**
+ * The one-time step between a first sign-in and the rest of the product
+ * @public
+ * @constant
+ */
+export const WELCOME_ROUTE: string = '/welcome';
