@@ -22,6 +22,9 @@
  * @interface
  */
 export interface ILeaguesPanelProps {
+  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
+  showEntryActions?: boolean;
+
   /* Render the panel's own heading; the leagues page supplies its own H1 instead */
   showHeading?: boolean;
 

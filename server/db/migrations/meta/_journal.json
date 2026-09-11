@@ -15,6 +15,13 @@
       "when": 1788906119261,
       "tag": "0001_clammy_saracen",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789065836375,
+      "tag": "0002_dusty_gauntlet",
+      "breakpoints": true
     }
   ]
 }

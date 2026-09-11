@@ -25,6 +25,23 @@ import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 
 /**
+ * The headers of a page that belongs to one signed-in visitor and must never be held in a shared cache.
+ * @internal
+ * @constant
+ */
+const PRIVATE_HEADERS: Readonly<Record<string, string>> = { 'Cache-Control': 'private, no-store' };
+
+/**
+ * The private headers plus no referrer, for pages whose address can carry an invite token.
+ * @internal
+ * @constant
+ */
+const PRIVATE_NO_REFERRER_HEADERS: Readonly<Record<string, string>> = {
+  ...PRIVATE_HEADERS,
+  'Referrer-Policy': 'no-referrer',
+};
+
+/**
  * This project's Nuxt configuration
  * @public
  * @default
@@ -124,17 +141,22 @@ export default defineNuxtConfig({
   },
 
   /**
-   * Per-route response rules. The three routes here exist only for a signed-in player, so their rendered HTML carries
-   * that player's name, email or leagues and must never be held in a shared cache. `/` sets the same header from the
-   * page instead, because it is the one route that is public or private depending on the session behind it, and the
+   * Per-route response rules. The private routes exist only for a signed-in player, so their rendered HTML carries that
+   * player's name, email or leagues and must never be held in a shared cache. `/` sets the same header from the page
+   * instead, because it is the one route that is public or private depending on the session behind it, and the
    * signed-out landing keeps its ordinary caching. The private API responses set it in their handlers, beside the
-   * session check that makes them private.
+   * session check that makes them private. The invite landing, and the sign-in, welcome and Google responses whose
+   * return path can carry an invite, also send no referrer, so a token in the address bar never leaves in a Referer
    * @see {@link https://nuxt.com/docs/4.x/api/nuxt-config#routerules}
    */
   routeRules: {
-    '/leagues': { headers: { 'Cache-Control': 'private, no-store' } },
-    '/profile': { headers: { 'Cache-Control': 'private, no-store' } },
-    '/welcome': { headers: { 'Cache-Control': 'private, no-store' } },
+    '/auth/google': { headers: PRIVATE_NO_REFERRER_HEADERS },
+    '/invite/**': { headers: { ...PRIVATE_NO_REFERRER_HEADERS, 'X-Robots-Tag': 'noindex' } },
+    '/leagues': { headers: PRIVATE_HEADERS },
+    '/leagues/**': { headers: PRIVATE_HEADERS },
+    '/profile': { headers: PRIVATE_HEADERS },
+    '/sign-in': { headers: PRIVATE_NO_REFERRER_HEADERS },
+    '/welcome': { headers: PRIVATE_NO_REFERRER_HEADERS },
   },
 
   /**

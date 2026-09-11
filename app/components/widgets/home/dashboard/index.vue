@@ -48,6 +48,13 @@ const { data: leagues, error }: ReturnType<typeof useFetch<ILeagueMembership[]>>
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * Whether the player has at least one league, which is when the side card offers another.
+ * @internal
+ * @constant
+ */
+const hasLeagues: ComputedRef<boolean> = computed((): boolean => !error.value && (leagues.value?.length ?? 0) > 0);
+
+/**
  * The line under the greeting, which differs between a player with leagues and one without.
  *
  * A failed request keeps the populated line: this should not announce an empty account on the strength of a request
@@ -69,11 +76,19 @@ const lede: ComputedRef<string> = computed((): string =>
 
     <p class="text-ink-muted text-body-lg mt-4 max-w-[560px]">{{ lede }}</p>
 
-    <!-- Two thirds on desktop; the last third stays empty until league entry ships rather than holding a placeholder -->
+    <!-- Two thirds on desktop; the last third holds the create and join actions, under the panel on mobile -->
     <div class="mt-10 grid gap-6 lg:grid-cols-3">
       <div class="lg:col-span-2">
         <WidgetsLeaguesPanel show-next-steps />
       </div>
+
+      <!-- Only beside a populated list: the zero state already carries both actions, and twice is noise -->
+      <section
+        v-if="hasLeagues"
+        class="border-border bg-surface self-start rounded-lg border p-6"
+      >
+        <WidgetsLeaguesEntryActions stacked />
+      </section>
     </div>
   </main>
 </template>
