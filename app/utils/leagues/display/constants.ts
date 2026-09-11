@@ -9,25 +9,34 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * ████████████████████████████████████████ #utils/leagues/display/constants.ts ████████████████████████████████████████
  *
- * Props for the leagues panel.
+ * Labels and locale for the league page and invite panel copy.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { GameType } from '#shared/rules-engine';
+
 /**
- * Inputs for the leagues panel.
+ * How each format is named on the league page.
  * @public
- * @interface
+ * @constant
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export const GAME_TYPE_LABELS: Readonly<Record<GameType, string>> = {
+  /* The house-rules three-player format */
+  [GameType.CUTTHROAT]: 'Cutthroat',
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+  /* Two against two */
+  [GameType.DOUBLES]: 'Doubles',
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+  /* One against one */
+  [GameType.SINGLES]: 'Singles',
+};
+
+/**
+ * The locale dates are written in across the account surfaces: day, month name, year.
+ * @public
+ * @constant
+ */
+export const DISPLAY_DATE_LOCALE: string = 'en-GB';

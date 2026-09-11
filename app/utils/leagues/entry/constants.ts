@@ -9,25 +9,30 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * █████████████████████████████████████████ #utils/leagues/entry/constants.ts █████████████████████████████████████████
  *
- * Props for the leagues panel.
+ * Limits and paths for reading pasted invites and prefilling short marks.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Inputs for the leagues panel.
+ * The longest value the join field will try to read as an invite. Anything longer is refused before it is parsed.
  * @public
- * @interface
+ * @constant
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export const INVITE_INPUT_MAX_LENGTH: number = 512;
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+/**
+ * The path prefix of the invite landing, as it appears in a pasted link.
+ * @public
+ * @constant
+ */
+export const INVITE_PATH_PREFIX: string = '/invite/';
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+/**
+ * The longest short mark the create form prefills from a name, matching the column it is stored in.
+ * @public
+ * @constant
+ */
+export const DERIVED_ABBREVIATION_MAX_LENGTH: number = 8;

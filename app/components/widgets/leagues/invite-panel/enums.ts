@@ -9,25 +9,25 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/leagues/invite-panel/enums.ts █████████████████████████████████
  *
- * Props for the leagues panel.
+ * Modes of a league's invite panel.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Inputs for the leagues panel.
+ * What the invite panel is asking the commissioner or manager right now.
  * @public
- * @interface
+ * @enum
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export enum InvitePanelMode {
+  /* Confirming a replacement, with the expiry and limit controls prefilled from the current link */
+  CONFIRM_REPLACE = 'CONFIRM_REPLACE',
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+  /* Confirming a revoke */
+  CONFIRM_REVOKE = 'CONFIRM_REVOKE',
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
+  /* Showing the link, or the controls to create one */
+  VIEW = 'VIEW',
 }

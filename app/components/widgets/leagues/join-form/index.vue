@@ -10,85 +10,110 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████ #components/widgets/home/dashboard/index.vue ████████████████████████████████████
+ * ██████████████████████████████████ #components/widgets/leagues/join-form/index.vue ██████████████████████████████████
  *
- * The signed-in home: who you are, the leagues you are in, and what happens next.
+ * The join form: one field that reads a pasted invite and goes to its invite page.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * <WidgetsHomeDashboard />
+ * <WidgetsLeaguesJoinForm />
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
 /* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-import type { ComputedRef } from 'vue';
+import type { Ref } from 'vue';
 
-import type { ILeagueMembership } from '#shared/profile';
+import { INVITE_PATH_PREFIX, parseInviteInput } from '~/utils/leagues/entry';
+
+import { INVITE_INPUT_REFUSED_MESSAGE } from './constants';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The signed-in player, read for the greeting.
+ * What the player pasted.
  * @internal
  * @constant
  */
-const { user }: ReturnType<typeof useUserSession> = useUserSession();
+const value: Ref<string> = ref('');
 
 /**
- * The player's leagues, read here as well as in the panel so the line under the greeting matches what the panel shows.
- *
- * The same request key, so this shares the panel's single fetch rather than issuing a second one
+ * The refusal message, or null while the paste is acceptable or untried.
  * @internal
  * @constant
  */
-const { data: leagues, error }: ReturnType<typeof useFetch<ILeagueMembership[]>> =
-  useFetch<ILeagueMembership[]>('/api/me/leagues');
-
-/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+const message: Ref<string | null> = ref(null);
 
 /**
- * Whether the player has at least one league, which is when the side card offers another.
+ * This deployment's origin, which a pasted link must match exactly.
  * @internal
  * @constant
  */
-const hasLeagues: ComputedRef<boolean> = computed((): boolean => !error.value && (leagues.value?.length ?? 0) > 0);
+const origin: string = useRequestURL().origin;
+
+/* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The line under the greeting, which differs between a player with leagues and one without.
- *
- * A failed request keeps the populated line: this should not announce an empty account on the strength of a request
- * that never answered.
+ * Reads the paste and goes to its invite page. No request is made from here; the invite page does all of that.
  * @internal
- * @constant
+ * @function
  */
-const lede: ComputedRef<string> = computed((): string =>
-  !error.value && (leagues.value?.length ?? 0) === 0
-    ? 'A league is the container. Games happen inside it, and ratings come from those games.'
-    : 'Your leagues, and everything that happens inside them.',
-);
+async function onSubmit(): Promise<void> {
+  const token: string | null = parseInviteInput(value.value, origin);
+
+  if (!token) {
+    message.value = INVITE_INPUT_REFUSED_MESSAGE;
+
+    return;
+  }
+
+  message.value = null;
+
+  await navigateTo(`${INVITE_PATH_PREFIX}${token}`);
+}
 </script>
 
 <template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <!-- Hello rather than Welcome back: someone arriving from /welcome has never been here -->
-    <h1 class="font-display text-display font-medium tracking-tight">Hello, {{ user?.displayName }}</h1>
+  <form
+    class="border-border bg-surface rounded-lg border p-6 md:p-8"
+    novalidate
+    @submit.prevent="onSubmit"
+  >
+    <label
+      class="text-ink text-body-sm block font-medium"
+      for="invite-link"
+    >
+      Invite link
+    </label>
 
-    <p class="text-ink-muted text-body-lg mt-4 max-w-[560px]">{{ lede }}</p>
+    <input
+      id="invite-link"
+      v-model="value"
+      aria-describedby="invite-link-message"
+      :aria-invalid="message !== null"
+      autocapitalize="off"
+      autocomplete="off"
+      class="border-border bg-surface text-ink focus:border-accent mt-2 block w-full rounded-md border px-4 py-3 font-mono transition-colors outline-none"
+      name="invite"
+      spellcheck="false"
+      type="text"
+    />
 
-    <!-- Two thirds on desktop; the last third holds the create and join actions, under the panel on mobile -->
-    <div class="mt-10 grid gap-6 lg:grid-cols-3">
-      <div class="lg:col-span-2">
-        <WidgetsLeaguesPanel show-next-steps />
-      </div>
+    <p
+      id="invite-link-message"
+      class="text-body-sm mt-2"
+      :class="message ? 'text-negative-soft-ink' : 'text-ink-subtle'"
+      :role="message ? 'alert' : undefined"
+    >
+      {{ message ?? 'You can paste the whole link or just the part after invite/.' }}
+    </p>
 
-      <!-- Only beside a populated list: the zero state already carries both actions, and twice is noise -->
-      <section
-        v-if="hasLeagues"
-        class="border-border bg-surface self-start rounded-lg border p-6"
-      >
-        <WidgetsLeaguesEntryActions stacked />
-      </section>
-    </div>
-  </main>
+    <button
+      class="bg-accent text-accent-ink hover:bg-accent-hover text-body mt-6 rounded-md px-6 py-3 font-medium transition-colors"
+      type="submit"
+    >
+      Continue
+    </button>
+  </form>
 </template>

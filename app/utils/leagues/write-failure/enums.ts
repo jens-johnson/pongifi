@@ -9,25 +9,40 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * ███████████████████████████████████████ #utils/leagues/write-failure/enums.ts ███████████████████████████████████████
  *
- * Props for the leagues panel.
+ * The ways a failed league-entry write can be read.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Inputs for the leagues panel.
+ * How a failed league-entry write should be read by the page that sent it.
+ *
+ * The line that matters is between a definite refusal, where the request wrote nothing, and an uncertain outcome,
+ * where it may have committed and the page has to reconcile against authoritative state before offering anything
  * @public
- * @interface
+ * @enum
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export enum WriteFailure {
+  /* 409: another request, or an earlier attempt of this one, already changed state */
+  CONFLICT = 'CONFLICT',
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+  /* 403: the caller lacks the role or still owes /welcome */
+  FORBIDDEN = 'FORBIDDEN',
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
+  /* 404: the league or invite is not available to this account */
+  NOT_FOUND = 'NOT_FOUND',
+
+  /* 429: too many writes; nothing was written */
+  RATE_LIMITED = 'RATE_LIMITED',
+
+  /* Any other 4xx: the request was refused and wrote nothing */
+  REFUSED = 'REFUSED',
+
+  /* 401: the session ended */
+  UNAUTHORIZED = 'UNAUTHORIZED',
+
+  /* No answer, or a 5xx: the write may have committed */
+  UNCERTAIN = 'UNCERTAIN',
 }

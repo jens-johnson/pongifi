@@ -10,85 +10,63 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████ #components/widgets/home/dashboard/index.vue ████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/leagues/rules-panel/index.vue █████████████████████████████████
  *
- * The signed-in home: who you are, the leagues you are in, and what happens next.
+ * How a league plays, in four read-only lines.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * <WidgetsHomeDashboard />
+ * <WidgetsLeaguesRulesPanel :settings="league.settings" />
+ *
+ * ─── PROPS ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ *   • settings
+ *     - Description: the league's stored settings
+ *     - Type: TLeagueSettings
+ *     - Required: true
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
 /* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 import type { ComputedRef } from 'vue';
 
-import type { ILeagueMembership } from '#shared/profile';
+import { describeLeagueSettings } from '~/utils/leagues/display';
 
-/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+import type { ILeaguesRulesPanelProps } from './types';
+
+/* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The signed-in player, read for the greeting.
+ * The settings to describe.
  * @internal
  * @constant
  */
-const { user }: ReturnType<typeof useUserSession> = useUserSession();
-
-/**
- * The player's leagues, read here as well as in the panel so the line under the greeting matches what the panel shows.
- *
- * The same request key, so this shares the panel's single fetch rather than issuing a second one
- * @internal
- * @constant
- */
-const { data: leagues, error }: ReturnType<typeof useFetch<ILeagueMembership[]>> =
-  useFetch<ILeagueMembership[]>('/api/me/leagues');
+const props: Readonly<ILeaguesRulesPanelProps> = defineProps<ILeaguesRulesPanelProps>();
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Whether the player has at least one league, which is when the side card offers another.
+ * The four lines, naming values rather than settings keys.
  * @internal
  * @constant
  */
-const hasLeagues: ComputedRef<boolean> = computed((): boolean => !error.value && (leagues.value?.length ?? 0) > 0);
-
-/**
- * The line under the greeting, which differs between a player with leagues and one without.
- *
- * A failed request keeps the populated line: this should not announce an empty account on the strength of a request
- * that never answered.
- * @internal
- * @constant
- */
-const lede: ComputedRef<string> = computed((): string =>
-  !error.value && (leagues.value?.length ?? 0) === 0
-    ? 'A league is the container. Games happen inside it, and ratings come from those games.'
-    : 'Your leagues, and everything that happens inside them.',
-);
+const lines: ComputedRef<string[]> = computed((): string[] => describeLeagueSettings(props.settings));
 </script>
 
 <template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <!-- Hello rather than Welcome back: someone arriving from /welcome has never been here -->
-    <h1 class="font-display text-display font-medium tracking-tight">Hello, {{ user?.displayName }}</h1>
+  <section class="border-border bg-surface rounded-lg border p-6 md:p-8">
+    <h2 class="font-display text-h3 font-medium tracking-tight">How this league plays</h2>
 
-    <p class="text-ink-muted text-body-lg mt-4 max-w-[560px]">{{ lede }}</p>
-
-    <!-- Two thirds on desktop; the last third holds the create and join actions, under the panel on mobile -->
-    <div class="mt-10 grid gap-6 lg:grid-cols-3">
-      <div class="lg:col-span-2">
-        <WidgetsLeaguesPanel show-next-steps />
-      </div>
-
-      <!-- Only beside a populated list: the zero state already carries both actions, and twice is noise -->
-      <section
-        v-if="hasLeagues"
-        class="border-border bg-surface self-start rounded-lg border p-6"
+    <!-- Read-only: the settings editor is not in this slice, so nothing here offers to change them -->
+    <ul class="text-ink-muted text-body mt-4 space-y-2">
+      <li
+        v-for="line in lines"
+        :key="line"
       >
-        <WidgetsLeaguesEntryActions stacked />
-      </section>
-    </div>
-  </main>
+        {{ line }}
+      </li>
+    </ul>
+  </section>
 </template>

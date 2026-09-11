@@ -9,25 +9,44 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/leagues/create-form/enums.ts ██████████████████████████████████
  *
- * Props for the leagues panel.
+ * Phases and alerts of the create-league form.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * Inputs for the leagues panel.
+ * Where a create submission stands.
  * @public
- * @interface
+ * @enum
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export enum CreateLeaguePhase {
+  /* Editable; nothing is in flight */
+  IDLE = 'IDLE',
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+  /* A submission is in flight; the fields are read-only and the button cannot be pressed again */
+  SUBMITTING = 'SUBMITTING',
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
+  /* A submission may have committed; the values and identifier are frozen so a retry is the identical request */
+  UNCERTAIN = 'UNCERTAIN',
+}
+
+/**
+ * The one alert a failed submission shows.
+ * @public
+ * @enum
+ */
+export enum CreateLeagueAlert {
+  /* The identifier was already used with different values */
+  CONFLICT = 'CONFLICT',
+
+  /* Too many writes in a row */
+  RATE_LIMITED = 'RATE_LIMITED',
+
+  /* The server refused the request and wrote nothing */
+  REFUSED = 'REFUSED',
+
+  /* No answer, so the league may exist */
+  UNCERTAIN = 'UNCERTAIN',
 }

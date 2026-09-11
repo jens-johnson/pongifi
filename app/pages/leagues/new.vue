@@ -1,3 +1,4 @@
+<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -9,25 +10,33 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * ██████████████████████████████████████████████ #pages/leagues/new.vue ███████████████████████████████████████████████
  *
- * Props for the leagues panel.
+ * Create a league.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * GET /leagues/new
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Inputs for the leagues panel.
- * @public
- * @interface
- */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+// Private and unindexed like every page that exists for one signed-in player
+useHead({ meta: [{ content: 'noindex', name: 'robots' }], title: 'Create a league · Pongifi' });
+</script>
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+<template>
+  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
+    <div class="max-w-[560px]">
+      <h1 class="font-display text-display font-medium tracking-tight">Create a league</h1>
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+      <p class="text-ink-muted text-body-lg mt-4">
+        It starts private. Invite the people you already play against once it exists.
+      </p>
+
+      <div class="mt-10">
+        <WidgetsLeaguesCreateForm />
+      </div>
+    </div>
+  </main>
+</template>

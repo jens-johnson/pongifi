@@ -9,25 +9,50 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/leagues/invite-panel/constants.ts ███████████████████████████████
  *
- * Props for the leagues panel.
+ * Expiry choices, timings and copy for the invite panel.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import type { IInviteExpiryOption } from './types';
+
 /**
- * Inputs for the leagues panel.
+ * The expiry choices, always finite (VI.I).
  * @public
- * @interface
+ * @constant
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export const INVITE_EXPIRY_OPTIONS: readonly IInviteExpiryOption[] = [
+  { days: 1, label: '1 day' },
+  { days: 7, label: '7 days' },
+  { days: 30, label: '30 days' },
+];
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+/**
+ * How long Copied shows after the link is copied, in milliseconds.
+ * @public
+ * @constant
+ */
+export const COPIED_VISIBLE_MS: number = 2000;
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+/**
+ * Shown when a create, replace or revoke was refused, or could not be confirmed and the re-read shows no change.
+ * @public
+ * @constant
+ */
+export const INVITE_UPDATE_FAILED_MESSAGE: string = 'Pongifi could not update the invite link. Try again.';
+
+/**
+ * Shown when a replace or revoke named a link that another request had already replaced.
+ * @public
+ * @constant
+ */
+export const INVITE_STALE_MESSAGE: string = 'This link was already replaced. The link shown is the current one.';
+
+/**
+ * Shown under the use limit when it is not a whole number of at least one.
+ * @public
+ * @constant
+ */
+export const INVITE_MAX_USES_MESSAGE: string = 'Use a whole number of 1 or more, or leave it empty for no limit.';

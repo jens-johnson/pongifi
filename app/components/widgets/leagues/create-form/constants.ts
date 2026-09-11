@@ -9,25 +9,37 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/leagues/create-form/constants.ts ████████████████████████████████
  *
- * Props for the leagues panel.
+ * Alert copy and cancel destinations for the create-league form.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { CreateLeagueAlert } from './enums';
+
 /**
- * Inputs for the leagues panel.
+ * The text of each alert that has no link in it; the uncertain alert is drawn in the template because it links to the
+ * player's leagues.
  * @public
- * @interface
+ * @constant
  */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+export const CREATE_LEAGUE_ALERT_MESSAGES: Readonly<
+  Record<Exclude<CreateLeagueAlert, CreateLeagueAlert.UNCERTAIN>, string>
+> = {
+  /* A changed replay */
+  [CreateLeagueAlert.CONFLICT]: 'Pongifi could not create the league. Check your leagues before trying again.',
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+  /* The write limiter */
+  [CreateLeagueAlert.RATE_LIMITED]: 'Pongifi could not create the league. Wait a moment and try again.',
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+  /* Any other definite refusal */
+  [CreateLeagueAlert.REFUSED]: 'Pongifi could not create the league. Try again.',
+};
+
+/**
+ * The routes Cancel may return to; anywhere else, Cancel goes home.
+ * @public
+ * @constant
+ */
+export const CANCEL_DESTINATIONS: readonly string[] = ['/', '/leagues'];

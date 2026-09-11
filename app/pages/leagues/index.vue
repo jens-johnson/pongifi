@@ -1,3 +1,4 @@
+<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -9,25 +10,34 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████ #components/widgets/leagues/panel/types.ts █████████████████████████████████████
+ * █████████████████████████████████████████████ #pages/leagues/index.vue ██████████████████████████████████████████████
  *
- * Props for the leagues panel.
+ * The leagues the signed-in player belongs to, with the create and join actions.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * GET /leagues
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * Inputs for the leagues panel.
- * @public
- * @interface
- */
-export interface ILeaguesPanelProps {
-  /* Offer Create a league and Join with an invite in the zero state; the leagues page has its own row of them */
-  showEntryActions?: boolean;
+useHead({ title: 'Your leagues · Pongifi' });
+</script>
 
-  /* Render the panel's own heading; the leagues page supplies its own H1 instead */
-  showHeading?: boolean;
+<template>
+  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
+    <div class="max-w-[720px]">
+      <h1 class="font-display text-display font-medium tracking-tight">Your leagues</h1>
 
-  /* Show the what-happens-next strip beneath the zero state, which only the dashboard does */
-  showNextSteps?: boolean;
-}
+      <!-- The page grows exactly the actions row; the panel below it is the dashboard's, without its own copy of them -->
+      <WidgetsLeaguesEntryActions class="mt-8" />
+
+      <div class="mt-10">
+        <WidgetsLeaguesPanel
+          :show-entry-actions="false"
+          :show-heading="false"
+        />
+      </div>
+    </div>
+  </main>
+</template>
