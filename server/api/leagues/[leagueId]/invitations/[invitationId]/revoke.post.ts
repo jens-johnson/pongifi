@@ -62,11 +62,12 @@ import { answerRefusal, INVITE_LINK_UPSTREAM_MESSAGE, revokeInvite } from '#util
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
 export default defineEventHandler(async (event: H3Event): Promise<IInvitePanel | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // The answer is the panel, which may carry a successor's live token
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
   setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
+
+  const { user } = await requireUserSession(event);
 
   // The link is named by the path, so there is no body to read; the same guards still come first
   assertSameOrigin(event);

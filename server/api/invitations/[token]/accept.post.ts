@@ -57,11 +57,12 @@ import { ACCEPT_INVITE_UPSTREAM_MESSAGE, acceptInvite, answerRefusal } from '#ut
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
 export default defineEventHandler(async (event: H3Event): Promise<IAcceptInviteResponse | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // The request path carries the token
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
   setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
+
+  const { user } = await requireUserSession(event);
 
   // The token is in the path, so there is no body to read; the same guards still come first
   assertSameOrigin(event);

@@ -75,11 +75,12 @@ import { answerRefusal, INVITE_LINK_UPSTREAM_MESSAGE, issueInvite } from '#utils
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
 export default defineEventHandler(async (event: H3Event): Promise<IInvitePanel | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // The answer carries the live token
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
   setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
+
+  const { user } = await requireUserSession(event);
 
   // Checked before the body is read: a request from elsewhere, or one too many, is refused without being parsed at all
   assertSameOrigin(event);

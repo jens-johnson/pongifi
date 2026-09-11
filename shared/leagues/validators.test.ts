@@ -136,13 +136,15 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
     });
 
-    it('refuses an extra field, an unknown format and a malformed identifier as malformed', (): void => {
+    it('refuses an extra field, an unknown format, a malformed identifier and a NUL as malformed', (): void => {
       const malformed: { ok: false; statusCode: number } = { ok: false, statusCode: LEAGUE_BODY_REJECTED_STATUS };
 
       expect(validateCreateLeagueBody({ ...CREATE_BODY, visibility: 'DISCOVERABLE' })).toMatchObject(malformed);
       expect(validateCreateLeagueBody({ ...CREATE_BODY, allowedGameTypes: ['TENNIS'] })).toMatchObject(malformed);
       expect(validateCreateLeagueBody({ ...CREATE_BODY, submissionId: 'retry-1' })).toMatchObject(malformed);
       expect(validateCreateLeagueBody([CREATE_BODY])).toMatchObject(malformed);
+      expect(validateCreateLeagueBody({ ...CREATE_BODY, name: 'Friday\u0000Ladder' })).toMatchObject(malformed);
+      expect(validateCreateLeagueBody({ ...CREATE_BODY, description: '\u0000' })).toMatchObject(malformed);
     });
 
     it('refuses an unusable value with the first failing field message', (): void => {

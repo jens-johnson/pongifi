@@ -81,10 +81,11 @@ import { answerRefusal, CREATE_LEAGUE_UPSTREAM_MESSAGE, createLeague } from '#ut
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
 export default defineEventHandler(async (event: H3Event): Promise<ICreateLeagueResponse | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // The answer names a private league, so it is as private as the league itself
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
+
+  const { user } = await requireUserSession(event);
 
   // Checked before the body is read: a request from elsewhere, or one too many, is refused without being parsed at all
   assertSameOrigin(event);

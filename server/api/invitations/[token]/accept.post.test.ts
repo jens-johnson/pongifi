@@ -99,10 +99,16 @@ vi.stubGlobal(
   'defineEventHandler',
   vi.fn((handler: EventHandler): EventHandler => handler),
 );
-vi.stubGlobal(
-  'requireUserSession',
-  vi.fn(async (): Promise<{ user: { id: string } }> => ({ user: { id: USER_ID } })),
+/**
+ * The session check, which a case can make refuse the way a signed-out request is refused.
+ * @internal
+ * @constant
+ */
+const requireUserSessionMock: Mock<(event: H3Event) => Promise<{ user: { id: string } }>> = vi.fn(
+  async (): Promise<{ user: { id: string } }> => ({ user: { id: USER_ID } }),
 );
+
+vi.stubGlobal('requireUserSession', requireUserSessionMock);
 vi.stubGlobal('clearUserSession', clearUserSessionMock);
 vi.stubGlobal('setResponseHeader', setResponseHeaderMock);
 
@@ -135,6 +141,15 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(await handler(EVENT)).toEqual({ leagueId: 'league-1' });
     expect(mocks.acceptInvite).toHaveBeenCalledWith(TOKEN, USER_ID);
     expect(setResponseHeaderMock).toHaveBeenCalledWith(EVENT, 'Referrer-Policy', 'no-referrer');
+  });
+
+  it('sends the private, no-referrer policy even when a signed-out request is refused', async (): Promise<void> => {
+    requireUserSessionMock.mockRejectedValueOnce(createError({ statusCode: 401 }));
+
+    await expect(handler(EVENT)).rejects.toMatchObject({ statusCode: 401 });
+    expect(setResponseHeaderMock).toHaveBeenCalledWith(EVENT, 'Cache-Control', 'private, no-store');
+    expect(setResponseHeaderMock).toHaveBeenCalledWith(EVENT, 'Referrer-Policy', 'no-referrer');
+    expect(mocks.acceptInvite).not.toHaveBeenCalled();
   });
 
   it('refuses a cross-origin or rate-limited request without attempting the acceptance', async (): Promise<void> => {

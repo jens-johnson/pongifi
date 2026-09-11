@@ -47,6 +47,18 @@ const ELIGIBLE_ACCOUNT: SQL = and(isNull(users.deletedAt), isNotNull(users.profi
 const ROLE_RANK: SQL = sql`CASE ${memberships.role} WHEN 'COMMISSIONER' THEN 0 WHEN 'MANAGER' THEN 1 ELSE 2 END`;
 
 /**
+ * The predicate that a PENDING link is still usable: unexpired by the database clock and under its use limit.
+ *
+ * Replace and revoke carry it, so naming a link that has run out of time or uses is a stale request that changes
+ * nothing, exactly like naming one that was already replaced
+ * @internal
+ * @constant
+ */
+const USABLE_LINK: SQL = sql.raw(
+  `("expires_at" IS NULL OR "expires_at" > now()) AND ("max_uses" IS NULL OR "use_count" < "max_uses")`,
+);
+
+/**
  * The subquery that holds when the caller is, right now, an ACTIVE commissioner or manager of the league with an
  * eligible account.
  *
@@ -351,10 +363,11 @@ export async function insertInviteLink(
 }
 
 /**
- * Replaces a league's PENDING shareable link with a new one, only when it is still the link the caller named.
+ * Replaces a league's usable shareable link with a new one, only when it is still the link the caller named.
  *
  * The named link is locked, retired and succeeded in one statement. A stale request, one naming a link somebody else
- * already replaced or revoked, finds nothing to retire and inserts nothing, so it can never revoke the newer link
+ * already replaced or revoked, or one that has since expired or run out of uses, finds nothing to retire and inserts
+ * nothing, so it can never revoke the newer link
  * @public
  * @function
  * @param leagueId - The league, already checked to be a UUID
@@ -376,7 +389,7 @@ export async function replaceInviteLink(
     expected AS (
       SELECT "id" FROM "invitations"
        WHERE "league_id" = ${leagueId}::uuid AND "email" IS NULL AND "status" = 'PENDING'
-         AND "id" = ${expectedId}::uuid AND EXISTS (SELECT 1 FROM actor)
+         AND "id" = ${expectedId}::uuid AND ${USABLE_LINK} AND EXISTS (SELECT 1 FROM actor)
          FOR UPDATE
     ),
     retired AS (
@@ -396,7 +409,8 @@ export async function replaceInviteLink(
 }
 
 /**
- * Revokes a league's PENDING shareable link by id. Memberships made through it are untouched.
+ * Revokes a league's usable shareable link by id. Memberships made through it are untouched, and a link that has
+ * already expired or run out of uses is left as it is.
  * @public
  * @function
  * @param leagueId - The league, already checked to be a UUID
@@ -408,7 +422,7 @@ export async function revokeInviteLink(leagueId: string, userId: string, invitat
   const { rows }: { rows: { id: string }[] } = await useDatabase().execute<{ id: string }>(sql`
     UPDATE "invitations" SET "status" = 'REVOKED'
      WHERE "id" = ${invitationId}::uuid AND "league_id" = ${leagueId}::uuid
-       AND "email" IS NULL AND "status" = 'PENDING'
+       AND "email" IS NULL AND "status" = 'PENDING' AND ${USABLE_LINK}
        AND EXISTS (${selectInviteManager(leagueId, userId)})
     RETURNING "id"`);
 

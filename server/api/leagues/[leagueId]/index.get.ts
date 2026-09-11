@@ -52,10 +52,11 @@ import type { TLeagueOperationResult } from '#utils/leagues';
 import { answerRefusal, READ_LEAGUE_UPSTREAM_MESSAGE, readLeagueDetail } from '#utils/leagues';
 
 export default defineEventHandler(async (event: H3Event): Promise<ILeagueDetail | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // Set before anything can fail, so the not-found answer carries the same policy as the league it stands in for
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
+
+  const { user } = await requireUserSession(event);
 
   const result: TLeagueOperationResult<ILeagueDetail> = await runUpstream(
     readLeagueDetail(getRouterParam(event, 'leagueId') ?? '', user.id),

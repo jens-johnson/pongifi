@@ -88,16 +88,18 @@ async function checkInviteLookupRateLimit(identifier: string): Promise<IRateLimi
 /**
  * Reads the address a lookup is charged to, hashed so no address is written to Redis.
  *
- * On Vercel the platform's own header is the source. Elsewhere, which means local development, the socket address is
- * used; a forwarded header is never trusted there, because anyone can send one
+ * On Vercel, recognized by the `VERCEL` system environment variable it sets at runtime, the platform's own header is
+ * the source. Anywhere else the socket address is used and no forwarded header is trusted, because anyone can send one
  * @public
  * @function
  * @param event - The request being handled
  * @returns A SHA-256 hex digest of the client address
  */
 export function readClientAddressKey(event: H3Event): string {
-  // The platform header can carry a list; the first entry is the client
-  const platform: string | undefined = getRequestHeader(event, CLIENT_ADDRESS_HEADER)?.split(',')[0]?.trim();
+  // Read only where Vercel sets it; anywhere else it is a header the visitor wrote. It can carry a list, client first
+  const platform: string | undefined = process.env.VERCEL
+    ? getRequestHeader(event, CLIENT_ADDRESS_HEADER)?.split(',')[0]?.trim()
+    : undefined;
   const address: string = platform || getRequestIP(event) || UNKNOWN_CLIENT_ADDRESS;
 
   return createHash('sha256').update(address).digest('hex');

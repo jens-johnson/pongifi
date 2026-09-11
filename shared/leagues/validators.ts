@@ -75,6 +75,17 @@ function countCharacters(value: string): number {
 }
 
 /**
+ * Whether a value is a string carrying a NUL character, which no text column can store.
+ * @internal
+ * @function
+ * @param value - The untrusted value
+ * @returns Whether the value holds U+0000
+ */
+function hasNul(value: unknown): boolean {
+  return typeof value === 'string' && value.includes('\u0000');
+}
+
+/**
  * Whether an untrusted body is a plain object carrying only the allowed fields.
  * @internal
  * @function
@@ -192,8 +203,8 @@ export function validateLeagueGameTypes(input: unknown): TFieldValidationResult<
 /**
  * Validates an untrusted `POST /api/leagues` body against the published allowlist and field rules.
  *
- * A body carrying an unknown field, a format name that does not exist, or a submission identifier that is not a UUID
- * is malformed. A well-formed body carrying an unusable value is refused with that field's message
+ * A body carrying an unknown field, a format name that does not exist, a submission identifier that is not a UUID, or
+ * a NUL character in any text field is malformed. A well-formed body carrying an unusable value is refused with that field's message
  * @public
  * @function
  * @param body - The parsed request body, straight from the wire
@@ -212,6 +223,11 @@ export function validateCreateLeagueBody(body: unknown): TBodyValidationResult<I
   }
 
   if (allowedGameTypes.some((gameType: unknown): boolean => !LEAGUE_GAME_TYPE_ORDER.includes(gameType as GameType))) {
+    return MALFORMED;
+  }
+
+  // Postgres cannot store a NUL in text, so one would come back as a database failure the page reads as uncertain
+  if ([body.name, body.abbreviation, body.description].some((value: unknown): boolean => hasNul(value))) {
     return MALFORMED;
   }
 

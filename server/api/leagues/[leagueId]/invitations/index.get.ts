@@ -51,11 +51,12 @@ import type { TLeagueOperationResult } from '#utils/leagues';
 import { answerRefusal, INVITE_LINK_UPSTREAM_MESSAGE, readInvitePanel } from '#utils/leagues';
 
 export default defineEventHandler(async (event: H3Event): Promise<IInvitePanel | INotFoundResponse> => {
-  const { user } = await requireUserSession(event);
-
   // The panel carries a live token, so the response is private and names no referrer when a link inside it is followed
+  // Set before the session check, so a 401 carries it too
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
   setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
+
+  const { user } = await requireUserSession(event);
 
   const result: TLeagueOperationResult<IInvitePanel> = await runUpstream(
     readInvitePanel(getRouterParam(event, 'leagueId') ?? '', user.id),

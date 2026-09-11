@@ -177,13 +177,24 @@ describe(getTestFileName(import.meta.url), (): void => {
 
   afterEach((): void => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   describe(symbolName(readClientAddressKey), (): void => {
-    it("charges the platform's address, first entry of the list, and never stores it unhashed", (): void => {
-      const { event } = requestWith({ [CLIENT_ADDRESS_HEADER]: `${CLIENT_ADDRESS}, 10.0.0.1` });
+    it("charges the platform's address on Vercel, first entry of the list, and never stores it unhashed", (): void => {
+      const { event } = requestWith({ [CLIENT_ADDRESS_HEADER]: `${CLIENT_ADDRESS}, 10.0.0.1` }, '127.0.0.1');
+
+      vi.stubEnv('VERCEL', '1');
 
       expect(readClientAddressKey(event)).toBe(keyFor(CLIENT_ADDRESS));
+    });
+
+    it('ignores the platform header off Vercel, where a visitor could have written it', (): void => {
+      const { event } = requestWith({ [CLIENT_ADDRESS_HEADER]: CLIENT_ADDRESS }, '127.0.0.1');
+
+      vi.stubEnv('VERCEL', '');
+
+      expect(readClientAddressKey(event)).toBe(keyFor('127.0.0.1'));
     });
 
     it('ignores a forwarded-for header a visitor could have written, using the socket instead', (): void => {
@@ -202,6 +213,8 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(assertWithinInviteLookupRateLimit), (): void => {
     it('lets a lookup inside the allowance through, keyed by the hashed address', async (): Promise<void> => {
       const { event } = requestWith({ [CLIENT_ADDRESS_HEADER]: CLIENT_ADDRESS });
+
+      vi.stubEnv('VERCEL', '1');
 
       rateLimitMocks.limit.mockResolvedValue({ reset: NOW.getTime() + 60_000, success: true });
 

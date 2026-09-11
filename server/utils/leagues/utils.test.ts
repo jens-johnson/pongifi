@@ -670,6 +670,20 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link).toEqual(current);
     });
 
+    it('refuses to replace a link that has since expired, changing nothing', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+      expect((await readInvitation(link.id)).status).toBe('PENDING');
+    });
+
     it('refuses a player without retiring the link', async (): Promise<void> => {
       const { commissionerId, leagueId } = await seedLeague();
       const link: IInviteLink = await seedLink(leagueId, commissionerId);
@@ -715,6 +729,19 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect((await revokeInvite(leagueId, commissionerId, link.id)).ok).toBe(true);
       expect((await readInvitation(successor.id)).status).toBe('PENDING');
+    });
+
+    it('refuses to revoke a link that has since expired, leaving its status line as it was', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      expect(await revokeInvite(leagueId, commissionerId, link.id)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXPIRED);
     });
 
     it("refuses an unknown id and another league's link as stale", async (): Promise<void> => {
