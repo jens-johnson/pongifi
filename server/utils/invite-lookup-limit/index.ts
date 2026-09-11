@@ -9,12 +9,12 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #shared/league-settings/index.ts ██████████████████████████████████████████
+ * ████████████████████████████████████ #server/utils/invite-lookup-limit/index.ts █████████████████████████████████████
  *
- * Barrel for the league settings module; re-exports the settings shape and the overridable subset.
+ * Public entry point for the invite lookup rate-limit module.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 export * from './constants';
-export * from './types';
+export * from './utils';

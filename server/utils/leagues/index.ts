@@ -9,12 +9,15 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #shared/league-settings/index.ts ██████████████████████████████████████████
+ * ██████████████████████████████████████████ #server/utils/leagues/index.ts ███████████████████████████████████████████
  *
- * Barrel for the league settings module; re-exports the settings shape and the overridable subset.
+ * Public entry point for the league-entry server module.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 export * from './constants';
+export * from './enums';
+export * from './queries';
 export * from './types';
+export * from './utils';
