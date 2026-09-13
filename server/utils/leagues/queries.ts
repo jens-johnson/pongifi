@@ -50,7 +50,8 @@ const ROLE_RANK: SQL = sql`CASE ${memberships.role} WHEN 'COMMISSIONER' THEN 0 W
  * The predicate that a PENDING link is still usable: unexpired by the database clock and under its use limit.
  *
  * Replace and revoke carry it, so naming a link that has run out of time or uses is a stale request that changes
- * nothing, exactly like naming one that was already replaced
+ * nothing, exactly like naming one that was already replaced. `now()` is the statement's start, so a link that expires
+ * while the request waits on its lock still counts as usable; one that runs out of uses while waiting does not
  * @internal
  * @constant
  */
@@ -313,8 +314,9 @@ export async function readInviteLink(leagueId: string): Promise<IInviteLinkRow |
  *
  * One statement. The league's PENDING link, if any, is locked first, so every writer for one league takes the same
  * lock in the same order. A new link is inserted only when no link is PENDING, or when the PENDING link is the one the
- * caller named and it is no longer usable; a usable link is never rotated by a create. When two first creations race
- * there is no row to lock and the loser meets the partial unique index; that error is thrown for the caller to resolve
+ * caller named and it is no longer usable; a usable link is never rotated by a create. When two creations race, two
+ * first issues or two successors of the same dead link, the loser meets the partial unique index; that error is thrown
+ * for the caller to resolve
  * @public
  * @function
  * @param leagueId - The league, already checked to be a UUID
