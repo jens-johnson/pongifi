@@ -42,7 +42,8 @@ import { HOME_ROUTE, LEAGUES_ROUTE } from '~/utils/marketing/routes';
 
 import { CANCEL_DESTINATIONS, CREATE_LEAGUE_ALERT_MESSAGES } from './constants';
 import { CreateLeagueAlert, CreateLeaguePhase } from './enums';
-import type { ICreateLeagueFormErrors } from './types';
+import type { ICreateLeagueFormErrors, ICreateSubmissionOutcome } from './types';
+import { settleCreateSubmission } from './utils';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -256,6 +257,9 @@ function buildRequest(): ICreateLeagueRequest | null {
 
 /**
  * Submits the league, or the identical retry of it, and reads any failure as a refusal or an uncertain outcome.
+ *
+ * Uncertainty is absorbing: once an attempt may have committed, no later answer to the retry of it unfreezes the form
+ * or says the league was not created, because the retry cannot rule the first attempt out
  * @internal
  * @function
  */
@@ -270,29 +274,39 @@ async function onSubmit(): Promise<void> {
     return;
   }
 
+  // A retry is the same submission, so whatever it answers, the attempt it repeats may still have committed
+  const mayHaveCommitted: boolean = phase.value === CreateLeaguePhase.UNCERTAIN;
+
+  let leagueId: string | null = null;
+  let failure: WriteFailure | null = null;
+
   phase.value = CreateLeaguePhase.SUBMITTING;
   alert.value = null;
 
   try {
-    const { leagueId }: ICreateLeagueResponse = await $fetch<ICreateLeagueResponse>('/api/leagues', {
+    ({ leagueId } = await $fetch<ICreateLeagueResponse>('/api/leagues', {
       body: request,
       method: 'POST',
-    });
-
-    await navigateTo(`${LEAGUES_ROUTE}/${leagueId}`);
-
-    return;
+    }));
   } catch (error: unknown) {
-    const failure: WriteFailure = classifyWriteFailure(error);
+    failure = classifyWriteFailure(error);
+  }
 
-    // The request may have committed: freeze everything so Try again is the identical request, which the server dedupes
-    if (failure === WriteFailure.UNCERTAIN) {
+  // The answer is in hand, so a navigation that fails afterwards is not the write failing; Try again replays and dedupes
+  if (leagueId !== null) {
+    try {
+      await navigateTo(`${LEAGUES_ROUTE}/${leagueId}`);
+    } catch {
       phase.value = CreateLeaguePhase.UNCERTAIN;
       alert.value = CreateLeagueAlert.UNCERTAIN;
-
-      return;
     }
 
+    return;
+  }
+
+  // Both exits can reject on the same bad network that refused the write, and an escaping rejection would leave the
+  // form read-only in SUBMITTING with no alert and no way back, so a failed exit settles below instead
+  try {
     if (failure === WriteFailure.UNAUTHORIZED) {
       await exit.toSignIn();
 
@@ -302,16 +316,14 @@ async function onSubmit(): Promise<void> {
     if (failure === WriteFailure.FORBIDDEN && (await exit.toWelcomeIfOwed())) {
       return;
     }
-
-    // Every other answer is definite: nothing was written, and every value stays for the player to correct or resend
-    phase.value = CreateLeaguePhase.IDLE;
-    alert.value =
-      failure === WriteFailure.RATE_LIMITED
-        ? CreateLeagueAlert.RATE_LIMITED
-        : failure === WriteFailure.CONFLICT
-          ? CreateLeagueAlert.CONFLICT
-          : CreateLeagueAlert.REFUSED;
+  } catch {
+    // Settled below
   }
+
+  const outcome: ICreateSubmissionOutcome = settleCreateSubmission(failure, mayHaveCommitted);
+
+  phase.value = outcome.phase;
+  alert.value = outcome.alert;
 }
 
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -425,7 +437,7 @@ onMounted((): void => {
 
     <!-- Formats -->
     <fieldset
-      aria-describedby="league-formats-message"
+      :aria-describedby="errors.allowedGameTypes ? 'league-formats-message' : undefined"
       class="mt-6"
       :disabled="locked"
     >

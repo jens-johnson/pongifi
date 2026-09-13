@@ -543,6 +543,7 @@ onBeforeUnmount((): void => {
             Use limit
             <input
               v-model="maxUsesInput"
+              :aria-describedby="maxUsesError ? 'invite-max-uses-message' : undefined"
               :aria-invalid="maxUsesError !== null"
               class="border-border bg-surface text-ink mt-1 block w-32 rounded-md border px-3 py-2"
               :disabled="busy"
@@ -557,6 +558,7 @@ onBeforeUnmount((): void => {
 
         <p
           v-if="maxUsesError"
+          id="invite-max-uses-message"
           class="text-negative-soft-ink text-body-sm mt-2"
         >
           {{ maxUsesError }}
