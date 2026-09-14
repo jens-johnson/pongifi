@@ -25,7 +25,13 @@ import {
   TARGET_SCORE_CHOICES,
   TARGET_SCORE_FORMAT_ORDER,
 } from './constants';
-import type { INumericBounds, TBoundedSetting, TSettingsValidationResult, TSettingValidationResult } from './types';
+import type {
+  INumericBounds,
+  ISettingsNumberIssue,
+  TBoundedSetting,
+  TNumericSetting,
+  TSettingValidationResult,
+} from './types';
 
 /**
  * Reads an untrusted value as a plain object, so a missing or malformed settings object fails field by field with the
@@ -156,37 +162,36 @@ export function validateTargetScore(gameType: GameType, input: unknown): TSettin
 }
 
 /**
- * Validates every numeric setting in a resolved settings object.
+ * Collects every numeric setting in a resolved settings object that does not satisfy its rule.
  *
- * Every format's target score is checked whichever formats the league currently allows, and the same is true of the
+ * This is the settings page's diagnostic, not a refusal path. A save is decided by `validateSaveSettingsBody`, which
+ * checks the section being saved and nothing else; a fault in another section never blocks that save (page spec
+ * revision 2.3). Returning the whole list here rather than the first entry is what the page needs and is deliberately
+ * not a whole-configuration veto — do not wire this into a write.
+ *
+ * Every format's target score is collected whichever formats the league currently allows, and the same is true of the
  * fields a disabled confirmation or rating policy hides: a value the editor is not showing is still a value the league
- * would play by the day it is shown again, so it is never left unvalidated and never silently replaced. Fields are
- * checked in {@link LEAGUE_SETTINGS_NUMERIC_ORDER}, the order the settings page lists its controls, so a refusal
- * names the first field a commissioner would have found and the page has somewhere to put focus. Nothing here is a relationship between two settings — each field stands or falls on its own
+ * would play by the day it is shown again, so it is never left undiagnosed and never silently replaced. That is what
+ * lets the page reveal a hidden control whose stored value is out of range. Fields are walked in
+ * {@link LEAGUE_SETTINGS_NUMERIC_ORDER}, the order the settings page lists its controls, so the whole list is the set
+ * of controls to reveal on load and its first entry is where a save puts focus. Nothing here is a relationship between
+ * two settings — each field stands or falls on its own
  * @public
  * @function
  * @param settings - The resolved settings object, straight from the wire
- * @returns Accepted, or the first field that failed and the message it shows
+ * @returns Every failing field and the message it shows, in page order; empty when every numeric setting is usable
  */
-export function validateLeagueSettingsNumbers(settings: unknown): TSettingsValidationResult {
+export function collectLeagueSettingsNumberIssues(settings: unknown): ISettingsNumberIssue[] {
   const candidate: Record<string, unknown> = asRecord(settings);
   const targetScores: Record<string, unknown> = asRecord(candidate.targetScore);
 
-  for (const setting of LEAGUE_SETTINGS_NUMERIC_ORDER) {
+  return LEAGUE_SETTINGS_NUMERIC_ORDER.flatMap((setting: TNumericSetting): ISettingsNumberIssue[] => {
     if (setting === 'targetScore') {
-      for (const gameType of TARGET_SCORE_FORMAT_ORDER) {
+      return TARGET_SCORE_FORMAT_ORDER.flatMap((gameType: GameType): ISettingsNumberIssue[] => {
         const score: TSettingValidationResult = validateTargetScore(gameType, targetScores[gameType]);
 
-        if (!score.ok) {
-          return {
-            field: `targetScore.${gameType}`,
-            message: score.message,
-            ok: false,
-          };
-        }
-      }
-
-      continue;
+        return score.ok ? [] : [{ field: `targetScore.${gameType}`, message: score.message }];
+      });
     }
 
     const value: TSettingValidationResult =
@@ -194,16 +199,8 @@ export function validateLeagueSettingsNumbers(settings: unknown): TSettingsValid
         ? validateMatchFormat(candidate.matchFormat)
         : validateBoundedSetting(setting, candidate[setting]);
 
-    if (!value.ok) {
-      return {
-        field: setting,
-        message: value.message,
-        ok: false,
-      };
-    }
-  }
-
-  return { ok: true };
+    return value.ok ? [] : [{ field: setting, message: value.message }];
+  });
 }
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -239,7 +236,8 @@ defineSymbol(validateTargetScore, {
   description: "Validates the score one format is played to against that format's choices.",
 });
 
-defineSymbol(validateLeagueSettingsNumbers, {
-  name: 'Validate League Settings Numbers',
-  description: 'Validates every numeric setting in a resolved settings object, including hidden fields.',
+defineSymbol(collectLeagueSettingsNumberIssues, {
+  name: 'Collect League Settings Number Issues',
+  description:
+    'Collects every numeric setting in a resolved settings object that fails its rule, hidden fields included.',
 });

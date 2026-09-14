@@ -27,13 +27,13 @@ import {
   STANDARD_LEAGUE_SETTINGS,
   TARGET_SCORE_CHOICES,
 } from './constants';
-import type { INumericBounds, TBoundedSetting, TLeagueSettings } from './types';
+import type { INumericBounds, ISettingsNumberIssue, TBoundedSetting, TLeagueSettings } from './types';
 import {
   boundedSettingMessage,
+  collectLeagueSettingsNumberIssues,
   discreteSettingMessage,
   validateBoundedSetting,
   validateDiscreteSetting,
-  validateLeagueSettingsNumbers,
   validateMatchFormat,
   validateTargetScore,
 } from './validators';
@@ -168,12 +168,12 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
   });
 
-  describe(symbolName(validateLeagueSettingsNumbers), (): void => {
-    it('accepts the settings every league starts with', (): void => {
-      expect(validateLeagueSettingsNumbers(STANDARD_LEAGUE_SETTINGS)).toEqual({ ok: true });
+  describe(symbolName(collectLeagueSettingsNumberIssues), (): void => {
+    it('finds nothing in the settings every league starts with', (): void => {
+      expect(collectLeagueSettingsNumberIssues(STANDARD_LEAGUE_SETTINGS)).toEqual([]);
     });
 
-    it('accepts every field at its maximum at once', (): void => {
+    it('finds nothing with every field at its maximum at once', (): void => {
       const maxed: Record<string, unknown> = settingsWith({
         matchFormat: 7,
         targetScore: {
@@ -189,95 +189,134 @@ describe(getTestFileName(import.meta.url), (): void => {
         ),
       });
 
-      expect(validateLeagueSettingsNumbers(maxed)).toEqual({ ok: true });
+      expect(collectLeagueSettingsNumberIssues(maxed)).toEqual([]);
     });
 
     it('names the field that failed, as the editor addresses it', (): void => {
-      expect(validateLeagueSettingsNumbers(settingsWith({ resultConfirmationWindow: 721 }))).toEqual({
-        field: 'resultConfirmationWindow',
-        message: 'Enter a whole number from 1 to 720.',
-        ok: false,
-      });
+      expect(collectLeagueSettingsNumberIssues(settingsWith({ resultConfirmationWindow: 721 }))).toEqual([
+        { field: 'resultConfirmationWindow', message: 'Enter a whole number from 1 to 720.' },
+      ]);
 
       expect(
-        validateLeagueSettingsNumbers(
+        collectLeagueSettingsNumberIssues(
           settingsWith({ targetScore: { ...STANDARD_LEAGUE_SETTINGS.targetScore, [GameType.DOUBLES]: 12 } }),
         ),
-      ).toEqual({
-        field: 'targetScore.DOUBLES',
-        message: 'Choose 11, 15 or 21.',
-        ok: false,
-      });
+      ).toEqual([{ field: 'targetScore.DOUBLES', message: 'Choose 11, 15 or 21.' }]);
     });
 
-    it('reports the first field the settings page lists, not the first that happens to fail', (): void => {
+    it('lists every fault across sections, in the order the settings page lists its controls', (): void => {
+      // The reveal rule needs all of them: a fault in Formats and scoring and a fault in Ratings are both stored, and
+      // the page has to show both controls from load. A first-failure answer cannot express this case
+      expect(
+        collectLeagueSettingsNumberIssues(
+          settingsWith({
+            provisionalGames: 0,
+            resultAmendmentWindow: 0,
+            targetScore: { ...STANDARD_LEAGUE_SETTINGS.targetScore, [GameType.CUTTHROAT]: 21 },
+            winningMargin: 0,
+          }),
+        ),
+      ).toEqual([
+        { field: 'targetScore.CUTTHROAT', message: 'Choose 7, 11 or 15.' },
+        { field: 'winningMargin', message: 'Enter a whole number from 1 to 21.' },
+        { field: 'resultAmendmentWindow', message: 'Enter a whole number from 1 to 720.' },
+        { field: 'provisionalGames', message: 'Enter a whole number from 1 to 1,000.' },
+      ]);
+    });
+
+    it('puts the first field the settings page lists first, not the first that happens to fail', (): void => {
       const failure: Record<string, unknown> = settingsWith({ provisionalGames: 0, winningMargin: 0 });
 
-      expect(validateLeagueSettingsNumbers(failure)).toMatchObject({ field: 'winningMargin', ok: false });
+      expect(collectLeagueSettingsNumberIssues(failure)[0]).toMatchObject({ field: 'winningMargin' });
     });
 
     it('orders a range against a set the way the page lays the controls out', (): void => {
-      // Win by is a plain number and Best of is a select, and the page puts Win by first, so a league carrying both
-      // faults is sent to Win by
-      expect(validateLeagueSettingsNumbers(settingsWith({ matchFormat: 2, winningMargin: 0 }))).toMatchObject({
+      // Win by is a plain number and Best of is a select, and the page puts Win by first, so a save on a league
+      // carrying both faults puts focus on Win by
+      expect(collectLeagueSettingsNumberIssues(settingsWith({ matchFormat: 2, winningMargin: 0 }))[0]).toMatchObject({
         field: 'winningMargin',
-        ok: false,
       });
 
       // Best of opens the singles and doubles sub-group that Serve changes every sits inside
-      expect(validateLeagueSettingsNumbers(settingsWith({ matchFormat: 2, serviceInterval: 0 }))).toMatchObject({
+      expect(collectLeagueSettingsNumberIssues(settingsWith({ matchFormat: 2, serviceInterval: 0 }))[0]).toMatchObject({
         field: 'matchFormat',
-        ok: false,
       });
 
       // And a target score comes before all of them
       expect(
-        validateLeagueSettingsNumbers(
+        collectLeagueSettingsNumberIssues(
           settingsWith({
             targetScore: { ...STANDARD_LEAGUE_SETTINGS.targetScore, [GameType.SINGLES]: 12 },
             winningMargin: 0,
           }),
-        ),
-      ).toMatchObject({ field: 'targetScore.SINGLES', ok: false });
+        )[0],
+      ).toMatchObject({ field: 'targetScore.SINGLES' });
     });
 
-    it('validates a value the editor is hiding', (): void => {
+    it('collects a value the editor is hiding, which is what the page reveals', (): void => {
       // A format the league does not allow still carries a target score, and it is the score played by the day the
       // format is allowed again
       expect(
-        validateLeagueSettingsNumbers(
+        collectLeagueSettingsNumberIssues(
           settingsWith({
             allowedGameTypes: [GameType.SINGLES],
             targetScore: { ...STANDARD_LEAGUE_SETTINGS.targetScore, [GameType.CUTTHROAT]: 21 },
           }),
         ),
-      ).toMatchObject({ field: 'targetScore.CUTTHROAT', ok: false });
+      ).toMatchObject([{ field: 'targetScore.CUTTHROAT' }]);
 
-      // Turning confirmation off hides its window; the stored window is still validated
+      // Turning confirmation off hides its window; the stored window is still collected
       expect(
-        validateLeagueSettingsNumbers(settingsWith({ requireConfirmation: false, resultConfirmationWindow: 0 })),
-      ).toMatchObject({ field: 'resultConfirmationWindow', ok: false });
+        collectLeagueSettingsNumberIssues(settingsWith({ requireConfirmation: false, resultConfirmationWindow: 0 })),
+      ).toMatchObject([{ field: 'resultConfirmationWindow' }]);
 
       // As is the provisional count with ratings off
       expect(
-        validateLeagueSettingsNumbers(settingsWith({ provisionalGames: 1001, ratingEnabled: false })),
-      ).toMatchObject({ field: 'provisionalGames', ok: false });
+        collectLeagueSettingsNumberIssues(settingsWith({ provisionalGames: 1001, ratingEnabled: false })),
+      ).toMatchObject([{ field: 'provisionalGames' }]);
+
+      // Two hidden faults in different sections are both listed, which is the reveal set the page loads with
+      expect(
+        collectLeagueSettingsNumberIssues(
+          settingsWith({
+            expediteEnabled: false,
+            cutthroatTimeCap: 1441,
+            ratingEnabled: false,
+            provisionalGames: 0,
+          }),
+        ),
+      ).toMatchObject([{ field: 'cutthroatTimeCap' }, { field: 'provisionalGames' }]);
 
       // A hidden value at its maximum survives untouched
-      expect(validateLeagueSettingsNumbers(settingsWith({ cutthroatTimeCap: 1440, expediteEnabled: false }))).toEqual({
-        ok: true,
-      });
+      expect(
+        collectLeagueSettingsNumberIssues(settingsWith({ cutthroatTimeCap: 1440, expediteEnabled: false })),
+      ).toEqual([]);
     });
 
-    it('refuses a missing or malformed object field by field rather than shapelessly', (): void => {
+    it('reads a missing or malformed object field by field rather than shapelessly', (): void => {
       for (const value of [undefined, null, 'settings', [], {}]) {
-        expect(validateLeagueSettingsNumbers(value)).toMatchObject({ field: 'targetScore.SINGLES', ok: false });
+        const issues: ISettingsNumberIssue[] = collectLeagueSettingsNumberIssues(value);
+
+        expect(issues[0]).toMatchObject({ field: 'targetScore.SINGLES' });
+
+        // Every field is missing, so every one of them is diagnosed rather than only the first
+        expect(issues).toHaveLength(BOUNDED_SETTINGS.length + Object.values(GameType).length + 1);
       }
 
-      expect(validateLeagueSettingsNumbers(settingsWith({ targetScore: '11' }))).toMatchObject({
-        field: 'targetScore.SINGLES',
-        ok: false,
-      });
+      expect(collectLeagueSettingsNumberIssues(settingsWith({ targetScore: '11' }))).toMatchObject([
+        { field: 'targetScore.SINGLES' },
+        { field: 'targetScore.DOUBLES' },
+        { field: 'targetScore.CUTTHROAT' },
+      ]);
+    });
+
+    it('leaves the settings object it was handed exactly as it found it', (): void => {
+      const faulted: Record<string, unknown> = settingsWith({ provisionalGames: 0, winningMargin: 0 });
+      const before: string = JSON.stringify(faulted);
+
+      collectLeagueSettingsNumberIssues(faulted);
+
+      expect(JSON.stringify(faulted)).toBe(before);
     });
   });
 

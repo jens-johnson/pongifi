@@ -167,25 +167,16 @@ export interface ISettingValidationSuccess {
 export type TSettingValidationResult = ISettingValidationFailure | ISettingValidationSuccess;
 
 /**
- * A refused settings object, naming the first field that failed so the editor can flag it.
+ * One numeric setting that does not satisfy its rule, as the settings page addresses it.
  *
  * A target score names its format: `targetScore.SINGLES`
  * @public
  * @interface
  */
-export interface ISettingsValidationFailure {
+export interface ISettingsNumberIssue {
   /* The path of the field that failed, as the editor addresses it */
   field: string;
 
   /* The message shown beneath that field */
   message: string;
-
-  /* At least one numeric setting did not satisfy its rule */
-  ok: false;
 }
-
-/**
- * The outcome of validating every numeric setting in a resolved settings object.
- * @public
- */
-export type TSettingsValidationResult = ISettingsValidationFailure | { ok: true };
