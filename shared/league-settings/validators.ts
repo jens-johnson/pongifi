@@ -74,13 +74,17 @@ function isWholeNumber(input: unknown): input is number {
 
 /**
  * The message a plain numeric field shows when its value is outside the range.
+ *
+ * The ends are grouped the way every other displayed count on the site is grouped, so the message reads as the spec
+ * and the contract write it: 1,440 rather than 1440. Only the message text is formatted — the bounds stay plain
+ * integers, and a value typed back with its separator is a string, which the validator still refuses
  * @public
  * @function
  * @param bounds - The field's inclusive range
  * @returns The message shown beneath the field
  */
 export function boundedSettingMessage(bounds: INumericBounds): string {
-  return `Enter a whole number from ${bounds.min} to ${bounds.max}.`;
+  return `Enter a whole number from ${bounds.min.toLocaleString('en-US')} to ${bounds.max.toLocaleString('en-US')}.`;
 }
 
 /**

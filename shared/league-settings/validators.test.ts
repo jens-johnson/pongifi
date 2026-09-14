@@ -76,8 +76,16 @@ function settingsWith(overrides: Partial<Record<string, unknown>>): Record<strin
 
 describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(boundedSettingMessage), (): void => {
-    it('names both ends of the range', (): void => {
-      expect(boundedSettingMessage({ max: 1440, min: 0 })).toBe('Enter a whole number from 0 to 1440.');
+    it('names both ends of the range, grouped as the site groups every other count', (): void => {
+      expect(boundedSettingMessage({ max: 1440, min: 0 })).toBe('Enter a whole number from 0 to 1,440.');
+      expect(boundedSettingMessage({ max: 720, min: 1 })).toBe('Enter a whole number from 1 to 720.');
+    });
+
+    it('formats the message only, so a separator typed back into the field is still refused', (): void => {
+      expect(validateBoundedSetting('cutthroatTimeCap', '1,440')).toEqual({
+        message: 'Enter a whole number from 0 to 1,440.',
+        ok: false,
+      });
     });
   });
 
