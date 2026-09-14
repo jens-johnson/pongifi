@@ -9,58 +9,58 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #utils/session/gate/constants.ts ██████████████████████████████████████████
+ * ████████████████████████████████ #components/widgets/leagues/settings-form/types.ts █████████████████████████████████
  *
- * The routes the session gate has an opinion about.
+ * Inputs for the league settings editor.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import {
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-} from '../../marketing/routes';
+import type { ILeagueConfiguration, ILeagueDetail } from '#shared/leagues';
 
 /**
- * The routes the gate has an opinion about.
- *
- * An allowlist rather than "everything that is not public": a gate that redirects unknown paths turns every typo and
- * every missing page into a sign-in prompt instead of a 404. Routes added later opt in here deliberately
+ * Inputs for the league settings editor.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_ROUTES: readonly string[] = [
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-];
+export interface ILeaguesSettingsFormProps {
+  /* The league as its members see it, carrying the viewer's role and the revision the page loads at */
+  league: ILeagueDetail;
+}
 
 /**
- * The shape of a league page: `/leagues/` followed by exactly one non-empty segment, with the trailing slash the router
- * also resolves to that page.
- *
- * Gated by shape rather than by lookup, so a signed-out or unfinished visitor is redirected identically whether or not
- * the league exists and before any query could run. `/leagues/` itself and deeper paths do not match and 404 as any
- * other unknown path does
+ * The part of a rejected `$fetch` the page reads: the body a 409 carried, and the line a definite refusal carried.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_LEAGUE_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/?$/;
+export interface ISettingsWriteRejection {
+  /* The response body: the configuration a stale save answers with, or the line a definite refusal carries */
+  data?: unknown;
+
+  /* The status line, read only when the body carried nothing of its own */
+  statusMessage?: unknown;
+}
 
 /**
- * The shape of a league's settings page: a league path with `/settings` on the end.
- *
- * Named separately rather than widening the league pattern to `/leagues/**`, because a wildcard would turn every
- * mistyped deeper path into a sign-in prompt. `/leagues/<id>/anything-else` still 404s for a signed-out visitor, and
- * only this one extra shape is gated (page spec, Route And Session Rules)
+ * The part of a refusal body the page shows: the line the server refused with, under either of the two names h3 gives
+ * it.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_LEAGUE_SETTINGS_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/settings\/?$/;
+export interface ISettingsRefusalBody {
+  /* The message h3 puts in the body */
+  message?: unknown;
+
+  /* The same line under the name the endpoint threw it with */
+  statusMessage?: unknown;
+}
+
+/**
+ * What the editor tells the page when a save changed something the page itself is drawing.
+ * @public
+ * @interface
+ */
+export interface ILeaguesSettingsFormEmits {
+  /* The configuration as it is now stored, so the page's own heading reads what was saved */
+  saved: [configuration: ILeagueConfiguration];
+}

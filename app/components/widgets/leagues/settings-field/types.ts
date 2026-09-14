@@ -9,58 +9,28 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #utils/session/gate/constants.ts ██████████████████████████████████████████
+ * ████████████████████████████████ #components/widgets/leagues/settings-field/types.ts ████████████████████████████████
  *
- * The routes the session gate has an opinion about.
+ * Inputs for one labelled control on the league settings page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import {
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-} from '../../marketing/routes';
-
 /**
- * The routes the gate has an opinion about.
- *
- * An allowlist rather than "everything that is not public": a gate that redirects unknown paths turns every typo and
- * every missing page into a sign-in prompt instead of a 404. Routes added later opt in here deliberately
+ * Inputs for one labelled control on the league settings page.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_ROUTES: readonly string[] = [
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-];
+export interface ILeaguesSettingsFieldProps {
+  /* The caption beneath the control, or null when the label says enough */
+  caption?: string | null;
 
-/**
- * The shape of a league page: `/leagues/` followed by exactly one non-empty segment, with the trailing slash the router
- * also resolves to that page.
- *
- * Gated by shape rather than by lookup, so a signed-out or unfinished visitor is redirected identically whether or not
- * the league exists and before any query could run. `/leagues/` itself and deeper paths do not match and 404 as any
- * other unknown path does
- * @public
- * @constant
- */
-export const GATED_LEAGUE_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/?$/;
+  /* The control, as the editor addresses it; it becomes the element id the label points at */
+  field: string;
 
-/**
- * The shape of a league's settings page: a league path with `/settings` on the end.
- *
- * Named separately rather than widening the league pattern to `/leagues/**`, because a wildcard would turn every
- * mistyped deeper path into a sign-in prompt. `/leagues/<id>/anything-else` still 404s for a signed-out visitor, and
- * only this one extra shape is gated (page spec, Route And Session Rules)
- * @public
- * @constant
- */
-export const GATED_LEAGUE_SETTINGS_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/settings\/?$/;
+  /* The label above the control */
+  label: string;
+
+  /* The message beneath the control, or null when the value is accepted */
+  message?: string | null;
+}

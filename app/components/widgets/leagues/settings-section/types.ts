@@ -9,58 +9,68 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #utils/session/gate/constants.ts ██████████████████████████████████████████
+ * ███████████████████████████████ #components/widgets/leagues/settings-section/types.ts ███████████████████████████████
  *
- * The routes the session gate has an opinion about.
+ * Inputs for one section of the league settings page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import {
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-} from '../../marketing/routes';
+import type { SettingsSection } from '#shared/leagues';
+import type { ISectionState, ISettingsRow } from '~/utils/leagues/settings';
 
 /**
- * The routes the gate has an opinion about.
- *
- * An allowlist rather than "everything that is not public": a gate that redirects unknown paths turns every typo and
- * every missing page into a sign-in prompt instead of a 404. Routes added later opt in here deliberately
+ * Inputs for one section of the league settings page.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_ROUTES: readonly string[] = [
-  HOME_ROUTE,
-  LEAGUES_JOIN_ROUTE,
-  LEAGUES_NEW_ROUTE,
-  LEAGUES_ROUTE,
-  PROFILE_ROUTE,
-  WELCOME_ROUTE,
-];
+export interface ILeaguesSettingsSectionProps {
+  /* The configuration as it now stands, drawn beside the draft while the section is stale */
+  currentRows: ISettingsRow[];
+
+  /* Whether anything in the section differs from the values it was loaded with */
+  dirty: boolean;
+
+  /* The section's own rows, drawn instead of controls for a viewer who may not change it */
+  rows: ISettingsRow[];
+
+  /* Whether this viewer's role may save this section */
+  editable: boolean;
+
+  /* The section's heading */
+  heading: string;
+
+  /* The line a viewer with no controls here is shown */
+  readOnlyCaption: string;
+
+  /* The section being drawn */
+  section: SettingsSection;
+
+  /* Where the section stands and what it is showing */
+  state: ISectionState;
+}
 
 /**
- * The shape of a league page: `/leagues/` followed by exactly one non-empty segment, with the trailing slash the router
- * also resolves to that page.
- *
- * Gated by shape rather than by lookup, so a signed-out or unfinished visitor is redirected identically whether or not
- * the league exists and before any query could run. `/leagues/` itself and deeper paths do not match and 404 as any
- * other unknown path does
+ * What one settings section asks the page to do; the page owns every write and every revision.
  * @public
- * @constant
+ * @interface
  */
-export const GATED_LEAGUE_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/?$/;
+export interface ILeaguesSettingsSectionEmits {
+  /* Restore the values this section was loaded with */
+  cancel: [];
 
-/**
- * The shape of a league's settings page: a league path with `/settings` on the end.
- *
- * Named separately rather than widening the league pattern to `/leagues/**`, because a wildcard would turn every
- * mistyped deeper path into a sign-in prompt. `/leagues/<id>/anything-else` still 404s for a signed-out visitor, and
- * only this one extra shape is gated (page spec, Route And Session Rules)
- * @public
- * @constant
- */
-export const GATED_LEAGUE_SETTINGS_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/settings\/?$/;
+  /* Send the held snapshot again, at the revision it was submitted with */
+  retry: [];
+
+  /* Read the league again after a reconciliation that could not be made */
+  retryCheck: [];
+
+  /* Keep the draft, against the values now shown, at the revision they came back at */
+  reviewDraft: [];
+
+  /* Validate and send this section */
+  save: [];
+
+  /* Discard the draft and take the values now shown */
+  useCurrent: [];
+}
