@@ -275,21 +275,24 @@ describe(getTestFileName(import.meta.url), (): void => {
         collectLeagueSettingsNumberIssues(settingsWith({ provisionalGames: 1001, ratingEnabled: false })),
       ).toMatchObject([{ field: 'provisionalGames' }]);
 
-      // Two hidden faults in different sections are both listed, which is the reveal set the page loads with
+      // Two hidden faults in different sections are both listed, which is the reveal set the page loads with.
+      // A singles-only league hides the cutthroat time cap, and ratings off hides the provisional count
       expect(
         collectLeagueSettingsNumberIssues(
           settingsWith({
-            expediteEnabled: false,
+            allowedGameTypes: [GameType.SINGLES],
             cutthroatTimeCap: 1441,
-            ratingEnabled: false,
             provisionalGames: 0,
+            ratingEnabled: false,
           }),
         ),
       ).toMatchObject([{ field: 'cutthroatTimeCap' }, { field: 'provisionalGames' }]);
 
       // A hidden value at its maximum survives untouched
       expect(
-        collectLeagueSettingsNumberIssues(settingsWith({ cutthroatTimeCap: 1440, expediteEnabled: false })),
+        collectLeagueSettingsNumberIssues(
+          settingsWith({ allowedGameTypes: [GameType.SINGLES], cutthroatTimeCap: 1440 }),
+        ),
       ).toEqual([]);
     });
 
