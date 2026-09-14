@@ -670,18 +670,44 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link).toEqual(current);
     });
 
-    it('refuses to replace a link that has since expired, changing nothing', async (): Promise<void> => {
+    it('refuses a replace of a link that has since expired as not live, changing nothing', async (): Promise<void> => {
       const { commissionerId, leagueId } = await seedLeague();
       const link: IInviteLink = await seedLink(leagueId, commissionerId);
 
       await expireInvitation(link.id);
 
+      // Nothing replaced it, so the stale answer's instruction to re-read would send the caller back to this same link
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+      expect((await readInvitation(link.id)).status).toBe('PENDING');
+    });
+
+    it('refuses a replace of a link that has spent its uses as not live', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      await acceptInvite(link.token!, await insertUser('Joiner'));
+
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+    });
+
+    it('keeps the stale answer for a link a commissioner revoked, which time and uses did not kill', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await revokeInvite(leagueId, commissionerId, link.id);
+
       expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
         ok: false,
         refusal: LeagueRefusal.STALE,
       });
-      expect(await countRows('invitations')).toBe(1);
-      expect((await readInvitation(link.id)).status).toBe('PENDING');
     });
 
     it('refuses a player without retiring the link', async (): Promise<void> => {
@@ -731,17 +757,31 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect((await readInvitation(successor.id)).status).toBe('PENDING');
     });
 
-    it('refuses to revoke a link that has since expired, leaving its status line as it was', async (): Promise<void> => {
+    it('refuses a revoke of a link that has since expired as not live', async (): Promise<void> => {
       const { commissionerId, leagueId } = await seedLeague();
       const link: IInviteLink = await seedLink(leagueId, commissionerId);
 
       await expireInvitation(link.id);
 
+      // Nothing replaced it, so the stale answer's instruction to re-read would send the caller back to this same link
       expect(await revokeInvite(leagueId, commissionerId, link.id)).toEqual({
         ok: false,
-        refusal: LeagueRefusal.STALE,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
       });
       expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXPIRED);
+    });
+
+    it('refuses a revoke of a link that has spent its uses as not live', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      await acceptInvite(link.token!, await insertUser('Joiner'));
+
+      expect(await revokeInvite(leagueId, commissionerId, link.id)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXHAUSTED);
     });
 
     it("refuses an unknown id and another league's link as stale", async (): Promise<void> => {
@@ -972,6 +1012,10 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(thrown?.statusCode).toBe(401);
       expect(clearUserSessionMock).toHaveBeenCalledWith(event);
       await expect(answerRefusal(event, LeagueRefusal.STALE)).rejects.toMatchObject({ statusCode: 409 });
+      await expect(answerRefusal(event, LeagueRefusal.LINK_NOT_LIVE)).rejects.toMatchObject({
+        statusCode: 410,
+        statusMessage: 'This link is no longer live. Create a new link to invite players.',
+      });
     });
   });
 });

@@ -51,6 +51,13 @@ export const INVITE_UPDATE_FAILED_MESSAGE: string = 'Pongifi could not update th
 export const INVITE_STALE_MESSAGE: string = 'This link was already replaced. The link shown is the current one.';
 
 /**
+ * Shown when a replace or revoke named the current link after it had passed its expiry or spent its uses.
+ * @public
+ * @constant
+ */
+export const INVITE_NOT_LIVE_MESSAGE: string = 'This link is no longer live. Create a new link to invite players.';
+
+/**
  * Shown under the use limit when it is not a whole number of at least one.
  * @public
  * @constant

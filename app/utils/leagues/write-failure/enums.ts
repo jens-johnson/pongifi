@@ -31,6 +31,9 @@ export enum WriteFailure {
   /* 403: the caller lacks the role or still owes /welcome */
   FORBIDDEN = 'FORBIDDEN',
 
+  /* 410: what the request named is still there but can no longer be changed; nothing was written */
+  GONE = 'GONE',
+
   /* 404: the league or invite is not available to this account */
   NOT_FOUND = 'NOT_FOUND',
 

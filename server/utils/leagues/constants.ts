@@ -90,6 +90,14 @@ export const INVITE_MANAGEMENT_FORBIDDEN_MESSAGE: string = 'Only a commissioner 
 export const INVITE_STALE_MESSAGE: string = 'This link was already replaced. Read the current link before changing it.';
 
 /**
+ * Returned when a replace or revoke names the current link after it has passed its expiry or spent its uses. Re-reading
+ * cannot help, so the answer sends the caller to a new link instead.
+ * @public
+ * @constant
+ */
+export const INVITE_NOT_LIVE_MESSAGE: string = 'This link is no longer live. Create a new link to invite players.';
+
+/**
  * Returned when a submission identifier arrives carrying a different league than the one it already created.
  * @public
  * @constant
@@ -168,6 +176,9 @@ export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
   /* Answered as a body rather than thrown, for the same reason */
   [LeagueRefusal.LEAGUE_NOT_FOUND]: 404,
 
+  /* The link the panel showed is gone as a thing that can be changed; the panel re-reads on this too */
+  [LeagueRefusal.LINK_NOT_LIVE]: 410,
+
   /* The page routes the account through /welcome on this */
   [LeagueRefusal.NEEDS_WELCOME]: 403,
 
@@ -195,6 +206,9 @@ export const REFUSAL_MESSAGE: Readonly<Record<LeagueRefusal, string>> = {
 
   /* The league cannot be shown */
   [LeagueRefusal.LEAGUE_NOT_FOUND]: LEAGUE_NOT_FOUND_MESSAGE,
+
+  /* The link ran out of time or uses */
+  [LeagueRefusal.LINK_NOT_LIVE]: INVITE_NOT_LIVE_MESSAGE,
 
   /* Welcome is outstanding */
   [LeagueRefusal.NEEDS_WELCOME]: WELCOME_REQUIRED_MESSAGE,

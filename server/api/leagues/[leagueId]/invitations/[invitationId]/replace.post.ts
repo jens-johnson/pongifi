@@ -55,6 +55,7 @@
  *   • 403 when the request did not come from Pongifi
  *   • 403 when the caller is a player, or the account still owes /welcome
  *   • 409 when the named link was already replaced or revoked
+ *   • 410 when the named link is still the current one but has passed its expiry or spent its uses
  *   • 429 when the account has spent its write allowance
  *   • 502 when the rate limiter or the database cannot be reached
  *

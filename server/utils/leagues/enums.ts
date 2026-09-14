@@ -54,6 +54,9 @@ export enum LeagueRefusal {
   /* The league is unknown, or the caller is not an active member; indistinguishable on purpose */
   LEAGUE_NOT_FOUND = 'LEAGUE_NOT_FOUND',
 
+  /* The link named is still the current one, but has passed its expiry or spent its uses, so it cannot be changed */
+  LINK_NOT_LIVE = 'LINK_NOT_LIVE',
+
   /* The account still owes /welcome, which every write requires */
   NEEDS_WELCOME = 'NEEDS_WELCOME',
 

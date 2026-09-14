@@ -9,91 +9,47 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████ #utils/leagues/write-failure/utils.ts ███████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/leagues/invite-panel/utils.ts █████████████████████████████████
  *
- * Classifies a failed league-entry write as a definite refusal or an uncertain outcome.
+ * Settles a refused or unconfirmed invite-panel write into the alert it shows.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 import { defineSymbol } from '#shared/utils/symbol';
+import { WriteFailure } from '~/utils/leagues/write-failure';
 
-import { WriteFailure } from './enums';
-
-/**
- * The first status that means the server, or something in front of it, failed rather than refused.
- * @internal
- * @constant
- */
-const FIRST_SERVER_ERROR_STATUS: number = 500;
+import { INVITE_NOT_LIVE_MESSAGE, INVITE_STALE_MESSAGE, INVITE_UPDATE_FAILED_MESSAGE } from './constants';
 
 /**
- * The statuses with a meaning of their own; every other 4xx is a plain refusal.
- * @internal
- * @constant
- */
-const FAILURE_BY_STATUS: Readonly<Record<number, WriteFailure>> = {
-  /* The session ended */
-  401: WriteFailure.UNAUTHORIZED,
-
-  /* The role or the welcome step is missing */
-  403: WriteFailure.FORBIDDEN,
-
-  /* Not available to this account */
-  404: WriteFailure.NOT_FOUND,
-
-  /* State already moved on */
-  409: WriteFailure.CONFLICT,
-
-  /* No longer changeable */
-  410: WriteFailure.GONE,
-
-  /* Too many writes */
-  429: WriteFailure.RATE_LIMITED,
-};
-
-/**
- * Reads the HTTP status off whatever `$fetch` rejected with.
- * @internal
- * @function
- * @param error - The rejection
- * @returns The status, or null when the request never got an answer
- */
-function readStatus(error: unknown): number | null {
-  if (typeof error !== 'object' || error === null) {
-    return null;
-  }
-
-  const { response, statusCode }: { response?: { status?: unknown }; statusCode?: unknown } = error;
-  const status: unknown = statusCode ?? response?.status;
-
-  return typeof status === 'number' && status > 0 ? status : null;
-}
-
-/**
- * Classifies a failed league-entry write so the page knows whether anything could have been written.
+ * Settles a write the panel has already re-read after into the one alert it shows.
  *
- * A request that never got an answer, and a 5xx, are uncertain: the write may have committed before the answer was
- * lost. Every 4xx is definite, and the ones a page treats differently are named
+ * A conflict and a dead link are both definite and both leave the panel showing something other than what the caller
+ * acted on, so each says which it was: a conflict points at the link that replaced the one named, while a link that
+ * ran out of time or uses was never replaced and no re-read can revive it. Every other answer may have written, so it
+ * alerts only when the re-read shows nothing moved
  * @public
  * @function
- * @param error - What `$fetch` rejected with
- * @returns How to read the failure
+ * @param failure - How the answer was read
+ * @param changed - Whether the re-read returned a different link than the one the write was sent against
+ * @returns The alert to show, or null when the re-read already told the story
  */
-export function classifyWriteFailure(error: unknown): WriteFailure {
-  const status: number | null = readStatus(error);
-
-  if (status === null || status >= FIRST_SERVER_ERROR_STATUS) {
-    return WriteFailure.UNCERTAIN;
+export function settleInviteWrite(failure: WriteFailure, changed: boolean): string | null {
+  if (failure === WriteFailure.GONE) {
+    return INVITE_NOT_LIVE_MESSAGE;
   }
 
-  return FAILURE_BY_STATUS[status] ?? WriteFailure.REFUSED;
+  if (failure === WriteFailure.CONFLICT) {
+    return INVITE_STALE_MESSAGE;
+  }
+
+  return changed ? null : INVITE_UPDATE_FAILED_MESSAGE;
 }
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register a readable name/description so the unit suite can title its describe block from the source symbol
-defineSymbol(classifyWriteFailure, {
-  name: 'Classify Write Failure',
-  description: 'Classifies a failed league-entry write as a definite refusal or an uncertain outcome.',
+defineSymbol(settleInviteWrite, {
+  name: 'Settle Invite Write',
+  description: 'Resolves a re-read invite write into the one alert the panel shows.',
 });

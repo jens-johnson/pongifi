@@ -42,6 +42,7 @@
  *   • 401 when there is no session, or the account no longer exists
  *   • 403 when the request did not come from Pongifi, the caller is a player, or the account still owes /welcome
  *   • 409 when the named link is neither pending nor already revoked in this league
+ *   • 410 when the named link is still the current one but has passed its expiry or spent its uses
  *   • 429 when the account has spent its write allowance
  *   • 502 when the rate limiter or the database cannot be reached
  *

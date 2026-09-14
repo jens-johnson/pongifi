@@ -107,6 +107,26 @@ function refuse(refusal: LeagueRefusal): ILeagueOperationFailure {
 }
 
 /**
+ * Reads why a replace or revoke that named a link wrote nothing, for a caller already confirmed to manage invites.
+ *
+ * Only a fresh read that still shows the named link as the league's own, out of time or out of uses, earns the
+ * not-live answer, because that is exactly what the answer claims and no re-read can undo it. Anything else — a link
+ * something replaced or revoked, one this league does not have, or one a lost race left usable — is stale, which
+ * sends the caller back to the panel rather than to a new link
+ * @internal
+ * @function
+ * @param leagueId - The authorized league
+ * @param invitationId - The link the caller named, straight from the path
+ * @returns The refusal to answer with
+ */
+async function classifyUnwritten(leagueId: string, invitationId: string): Promise<LeagueRefusal> {
+  const { link }: IInvitePanel = await readPanel(leagueId);
+  const dead: boolean = link?.state === InviteLinkState.EXPIRED || link?.state === InviteLinkState.EXHAUSTED;
+
+  return link?.id === invitationId && dead ? LeagueRefusal.LINK_NOT_LIVE : LeagueRefusal.STALE;
+}
+
+/**
  * Finds the Postgres error inside whatever the driver and ORM wrapped it in.
  * @internal
  * @function
@@ -460,6 +480,9 @@ export async function issueInvite(
 
 /**
  * Replaces a league's invite link with a new one, only when the link named is still the current one.
+ *
+ * A link that is still current but has passed its expiry or spent its uses is refused as not live rather than as
+ * stale, because nothing replaced it and re-reading returns the same dead link
  * @public
  * @function
  * @param leagueId - The requested identifier, straight from the path
@@ -498,12 +521,19 @@ export async function replaceInvite(
 
   const refusal: LeagueRefusal | null = await authorizeInviteManager(leagueId, userId);
 
-  return refuse(refusal ?? LeagueRefusal.STALE);
+  if (refusal) {
+    return refuse(refusal);
+  }
+
+  return refuse(await classifyUnwritten(leagueId, invitationId));
 }
 
 /**
  * Revokes a league's invite link by id. Repeating the revoke of the exact link already revoked succeeds and touches
  * nothing, including any successor.
+ *
+ * A link that is still current but has passed its expiry or spent its uses is refused as not live rather than as
+ * stale, because nothing replaced it and re-reading returns the same dead link
  * @public
  * @function
  * @param leagueId - The requested identifier, straight from the path
@@ -534,10 +564,14 @@ export async function revokeInvite(
     return refuse(refusal);
   }
 
-  // The repeat-revoke exception precedes the generic stale check, and is resolved within this league only
+  // The repeat-revoke exception precedes the classification, and is resolved within this league only
   const status: string | null = isUuid(invitationId) ? await readInviteLinkStatus(leagueId, invitationId) : null;
 
-  return status === InvitationStatus.REVOKED ? succeed(await readPanel(leagueId)) : refuse(LeagueRefusal.STALE);
+  if (status === InvitationStatus.REVOKED) {
+    return succeed(await readPanel(leagueId));
+  }
+
+  return refuse(await classifyUnwritten(leagueId, invitationId));
 }
 
 /**

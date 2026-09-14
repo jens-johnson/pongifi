@@ -48,11 +48,11 @@ import {
   COPIED_VISIBLE_MS,
   INVITE_EXPIRY_OPTIONS,
   INVITE_MAX_USES_MESSAGE,
-  INVITE_STALE_MESSAGE,
   INVITE_UPDATE_FAILED_MESSAGE,
 } from './constants';
 import { InvitePanelMode } from './enums';
 import type { ILeaguesInvitePanelProps } from './types';
+import { settleInviteWrite } from './utils';
 
 /* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -242,9 +242,10 @@ function readOptions(): IInviteLinkOptions | null {
 /**
  * Runs one write and settles the panel on its outcome.
  *
- * A definite refusal leaves the old link working and says so. A conflict re-reads and shows the current link. An
- * uncertain outcome re-reads before showing any control, and only alerts if the re-read shows nothing changed, so a
- * replacement whose answer was lost is found by the re-read rather than by a second replacement
+ * A definite refusal leaves the old link working and says so. A conflict re-reads and shows the current link, and a
+ * link that ran out of time or uses re-reads the same way but says the link is dead rather than replaced. An uncertain
+ * outcome re-reads before showing any control, and only alerts if the re-read shows nothing changed, so a replacement
+ * whose answer was lost is found by the re-read rather than by a second replacement
  * @internal
  * @function
  * @param write - The request to send
@@ -272,7 +273,7 @@ async function runWrite(write: () => Promise<IInvitePanel>): Promise<void> {
       return;
     }
 
-    // A definite refusal wrote nothing; the controls stay as they were for another try
+    // A refusal that leaves the link as it was; the controls stay as they were for another try
     if (failure === WriteFailure.RATE_LIMITED || failure === WriteFailure.REFUSED) {
       alert.value = INVITE_UPDATE_FAILED_MESSAGE;
 
@@ -283,11 +284,7 @@ async function runWrite(write: () => Promise<IInvitePanel>): Promise<void> {
     mode.value = InvitePanelMode.VIEW;
     prefill(link.value);
 
-    if (failure === WriteFailure.CONFLICT) {
-      alert.value = INVITE_STALE_MESSAGE;
-    } else if (JSON.stringify(link.value) === before) {
-      alert.value = INVITE_UPDATE_FAILED_MESSAGE;
-    }
+    alert.value = settleInviteWrite(failure, JSON.stringify(link.value) !== before);
   } finally {
     busy.value = false;
   }
