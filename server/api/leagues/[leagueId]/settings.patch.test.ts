@@ -236,6 +236,54 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(stale.statusMessage).toBe('These settings changed while you were editing.');
   });
 
+  it('answers a stale save as a 409 body carrying the current configuration, so the page need not ask again', async (): Promise<void> => {
+    const current: ILeagueConfiguration = {
+      ...SAVED,
+      configurationRevision: 6,
+      name: 'Renamed By Someone Else',
+    };
+
+    mocks.saveLeagueSettings.mockResolvedValueOnce({
+      configuration: current,
+      ok: false,
+      refusal: LeagueRefusal.CONFIGURATION_CHANGED,
+    });
+
+    const event: H3Event = {
+      context: { params: { leagueId: LEAGUE_ID } },
+      node: { res: {} },
+    } as unknown as H3Event;
+
+    expect(await handler(event)).toEqual({
+      ...current,
+      message: 'These settings changed while you were editing.',
+      statusCode: 409,
+    });
+    expect(event.node.res.statusCode).toBe(409);
+  });
+
+  it('refuses a Formats body still carrying a stored fault as that field, without reaching the write', async (): Promise<void> => {
+    readBodyMock.mockResolvedValueOnce({
+      allowedGameTypes: STANDARD_LEAGUE_SETTINGS.allowedGameTypes,
+      cutthroatTimeCap: STANDARD_LEAGUE_SETTINGS.cutthroatTimeCap,
+      expediteEnabled: STANDARD_LEAGUE_SETTINGS.expediteEnabled,
+      matchFormat: STANDARD_LEAGUE_SETTINGS.matchFormat,
+      revision: 4,
+      section: SettingsSection.FORMATS,
+      serviceInterval: STANDARD_LEAGUE_SETTINGS.serviceInterval,
+      targetScore: STANDARD_LEAGUE_SETTINGS.targetScore,
+      walkoverGracePeriod: STANDARD_LEAGUE_SETTINGS.walkoverGracePeriod,
+      winningMargin: 0,
+    });
+
+    const error: H3Error = await refusal();
+
+    // The section's own fields are where validation lives, so an uncorrected fault is refused with the field's message
+    expect(error.statusCode).toBe(LEAGUE_VALUE_REJECTED_STATUS);
+    expect(error.statusMessage).toBe('Enter a whole number from 1 to 21.');
+    expect(mocks.saveLeagueSettings).not.toHaveBeenCalled();
+  });
+
   it('reports a database failure as a retryable 502 rather than a refusal', async (): Promise<void> => {
     mocks.saveLeagueSettings.mockRejectedValueOnce(new Error('fetch failed'));
 

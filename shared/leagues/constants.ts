@@ -16,6 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { LeagueRole } from '#shared/domain';
 import { GameType } from '#shared/rules-engine';
 
 import { SettingsSection } from './enums';
@@ -226,15 +227,20 @@ export const SETTINGS_SECTION_FIELDS: Readonly<Record<SettingsSection, readonly 
 };
 
 /**
- * The sections only a commissioner may save. A manager saves {@link SettingsSection.IDENTITY} and nothing else.
+ * The roles that may save each section of the settings page: the league profile is a commissioner's or a manager's to
+ * change (pitch IV.IV), while every other section is a commissioner's alone.
+ *
+ * One map, read by the page deciding which sections to give controls, by the preflight read, and by the SQL boundary
+ * that authorizes the write. A section list beside a role list would be two declarations of one rule, and those drift
  * @public
  * @constant
  */
-export const COMMISSIONER_ONLY_SECTIONS: readonly SettingsSection[] = [
-  SettingsSection.FORMATS,
-  SettingsSection.RATINGS,
-  SettingsSection.RESULTS,
-];
+export const SETTINGS_EDITOR_ROLES: Readonly<Record<SettingsSection, readonly LeagueRole[]>> = {
+  [SettingsSection.FORMATS]: [LeagueRole.COMMISSIONER],
+  [SettingsSection.IDENTITY]: [LeagueRole.COMMISSIONER, LeagueRole.MANAGER],
+  [SettingsSection.RATINGS]: [LeagueRole.COMMISSIONER],
+  [SettingsSection.RESULTS]: [LeagueRole.COMMISSIONER],
+};
 
 /**
  * Shown when a manager or player submits a section only a commissioner may change.

@@ -73,5 +73,5 @@ export default defineEventHandler(async (event: H3Event): Promise<IAcceptInviteR
     ACCEPT_INVITE_UPSTREAM_MESSAGE,
   );
 
-  return result.ok ? result.value : answerRefusal(event, result.refusal);
+  return result.ok ? result.value : answerRefusal(event, result);
 });

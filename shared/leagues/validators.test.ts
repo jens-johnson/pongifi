@@ -20,7 +20,7 @@ import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import { describe, expect, it } from 'vitest';
 
 import { GameCreator, ResultRecorder } from '#shared/domain';
-import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
+import { LEAGUE_SETTINGS_NUMERIC_BOUNDS, STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
@@ -33,6 +33,7 @@ import {
   LEAGUE_NAME_EMPTY_MESSAGE,
   LEAGUE_NAME_TOO_LONG_MESSAGE,
   LEAGUE_VALUE_REJECTED_STATUS,
+  SETTINGS_SECTION_FIELDS,
 } from './constants';
 import { SettingsSection } from './enums';
 import {
@@ -452,6 +453,25 @@ describe(getTestFileName(import.meta.url), (): void => {
         message: LEAGUE_GAME_TYPES_EMPTY_MESSAGE,
         statusCode: LEAGUE_VALUE_REJECTED_STATUS,
       });
+    });
+
+    it('gives every bounded setting exactly one section that can correct it', (): void => {
+      const owners: Record<string, SettingsSection[]> = {};
+
+      for (const section of Object.values(SettingsSection)) {
+        for (const field of SETTINGS_SECTION_FIELDS[section]) {
+          (owners[field] ??= []).push(section);
+        }
+      }
+
+      // This is what makes a stored fault repairable: a save validates its own section, so a setting no section owns
+      // could be refused on its own page forever with nothing able to write it
+      expect(
+        Object.keys(LEAGUE_SETTINGS_NUMERIC_BOUNDS).map((field: string): [string, number] => [
+          field,
+          owners[field]?.length ?? 0,
+        ]),
+      ).toEqual(Object.keys(LEAGUE_SETTINGS_NUMERIC_BOUNDS).map((field: string): [string, number] => [field, 1]));
     });
   });
 });

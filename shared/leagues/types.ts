@@ -304,6 +304,24 @@ export interface INotFoundResponse {
 }
 
 /**
+ * The body a stale settings save is refused with: the configuration as it now stands, in the shape a successful save
+ * returns, plus the message.
+ *
+ * The page needs the current values to show beside its draft, and the operation has already read them to tell a moved
+ * revision from a lost membership, so carrying them here spares the page a second request — and spares it the one state
+ * it has no copy for, a definite refusal whose follow-up read failed
+ * @public
+ * @interface
+ */
+export interface IStaleConfigurationResponse extends ILeagueConfiguration {
+  /* Why the save was refused */
+  message: string;
+
+  /* Always 409 */
+  statusCode: number;
+}
+
+/**
  * The three league-profile fields the Identity section saves. They are columns on the league rather than settings.
  * @public
  * @interface

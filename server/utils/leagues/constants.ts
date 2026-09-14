@@ -66,14 +66,6 @@ export const INVITE_TOKEN_BYTES: number = 32;
 export const INVITE_MANAGER_ROLES: readonly LeagueRole[] = [LeagueRole.COMMISSIONER, LeagueRole.MANAGER];
 
 /**
- * The roles that may save the Identity section of the settings page: the league profile is a commissioner's or a
- * manager's to change (pitch IV.IV), while every other section is a commissioner's alone.
- * @public
- * @constant
- */
-export const IDENTITY_EDITOR_ROLES: readonly LeagueRole[] = [LeagueRole.COMMISSIONER, LeagueRole.MANAGER];
-
-/**
  * How far down an error's `cause` chain a database error is looked for; the driver wraps once, the ORM once more.
  * @public
  * @constant
@@ -218,17 +210,6 @@ export const ACCEPT_INVITE_UPSTREAM_MESSAGE: string = 'Pongifi could not add you
  * @public
  * @constant
  */
-/**
- * Answered when a league's stored configuration is outside the limits the editor enforces, so no section of it can be
- * saved until the offending value is corrected.
- *
- * Only reachable for a league configured before those limits existed; a save from the page cannot produce it
- * @public
- * @constant
- */
-export const SETTINGS_UNUSABLE_MESSAGE: string =
-  'This league has a stored setting outside the allowed range, so it cannot be saved yet.';
-
 export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
   /* The session is stale; the browser signs in again */
   [LeagueRefusal.ACCOUNT_MISSING]: 401,
@@ -256,9 +237,6 @@ export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
 
   /* A manager reaching a commissioner's section, or a player reaching any of them */
   [LeagueRefusal.SECTION_FORBIDDEN]: 403,
-
-  /* A well-formed save the stored configuration cannot accept */
-  [LeagueRefusal.SETTINGS_UNUSABLE]: 422,
 
   /* The panel re-reads on this */
   [LeagueRefusal.STALE]: 409,
@@ -296,9 +274,6 @@ export const REFUSAL_MESSAGE: Readonly<Record<LeagueRefusal, string>> = {
 
   /* The section needs a role the caller does not have */
   [LeagueRefusal.SECTION_FORBIDDEN]: SETTINGS_SECTION_FORBIDDEN_MESSAGE,
-
-  /* A stored value the editor's limits refuse */
-  [LeagueRefusal.SETTINGS_UNUSABLE]: SETTINGS_UNUSABLE_MESSAGE,
 
   /* The link moved on */
   [LeagueRefusal.STALE]: INVITE_STALE_MESSAGE,

@@ -8,7 +8,9 @@
  *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
- * █████████████████████████████████ #server/api/leagues/[leagueId]/settings.patch.ts ██████████████████████████████████ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * █████████████████████████████████ #server/api/leagues/[leagueId]/settings.patch.ts ██████████████████████████████████
+ *
  * PATCH /api/leagues/:leagueId/settings
  *
  * ─── AUTH ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -41,6 +43,7 @@
  *
  *   • ILeagueConfiguration as persisted, at its new revision
  *   • 404 { message, statusCode } when the caller is not an active member
+ *   • 409 the current configuration plus { message, statusCode } when it moved since the page loaded
  *
  * ─── THROWS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
@@ -48,8 +51,7 @@
  *   • 401 when there is no session, or the account no longer exists
  *   • 403 when the request did not come from Pongifi
  *   • 403 when the caller's role does not cover the section, or the account still owes /welcome
- *   • 409 when the league's configuration moved since the page loaded; nothing is written
- *   • 422 when a submitted value, or the stored configuration it merges into, is outside its limits
+ *   • 422 when a value the section submitted, hidden ones included, is outside its bounds or set
  *   • 429 when the account has spent its write allowance
  *   • 502 when the rate limiter or the database cannot be reached
  *
@@ -66,6 +68,7 @@ import type {
   ILeagueConfiguration,
   INotFoundResponse,
   ISaveSettingsRequest,
+  IStaleConfigurationResponse,
   TBodyValidationResult,
 } from '#shared/leagues';
 import { validateSaveSettingsBody } from '#shared/leagues';
@@ -74,29 +77,31 @@ import type { TLeagueOperationResult } from '#utils/leagues';
 import { answerRefusal, SAVE_SETTINGS_UPSTREAM_MESSAGE, saveLeagueSettings } from '#utils/leagues';
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
-export default defineEventHandler(async (event: H3Event): Promise<ILeagueConfiguration | INotFoundResponse> => {
-  // The answer carries a league's own configuration
-  // Set before the session check, so a 401 carries it too
-  setResponseHeader(event, 'Cache-Control', 'private, no-store');
-  setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
+export default defineEventHandler(
+  async (event: H3Event): Promise<ILeagueConfiguration | INotFoundResponse | IStaleConfigurationResponse> => {
+    // The answer carries a league's own configuration
+    // Set before the session check, so a 401 carries it too
+    setResponseHeader(event, 'Cache-Control', 'private, no-store');
+    setResponseHeader(event, 'Referrer-Policy', 'no-referrer');
 
-  const { user } = await requireUserSession(event);
+    const { user } = await requireUserSession(event);
 
-  // Checked before the body is read: a request from elsewhere, or one too many, is refused without being parsed at all
-  assertSameOrigin(event);
-  await assertWithinWriteRateLimit(event, user.id);
+    // Checked before the body is read: a request from elsewhere, or one too many, is refused without being parsed
+    assertSameOrigin(event);
+    await assertWithinWriteRateLimit(event, user.id);
 
-  const body: unknown = await readBody(event);
-  const validated: TBodyValidationResult<ISaveSettingsRequest> = validateSaveSettingsBody(body);
+    const body: unknown = await readBody(event);
+    const validated: TBodyValidationResult<ISaveSettingsRequest> = validateSaveSettingsBody(body);
 
-  if (!validated.ok) {
-    throw createError({ statusCode: validated.statusCode, statusMessage: validated.message });
-  }
+    if (!validated.ok) {
+      throw createError({ statusCode: validated.statusCode, statusMessage: validated.message });
+    }
 
-  const result: TLeagueOperationResult<ILeagueConfiguration> = await runUpstream(
-    saveLeagueSettings(getRouterParam(event, 'leagueId') ?? '', user.id, validated.value),
-    SAVE_SETTINGS_UPSTREAM_MESSAGE,
-  );
+    const result: TLeagueOperationResult<ILeagueConfiguration> = await runUpstream(
+      saveLeagueSettings(getRouterParam(event, 'leagueId') ?? '', user.id, validated.value),
+      SAVE_SETTINGS_UPSTREAM_MESSAGE,
+    );
 
-  return result.ok ? result.value : answerRefusal(event, result.refusal);
-});
+    return result.ok ? result.value : answerRefusal(event, result);
+  },
+);

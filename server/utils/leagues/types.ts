@@ -18,6 +18,7 @@
 
 import type { LeagueRole } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
+import type { ILeagueConfiguration } from '#shared/leagues';
 
 import type { LeagueRefusal } from './enums';
 
@@ -40,6 +41,12 @@ export interface ILeagueOperationSuccess<TValue> {
  * @interface
  */
 export interface ILeagueOperationFailure {
+  /*
+   * The configuration as it stands now, carried only by {@link LeagueRefusal.CONFIGURATION_CHANGED} and only from a
+   * read that authorized this caller, so a lost membership or account is never answered with a league's settings
+   */
+  configuration?: ILeagueConfiguration;
+
   /* The operation wrote nothing */
   ok: false;
 

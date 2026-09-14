@@ -63,5 +63,5 @@ export default defineEventHandler(async (event: H3Event): Promise<ILeagueDetail 
     READ_LEAGUE_UPSTREAM_MESSAGE,
   );
 
-  return result.ok ? result.value : answerRefusal(event, result.refusal);
+  return result.ok ? result.value : answerRefusal(event, result);
 });

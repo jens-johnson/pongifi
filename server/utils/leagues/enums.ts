@@ -66,9 +66,6 @@ export enum LeagueRefusal {
   /* The caller is a member, but not of the role the settings section being saved requires */
   SECTION_FORBIDDEN = 'SECTION_FORBIDDEN',
 
-  /* A stored setting is outside the limits the editor enforces, so the league cannot be saved as it stands */
-  SETTINGS_UNUSABLE = 'SETTINGS_UNUSABLE',
-
   /* The mutation named a link that is no longer the current one */
   STALE = 'STALE',
 }

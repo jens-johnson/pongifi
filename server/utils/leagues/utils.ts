@@ -20,9 +20,10 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { createError, type H3Event, setResponseStatus } from 'h3';
 
-import { InvitationStatus, LeagueRole } from '#shared/domain';
+import type { LeagueRole } from '#shared/domain';
+import { InvitationStatus } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import { STANDARD_LEAGUE_SETTINGS, validateLeagueSettingsNumbers } from '#shared/league-settings';
+import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
 import type {
   IAcceptInviteResponse,
   ICreateLeagueRequest,
@@ -36,15 +37,15 @@ import type {
   ILeagueMember,
   INotFoundResponse,
   ISaveSettingsRequest,
+  IStaleConfigurationResponse,
   SettingsSection,
   TInviteLookup,
 } from '#shared/leagues';
-import { COMMISSIONER_ONLY_SECTIONS, InviteLinkState, InviteLookupKind, isInviteToken, isUuid } from '#shared/leagues';
+import { InviteLinkState, InviteLookupKind, isInviteToken, isUuid, SETTINGS_EDITOR_ROLES } from '#shared/leagues';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import {
   CREATION_REQUEST_CONSTRAINT,
-  IDENTITY_EDITOR_ROLES,
   INVITE_MANAGER_ROLES,
   INVITE_TOKEN_BYTES,
   MAX_CAUSE_DEPTH,
@@ -98,10 +99,17 @@ function succeed<TValue>(value: TValue): TLeagueOperationResult<TValue> {
  * @internal
  * @function
  * @param refusal - Why nothing was written
+ * @param configuration - The configuration as it now stands, for a stale settings save, from an authorized read
  * @returns The failure result
  */
-function refuse(refusal: LeagueRefusal): ILeagueOperationFailure {
-  return { ok: false, refusal };
+function refuse(refusal: LeagueRefusal, configuration?: ILeagueConfiguration): ILeagueOperationFailure {
+  return configuration
+    ? {
+        configuration,
+        ok: false,
+        refusal,
+      }
+    : { ok: false, refusal };
 }
 
 /**
@@ -650,15 +658,23 @@ export async function acceptInvite(
  *
  * The two not-found refusals are returned as a body with a 404 status rather than thrown, because the framework's
  * error handler replaces the cache policy on a thrown 404, and these answers must keep the private, no-store policy
- * the handler set and stay identical whatever was actually missing. A missing account also clears the session
+ * the handler set and stay identical whatever was actually missing. A missing account also clears the session.
+ *
+ * A stale settings save is returned rather than thrown for the same reason, and carries the configuration the operation
+ * read to diagnose it, so the page can show current values beside its draft without asking again. It takes the whole
+ * failure rather than the refusal alone, so that configuration cannot be left behind at a call site
  * @public
  * @function
  * @param event - The request being answered
- * @param refusal - Why nothing was written
- * @throws The refusal's status and message, for every refusal but the two not-founds
- * @returns The not-found body
+ * @param failure - The refusal, and the current configuration when it is a stale save
+ * @throws The refusal's status and message, for every refusal answered as an error
+ * @returns The not-found or stale body
  */
-export async function answerRefusal(event: H3Event, refusal: LeagueRefusal): Promise<INotFoundResponse> {
+export async function answerRefusal(
+  event: H3Event,
+  failure: ILeagueOperationFailure,
+): Promise<INotFoundResponse | IStaleConfigurationResponse> {
+  const { configuration, refusal }: ILeagueOperationFailure = failure;
   const statusCode: number = REFUSAL_STATUS[refusal];
   const message: string = REFUSAL_MESSAGE[refusal];
 
@@ -670,6 +686,16 @@ export async function answerRefusal(event: H3Event, refusal: LeagueRefusal): Pro
     setResponseStatus(event, statusCode);
 
     return { message, statusCode };
+  }
+
+  if (refusal === LeagueRefusal.CONFIGURATION_CHANGED && configuration) {
+    setResponseStatus(event, statusCode);
+
+    return {
+      ...configuration,
+      message,
+      statusCode,
+    };
   }
 
   throw createError({ statusCode, statusMessage: message });
@@ -684,9 +710,55 @@ export async function answerRefusal(event: H3Event, refusal: LeagueRefusal): Pro
  * @returns Whether the save is theirs to make
  */
 function maySaveSection(section: SettingsSection, role: LeagueRole): boolean {
-  return COMMISSIONER_ONLY_SECTIONS.includes(section)
-    ? role === LeagueRole.COMMISSIONER
-    : IDENTITY_EDITOR_ROLES.includes(role);
+  return SETTINGS_EDITOR_ROLES[section].includes(role);
+}
+
+/**
+ * Draws the configuration a league row carries, for a save's answer and for the comparison a stale one is refused with.
+ * @internal
+ * @function
+ * @param league - A row from a read that authorized the caller
+ * @returns The configuration, without the caller's own role or the league's identifier
+ */
+function toConfiguration(league: ILeagueRow): ILeagueConfiguration {
+  return {
+    abbreviation: league.abbreviation,
+    configurationRevision: league.configurationRevision,
+    description: league.description,
+    name: league.name,
+    settings: league.settings,
+  };
+}
+
+/**
+ * Reads why a settings save that carried a standing revision still wrote nothing, and what to answer with.
+ *
+ * Two things can refuse the statement, and they are not the same answer: the revision moved under it, or the caller
+ * stopped being someone who may save that section. A fresh authorized read tells them apart — it is the same read the
+ * stale answer needs anyway, since the page shows current values beside its draft
+ * @internal
+ * @function
+ * @param leagueId - The league, already checked to be a UUID
+ * @param userId - The identifier taken from the verified session
+ * @param section - The section that was being saved
+ * @returns The failure to answer with
+ */
+async function classifyUnsavedSection(
+  leagueId: string,
+  userId: string,
+  section: SettingsSection,
+): Promise<ILeagueOperationFailure> {
+  const league: ILeagueRow | null = await readLeagueForMember(leagueId, userId);
+
+  if (!league) {
+    return refuse((await readAccountRefusal(userId)) ?? LeagueRefusal.LEAGUE_NOT_FOUND);
+  }
+
+  if (!maySaveSection(section, league.viewerRole)) {
+    return refuse(LeagueRefusal.SECTION_FORBIDDEN);
+  }
+
+  return refuse(LeagueRefusal.CONFIGURATION_CHANGED, toConfiguration(league));
 }
 
 /**
@@ -694,11 +766,19 @@ function maySaveSection(section: SettingsSection, role: LeagueRole): boolean {
  *
  * The role is read fresh here rather than trusted from the page, so a manager whose page was rendered before their
  * role changed, or one submitting a crafted body, is refused against what the database says now. The section decides
- * which role is needed: the league profile is a commissioner's or a manager's, everything else a commissioner's.
+ * which role is needed: the league profile is a commissioner's or a manager's, everything else a commissioner's. That
+ * same check is made again inside the write, because nothing about losing a role moves the revision.
  *
- * The complete merged settings object is validated, not only the fields submitted, so a league carrying a value from
- * before these limits existed is refused rather than written back unchanged; the fields the editor hides are part of
- * that object and are never exempt
+ * The merge is bound to the revision the row was read at, not to the one the request claims, and those two must be the
+ * same or nothing is written. Otherwise a request claiming a revision ahead of the row it read could sit out a
+ * concurrent save of another section and then overwrite it with its own older copy of that section.
+ *
+ * Validation is scoped to the section being saved, and lives entirely in `validateSaveSettingsBody`: a section
+ * carries every field it owns, hidden ones included, and each is checked there against its own bounds with its own
+ * message. Nothing revalidates the merged object as a whole, deliberately — a stored value outside its limits in a
+ * section nobody is saving is carried through unchanged, never reset and never normalized, and refuses only its own
+ * section. Refusing every section for a fault anywhere leaves a league with faults in two sections unrepairable from
+ * the page (page spec 2.3, Saving)
  * @public
  * @function
  * @param leagueId - The requested identifier, straight from the path
@@ -726,32 +806,26 @@ export async function saveLeagueSettings(
     return refuse(LeagueRefusal.SECTION_FORBIDDEN);
   }
 
+  // The row this merge is built from has to be the row the page loaded, or the merge carries a section nobody edited
+  if (request.revision !== league.configurationRevision) {
+    return refuse(LeagueRefusal.CONFIGURATION_CHANGED, toConfiguration(league));
+  }
+
   // An Identity save leaves the settings object alone; every other section is merged into it whole
   const settings: TLeagueSettings | null = request.identity
     ? null
     : ({ ...league.settings, ...request.settings } as TLeagueSettings);
 
-  if (!validateLeagueSettingsNumbers(settings ?? league.settings).ok) {
-    return refuse(LeagueRefusal.SETTINGS_UNUSABLE);
-  }
-
   const saved: ILeagueConfiguration | null = await updateLeagueConfiguration(
     leagueId,
-    request.revision,
+    userId,
+    request.section,
+    league.configurationRevision,
     request.identity,
     settings,
   );
 
-  if (saved) {
-    return succeed(saved);
-  }
-
-  // No row stood at that revision. Either another save moved it, or the league stopped being this caller's to save
-  return refuse(
-    (await readLeagueForMember(leagueId, userId))
-      ? LeagueRefusal.CONFIGURATION_CHANGED
-      : ((await readAccountRefusal(userId)) ?? LeagueRefusal.LEAGUE_NOT_FOUND),
-  );
+  return saved ? succeed(saved) : classifyUnsavedSection(leagueId, userId, request.section);
 }
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */

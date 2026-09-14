@@ -28,8 +28,9 @@ import type {
   ILeagueConfiguration,
   ILeagueIdentity,
   ILeagueMember,
+  SettingsSection,
 } from '#shared/leagues';
-import { DEFAULT_INVITE_EXPIRY_DAYS } from '#shared/leagues';
+import { DEFAULT_INVITE_EXPIRY_DAYS, SETTINGS_EDITOR_ROLES } from '#shared/leagues';
 import { defineSymbol } from '#shared/utils/symbol';
 import { useDatabase } from '#utils/db';
 
@@ -57,6 +58,35 @@ function selectInviteManager(leagueId: string, userId: string): SQL {
       JOIN "users" u ON u."id" = m."user_id" AND u."deleted_at" IS NULL AND u."profile_completed_at" IS NOT NULL
      WHERE m."league_id" = ${leagueId}::uuid AND m."user_id" = ${userId}::uuid
        AND m."status" = 'ACTIVE' AND m."role" IN ('COMMISSIONER', 'MANAGER')`;
+}
+
+/**
+ * The subquery that holds when the caller is, right now, an ACTIVE member of the league with an eligible account and
+ * the role the named settings section requires.
+ *
+ * The section decides the role rather than the caller: the league profile is a commissioner's or a manager's,
+ * every other section a commissioner's alone. The settings write carries it inside its own statement, so a role, a
+ * membership or an account that changed after the page loaded cannot authorize the write — none of those changes moves
+ * the configuration revision, so the revision predicate alone would let the write through
+ * @internal
+ * @function
+ * @param leagueId - The league being saved
+ * @param userId - The identifier taken from the verified session
+ * @param section - The section being saved
+ * @returns The subquery, for use inside `EXISTS`
+ */
+function selectSettingsEditor(leagueId: string, userId: string, section: SettingsSection): SQL {
+  const roles: readonly LeagueRole[] = SETTINGS_EDITOR_ROLES[section];
+
+  return sql`
+    SELECT 1 FROM "memberships" m
+      JOIN "users" u ON u."id" = m."user_id" AND u."deleted_at" IS NULL AND u."profile_completed_at" IS NOT NULL
+     WHERE m."league_id" = ${leagueId}::uuid AND m."user_id" = ${userId}::uuid
+       AND m."status" = 'ACTIVE'
+       AND m."role" IN (${sql.join(
+         roles.map((role: LeagueRole): SQL => sql`${role}`),
+         sql`, `,
+       )})`;
 }
 
 /**
@@ -544,22 +574,28 @@ export async function readInviteSummary(token: string, userId: string | null): P
 }
 
 /**
- * Writes one settings section, but only while the league is still at the revision the page loaded.
+ * Writes one settings section, but only while the league is still at that revision and the caller may still save it.
  *
- * The revision is both the precondition and part of the write: it moves by one in the same statement, so two saves
- * that read the same revision cannot both commit, and a save that loses the race writes nothing at all rather than
+ * The revision is both a precondition and part of the write: it moves by one in the same statement, so two saves that
+ * read the same revision cannot both commit, and a save that loses the race writes nothing at all rather than
  * overwriting the winner. Membership, invitation and game writes never touch it, so a commissioner's open editor is
- * made stale only by another settings save
+ * made stale only by another settings save — which is also why authorization has to be inside this statement rather
+ * than only ahead of it: a removal, a demotion or a soft account deletion committed after the preflight read leaves the
+ * revision where it was, so the revision predicate alone would still let the write through
  * @public
  * @function
  * @param leagueId - The league being saved, already checked to be a UUID
- * @param revision - The revision the page loaded at
+ * @param userId - The caller, taken from the verified session and reauthorized inside the statement
+ * @param section - The section being saved, which decides the role the statement demands
+ * @param revision - The revision of the row the merge was built from
  * @param identity - The profile fields, for the Identity section, or null
  * @param settings - The complete merged settings object, or null for an Identity save
- * @returns The persisted configuration at its new revision, or null when no row was at that revision
+ * @returns The persisted configuration at its new revision, or null when nothing was written
  */
 export async function updateLeagueConfiguration(
   leagueId: string,
+  userId: string,
+  section: SettingsSection,
   revision: number,
   identity: ILeagueIdentity | null,
   settings: TLeagueSettings | null,
@@ -572,7 +608,13 @@ export async function updateLeagueConfiguration(
       configurationRevision: sql`${leagues.configurationRevision} + 1`,
       updatedAt: new Date(),
     })
-    .where(and(eq(leagues.id, leagueId), eq(leagues.configurationRevision, revision)))
+    .where(
+      and(
+        eq(leagues.id, leagueId),
+        eq(leagues.configurationRevision, revision),
+        sql`EXISTS (${selectSettingsEditor(leagueId, userId, section)})`,
+      ),
+    )
     .returning({
       abbreviation: leagues.abbreviation,
       configurationRevision: leagues.configurationRevision,
@@ -604,7 +646,7 @@ defineSymbol(insertLeague, {
 
 defineSymbol(updateLeagueConfiguration, {
   name: 'Update League Configuration',
-  description: 'Writes one settings section while the league is still at the revision the page loaded.',
+  description: 'Writes one settings section while the revision still stands and the caller may still save it.',
 });
 
 defineSymbol(readLeagueForMember, {
