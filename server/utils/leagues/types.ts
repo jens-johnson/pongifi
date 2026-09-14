@@ -75,6 +75,9 @@ export interface ILeagueRow {
   /* The league's short mark */
   abbreviation: string;
 
+  /* The revision every settings write for this league is checked against */
+  configurationRevision: number;
+
   /* The league's description, or null */
   description: string | null;
 

@@ -166,6 +166,7 @@ export async function readLeagueForMember(leagueId: string, userId: string): Pro
   const rows = await useDatabase()
     .select({
       abbreviation: leagues.abbreviation,
+      configurationRevision: leagues.configurationRevision,
       description: leagues.description,
       id: leagues.id,
       name: leagues.name,

@@ -50,3 +50,25 @@ export enum InviteLookupKind {
   /* The signed-in visitor is already an active member of the league; only the destination is returned */
   MEMBER = 'MEMBER',
 }
+
+/**
+ * The four sections of the league settings page, each saved on its own.
+ *
+ * A save names exactly one, so changing a target score never resubmits the league's name, and the server can check the
+ * role the section actually needs rather than the strongest role on the page
+ * @public
+ * @enum
+ */
+export enum SettingsSection {
+  /* Formats, target scores, best of, service interval, expedite, the cutthroat cap and the walkover grace */
+  FORMATS = 'FORMATS',
+
+  /* Name, short mark and description; the only section a manager may save */
+  IDENTITY = 'IDENTITY',
+
+  /* Whether ratings move, and the provisional game count */
+  RATINGS = 'RATINGS',
+
+  /* Who creates games, who records results, confirmation and the two windows */
+  RESULTS = 'RESULTS',
+}

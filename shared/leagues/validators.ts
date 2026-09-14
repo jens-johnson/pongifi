@@ -16,6 +16,15 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { GameCreator, ResultRecorder } from '#shared/domain';
+import type { TBoundedSetting } from '#shared/league-settings';
+import {
+  LEAGUE_SETTINGS_NUMERIC_BOUNDS,
+  TARGET_SCORE_FORMAT_ORDER,
+  validateBoundedSetting,
+  validateMatchFormat,
+  validateTargetScore,
+} from '#shared/league-settings';
 import type { GameType } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
@@ -39,14 +48,18 @@ import {
   LEAGUE_NAME_TOO_LONG_MESSAGE,
   LEAGUE_VALUE_REJECTED_STATUS,
   REPLACE_INVITE_BODY_FIELDS,
+  SETTINGS_SECTION_FIELDS,
   UUID_PATTERN,
 } from './constants';
+import { SettingsSection } from './enums';
 import type {
   IBodyValidationFailure,
   ICreateLeagueRequest,
   IFieldValidationFailure,
   IInviteLinkOptions,
   IIssueInviteRequest,
+  ILeagueIdentity,
+  ISaveSettingsRequest,
   TBodyValidationResult,
   TFieldValidationResult,
 } from './types';
@@ -352,6 +365,253 @@ export function isUuid(input: unknown): input is string {
   return typeof input === 'string' && UUID_PATTERN.test(input);
 }
 
+/* ─── Settings Page ──────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The outcome of reading one settings field: the value, the message its control shows, or null for a value no control
+ * could have produced, which makes the whole body malformed rather than a field a person can fix.
+ * @internal
+ */
+type TSettingsFieldResult = IFieldValidationFailure | ISettingsFieldSuccess | null;
+
+/**
+ * An accepted settings field, before it is put back into the section's object.
+ * @internal
+ * @interface
+ */
+interface ISettingsFieldSuccess {
+  /* The field satisfied its rule */
+  ok: true;
+
+  /* The value to store */
+  value: unknown;
+}
+
+/**
+ * Whether an untrusted value is one of an enum's members.
+ * @internal
+ * @function
+ * @param values - The enum's members
+ * @param input - The untrusted value
+ * @returns Whether the value is one of them
+ */
+function isMember<TValue extends string>(values: readonly TValue[], input: unknown): input is TValue {
+  return typeof input === 'string' && (values as readonly string[]).includes(input);
+}
+
+/**
+ * Reads the target scores, which arrive as one object carrying every format whether or not the league allows it.
+ * @internal
+ * @function
+ * @param input - The untrusted value
+ * @returns The scores, the first format's message, or null when the shape is not one the page could have sent
+ */
+function readTargetScores(input: unknown): TSettingsFieldResult {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return null;
+  }
+
+  const candidate: Record<string, unknown> = input as Record<string, unknown>;
+
+  // Every format, and nothing else: a partial object would leave a hidden format's score to be guessed at the merge
+  if (
+    !Object.keys(candidate).every((format: string): boolean => TARGET_SCORE_FORMAT_ORDER.includes(format as GameType))
+  ) {
+    return null;
+  }
+
+  if (Object.keys(candidate).length !== TARGET_SCORE_FORMAT_ORDER.length) {
+    return null;
+  }
+
+  const scores: Record<string, number> = {};
+
+  for (const gameType of TARGET_SCORE_FORMAT_ORDER) {
+    const score: TFieldValidationResult<number> = validateTargetScore(gameType, candidate[gameType]);
+
+    if (!score.ok) {
+      return score;
+    }
+
+    scores[gameType] = score.value;
+  }
+
+  return { ok: true, value: scores };
+}
+
+/**
+ * Reads one field of a settings section.
+ *
+ * A toggle or a select carries a value no person types, so anything but one of its members makes the body malformed; a
+ * number a person does type is refused with the message its field shows
+ * @internal
+ * @function
+ * @param field - The field being read, already known to belong to the section
+ * @param input - The untrusted value
+ * @returns The value, the message the field shows, or null when the body is malformed
+ */
+function readSettingsField(field: string, input: unknown): TSettingsFieldResult {
+  switch (field) {
+    case 'allowedGameTypes': {
+      if (
+        !Array.isArray(input) ||
+        input.some((gameType: unknown): boolean => !LEAGUE_GAME_TYPE_ORDER.includes(gameType as GameType))
+      ) {
+        return null;
+      }
+
+      return validateLeagueGameTypes(input);
+    }
+
+    case 'expediteEnabled':
+    case 'ratingEnabled':
+    case 'requireConfirmation':
+      return typeof input === 'boolean' ? { ok: true, value: input } : null;
+
+    case 'matchFormat':
+      return validateMatchFormat(input);
+
+    case 'targetScore':
+      return readTargetScores(input);
+
+    case 'whoCanCreateGames':
+      return isMember(Object.values(GameCreator), input) ? { ok: true, value: input } : null;
+
+    case 'whoCanRecordResults':
+      return isMember(Object.values(ResultRecorder), input) ? { ok: true, value: input } : null;
+
+    default:
+      return field in LEAGUE_SETTINGS_NUMERIC_BOUNDS ? validateBoundedSetting(field as TBoundedSetting, input) : null;
+  }
+}
+
+/**
+ * Reads the Identity section, whose three fields are the create form's, with the create form's limits and messages.
+ * @internal
+ * @function
+ * @param body - The allowlisted body
+ * @returns The profile fields, or the refusal
+ */
+function readIdentitySection(body: Record<string, unknown>): TBodyValidationResult<ILeagueIdentity> {
+  // Postgres cannot store a NUL in text, so one would come back as a database failure the page reads as uncertain
+  if ([body.name, body.abbreviation, body.description].some((value: unknown): boolean => hasNul(value))) {
+    return MALFORMED;
+  }
+
+  const name: TFieldValidationResult<string> = validateLeagueName(body.name);
+  const abbreviation: TFieldValidationResult<string> = validateLeagueAbbreviation(body.abbreviation);
+  const description: TFieldValidationResult<string | null> = validateLeagueDescription(body.description);
+
+  // Checked in the order the section lists them, so the refusal names the first field the page would have flagged
+  if (!name.ok) {
+    return refuseValue(name);
+  }
+
+  if (!abbreviation.ok) {
+    return refuseValue(abbreviation);
+  }
+
+  if (!description.ok) {
+    return refuseValue(description);
+  }
+
+  return {
+    ok: true,
+    value: {
+      abbreviation: abbreviation.value,
+      description: description.value,
+      name: name.value,
+    },
+  };
+}
+
+/**
+ * Validates an untrusted settings-page save.
+ *
+ * One section at a time, carrying the revision its page loaded at and every field that section owns, including the
+ * ones its controls are hiding. A field the section does not own, a field it left out, an unknown section, or a
+ * revision that is not a whole number makes the body malformed; a value a control could have produced is refused with that field's own
+ * message. Nothing here decides whether the caller may save the section, which is a role check the write makes against
+ * a fresh read
+ * @public
+ * @function
+ * @param body - The parsed request body, straight from the wire
+ * @returns The normalized save, or the message and status it is refused with
+ */
+export function validateSaveSettingsBody(body: unknown): TBodyValidationResult<ISaveSettingsRequest> {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return MALFORMED;
+  }
+
+  const candidate: Record<string, unknown> = body as Record<string, unknown>;
+  const section: unknown = candidate.section;
+
+  if (!isMember(Object.values(SettingsSection), section)) {
+    return MALFORMED;
+  }
+
+  const fields: readonly string[] = SETTINGS_SECTION_FIELDS[section];
+
+  if (!isAllowlistedObject(body, ['revision', 'section', ...fields])) {
+    return MALFORMED;
+  }
+
+  const { revision }: Record<string, unknown> = candidate;
+
+  // A revision is the server's own counter coming back; a person never types one, and it starts at one
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+    return MALFORMED;
+  }
+
+  if (section === SettingsSection.IDENTITY) {
+    const identity: TBodyValidationResult<ILeagueIdentity> = readIdentitySection(candidate);
+
+    return identity.ok
+      ? {
+          ok: true,
+          value: {
+            identity: identity.value,
+            revision,
+            section,
+            settings: {},
+          },
+        }
+      : identity;
+  }
+
+  const settings: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    // Present, not merely allowed: a section that left a field out would take its stored value on trust, which is
+    // exactly the hidden-value drift submitting the whole section exists to prevent
+    if (!(field in candidate)) {
+      return MALFORMED;
+    }
+
+    const value: TSettingsFieldResult = readSettingsField(field, candidate[field]);
+
+    if (value === null) {
+      return MALFORMED;
+    }
+
+    if (!value.ok) {
+      return refuseValue(value);
+    }
+
+    settings[field] = value.value;
+  }
+
+  return {
+    ok: true,
+    value: {
+      identity: null,
+      revision,
+      section,
+      settings,
+    },
+  };
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register readable names/descriptions so the unit suite can title its describe blocks from the source symbols
@@ -393,6 +653,11 @@ defineSymbol(validateReplaceInviteBody, {
 defineSymbol(isInviteToken, {
   name: 'Is Invite Token',
   description: 'Reports whether a value has the exact shape of an invite token.',
+});
+
+defineSymbol(validateSaveSettingsBody, {
+  name: 'Validate Save Settings Body',
+  description: 'Validates one settings-page section save against its allowlist, field rules and revision.',
 });
 
 defineSymbol(isUuid, {
