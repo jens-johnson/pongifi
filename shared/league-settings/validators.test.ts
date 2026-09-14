@@ -22,7 +22,6 @@ import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
 import {
-  BOUNDED_SETTING_ORDER,
   LEAGUE_SETTINGS_NUMERIC_BOUNDS,
   MATCH_FORMAT_CHOICES,
   STANDARD_LEAGUE_SETTINGS,
@@ -72,6 +71,13 @@ function settingsWith(overrides: Partial<Record<string, unknown>>): Record<strin
   return { ...STANDARD_LEAGUE_SETTINGS, ...overrides } as Record<string, unknown>;
 }
 
+/**
+ * Every bounded setting, read from the map itself so a row added later cannot escape these cases
+ * @internal
+ * @constant
+ */
+const BOUNDED_SETTINGS: readonly TBoundedSetting[] = Object.keys(LEAGUE_SETTINGS_NUMERIC_BOUNDS) as TBoundedSetting[];
+
 /* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 describe(getTestFileName(import.meta.url), (): void => {
@@ -97,7 +103,7 @@ describe(getTestFileName(import.meta.url), (): void => {
   });
 
   describe(symbolName(validateBoundedSetting), (): void => {
-    for (const setting of BOUNDED_SETTING_ORDER) {
+    for (const setting of BOUNDED_SETTINGS) {
       const bounds: INumericBounds = LEAGUE_SETTINGS_NUMERIC_BOUNDS[setting];
       const message: string = boundedSettingMessage(bounds);
 
@@ -121,7 +127,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     }
 
     it('accepts zero only for the cutthroat time cap', (): void => {
-      const zeroed: TBoundedSetting[] = BOUNDED_SETTING_ORDER.filter(
+      const zeroed: TBoundedSetting[] = BOUNDED_SETTINGS.filter(
         (setting: TBoundedSetting): boolean => validateBoundedSetting(setting, 0).ok,
       );
 
@@ -176,7 +182,7 @@ describe(getTestFileName(import.meta.url), (): void => {
           [GameType.SINGLES]: 21,
         },
         ...Object.fromEntries(
-          BOUNDED_SETTING_ORDER.map((setting: TBoundedSetting): [string, number] => [
+          BOUNDED_SETTINGS.map((setting: TBoundedSetting): [string, number] => [
             setting,
             LEAGUE_SETTINGS_NUMERIC_BOUNDS[setting].max,
           ]),
@@ -208,6 +214,31 @@ describe(getTestFileName(import.meta.url), (): void => {
       const failure: Record<string, unknown> = settingsWith({ provisionalGames: 0, winningMargin: 0 });
 
       expect(validateLeagueSettingsNumbers(failure)).toMatchObject({ field: 'winningMargin', ok: false });
+    });
+
+    it('orders a range against a set the way the page lays the controls out', (): void => {
+      // Win by is a plain number and Best of is a select, and the page puts Win by first, so a league carrying both
+      // faults is sent to Win by
+      expect(validateLeagueSettingsNumbers(settingsWith({ matchFormat: 2, winningMargin: 0 }))).toMatchObject({
+        field: 'winningMargin',
+        ok: false,
+      });
+
+      // Best of opens the singles and doubles sub-group that Serve changes every sits inside
+      expect(validateLeagueSettingsNumbers(settingsWith({ matchFormat: 2, serviceInterval: 0 }))).toMatchObject({
+        field: 'matchFormat',
+        ok: false,
+      });
+
+      // And a target score comes before all of them
+      expect(
+        validateLeagueSettingsNumbers(
+          settingsWith({
+            targetScore: { ...STANDARD_LEAGUE_SETTINGS.targetScore, [GameType.SINGLES]: 12 },
+            winningMargin: 0,
+          }),
+        ),
+      ).toMatchObject({ field: 'targetScore.SINGLES', ok: false });
     });
 
     it('validates a value the editor is hiding', (): void => {
@@ -265,7 +296,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('sits inside every bound and every choice', (): void => {
       const standard: TLeagueSettings = STANDARD_LEAGUE_SETTINGS;
 
-      for (const setting of BOUNDED_SETTING_ORDER) {
+      for (const setting of BOUNDED_SETTINGS) {
         expect(validateBoundedSetting(setting, standard[setting]).ok).toBe(true);
       }
 

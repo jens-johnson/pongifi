@@ -19,7 +19,7 @@
 import { GameCreator, ResultRecorder } from '#shared/domain';
 import { GameType } from '#shared/rules-engine';
 
-import type { INumericBounds, TBoundedSetting, TLeagueSettings } from './types';
+import type { INumericBounds, TBoundedSetting, TLeagueSettings, TNumericSetting } from './types';
 
 /**
  * The settings every league starts with: the IV.II gameplay defaults and the IV.III administration defaults.
@@ -108,13 +108,20 @@ export const TARGET_SCORE_CHOICES: Readonly<Record<GameType, readonly number[]>>
 export const TARGET_SCORE_FORMAT_ORDER: readonly GameType[] = [GameType.SINGLES, GameType.DOUBLES, GameType.CUTTHROAT];
 
 /**
- * The plain numeric settings in the order the settings page shows them, so a refusal names the first field a
- * commissioner would have found.
+ * Every numeric setting in the order the settings page lists its controls, so a refusal names the first field a
+ * commissioner would have found and the page has somewhere to put focus.
+ *
+ * One list rather than the ranges followed by the sets, because the page interleaves them: the Formats and scoring
+ * section runs Game to, Win by, then the singles and doubles sub-group of Best of and Serve changes every, then the
+ * cutthroat cap and the walkover grace. `targetScore` stands for one check per format, in
+ * {@link TARGET_SCORE_FORMAT_ORDER}
  * @public
  * @constant
  */
-export const BOUNDED_SETTING_ORDER: readonly TBoundedSetting[] = [
+export const LEAGUE_SETTINGS_NUMERIC_ORDER: readonly TNumericSetting[] = [
+  'targetScore',
   'winningMargin',
+  'matchFormat',
   'serviceInterval',
   'cutthroatTimeCap',
   'walkoverGracePeriod',

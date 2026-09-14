@@ -19,8 +19,8 @@ import type { GameType } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import {
-  BOUNDED_SETTING_ORDER,
   LEAGUE_SETTINGS_NUMERIC_BOUNDS,
+  LEAGUE_SETTINGS_NUMERIC_ORDER,
   MATCH_FORMAT_CHOICES,
   TARGET_SCORE_CHOICES,
   TARGET_SCORE_FORMAT_ORDER,
@@ -161,8 +161,8 @@ export function validateTargetScore(gameType: GameType, input: unknown): TSettin
  * Every format's target score is checked whichever formats the league currently allows, and the same is true of the
  * fields a disabled confirmation or rating policy hides: a value the editor is not showing is still a value the league
  * would play by the day it is shown again, so it is never left unvalidated and never silently replaced. Fields are
- * checked in the order the settings page lists them, so a refusal names the first field a commissioner would have
- * found. Nothing here is a relationship between two settings — each field stands or falls on its own
+ * checked in {@link LEAGUE_SETTINGS_NUMERIC_ORDER}, the order the settings page lists its controls, so a refusal
+ * names the first field a commissioner would have found and the page has somewhere to put focus. Nothing here is a relationship between two settings — each field stands or falls on its own
  * @public
  * @function
  * @param settings - The resolved settings object, straight from the wire
@@ -172,30 +172,27 @@ export function validateLeagueSettingsNumbers(settings: unknown): TSettingsValid
   const candidate: Record<string, unknown> = asRecord(settings);
   const targetScores: Record<string, unknown> = asRecord(candidate.targetScore);
 
-  for (const gameType of TARGET_SCORE_FORMAT_ORDER) {
-    const score: TSettingValidationResult = validateTargetScore(gameType, targetScores[gameType]);
+  for (const setting of LEAGUE_SETTINGS_NUMERIC_ORDER) {
+    if (setting === 'targetScore') {
+      for (const gameType of TARGET_SCORE_FORMAT_ORDER) {
+        const score: TSettingValidationResult = validateTargetScore(gameType, targetScores[gameType]);
 
-    if (!score.ok) {
-      return {
-        field: `targetScore.${gameType}`,
-        message: score.message,
-        ok: false,
-      };
+        if (!score.ok) {
+          return {
+            field: `targetScore.${gameType}`,
+            message: score.message,
+            ok: false,
+          };
+        }
+      }
+
+      continue;
     }
-  }
 
-  const matchFormat: TSettingValidationResult = validateMatchFormat(candidate.matchFormat);
-
-  if (!matchFormat.ok) {
-    return {
-      field: 'matchFormat',
-      message: matchFormat.message,
-      ok: false,
-    };
-  }
-
-  for (const setting of BOUNDED_SETTING_ORDER) {
-    const value: TSettingValidationResult = validateBoundedSetting(setting, candidate[setting]);
+    const value: TSettingValidationResult =
+      setting === 'matchFormat'
+        ? validateMatchFormat(candidate.matchFormat)
+        : validateBoundedSetting(setting, candidate[setting]);
 
     if (!value.ok) {
       return {

@@ -129,6 +129,12 @@ export type TBoundedSetting = Extract<
 >;
 
 /**
+ * Every numeric setting, bounded or discrete, as the order constant names them.
+ * @public
+ */
+export type TNumericSetting = Extract<keyof TLeagueSettings, 'matchFormat' | 'targetScore'> | TBoundedSetting;
+
+/**
  * A refused settings value, carrying the message the field shows.
  * @public
  * @interface
