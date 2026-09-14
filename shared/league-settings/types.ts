@@ -94,3 +94,92 @@ export type TGameSettingsOverride = Partial<
     targetScore: number;
   }
 >;
+
+/**
+ * The inclusive whole-number range a plain numeric setting is accepted in.
+ *
+ * Both endpoints are valid values: the editor's controls use them as their `min`/`max`, and the server refuses
+ * anything outside them rather than clamping it (numeric contract addendum, 2026-09-14)
+ * @public
+ * @interface
+ */
+export interface INumericBounds {
+  /* The largest accepted value */
+  max: number;
+
+  /* The smallest accepted value */
+  min: number;
+}
+
+/**
+ * The numeric settings validated as an inclusive range rather than as a set of choices.
+ *
+ * `Extract` rather than a bare union so a name that stops being a setting stops compiling here
+ * @public
+ */
+export type TBoundedSetting = Extract<
+  keyof TLeagueSettings,
+  | 'cutthroatTimeCap'
+  | 'provisionalGames'
+  | 'resultAmendmentWindow'
+  | 'resultConfirmationWindow'
+  | 'serviceInterval'
+  | 'walkoverGracePeriod'
+  | 'winningMargin'
+>;
+
+/**
+ * A refused settings value, carrying the message the field shows.
+ * @public
+ * @interface
+ */
+export interface ISettingValidationFailure {
+  /* The message shown beneath the field */
+  message: string;
+
+  /* The value did not satisfy the field's rule */
+  ok: false;
+}
+
+/**
+ * An accepted settings value, safe to store as it stands.
+ * @public
+ * @interface
+ */
+export interface ISettingValidationSuccess {
+  /* The value satisfied the field's rule */
+  ok: true;
+
+  /* The whole number to store, unchanged from the input */
+  value: number;
+}
+
+/**
+ * The outcome of validating one numeric setting.
+ * @public
+ */
+export type TSettingValidationResult = ISettingValidationFailure | ISettingValidationSuccess;
+
+/**
+ * A refused settings object, naming the first field that failed so the editor can flag it.
+ *
+ * A target score names its format: `targetScore.SINGLES`
+ * @public
+ * @interface
+ */
+export interface ISettingsValidationFailure {
+  /* The path of the field that failed, as the editor addresses it */
+  field: string;
+
+  /* The message shown beneath that field */
+  message: string;
+
+  /* At least one numeric setting did not satisfy its rule */
+  ok: false;
+}
+
+/**
+ * The outcome of validating every numeric setting in a resolved settings object.
+ * @public
+ */
+export type TSettingsValidationResult = ISettingsValidationFailure | { ok: true };

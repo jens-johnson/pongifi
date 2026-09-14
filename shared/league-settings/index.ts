@@ -11,10 +11,11 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * █████████████████████████████████████████ #shared/league-settings/index.ts ██████████████████████████████████████████
  *
- * Barrel for the league settings module; re-exports the settings shape and the overridable subset.
+ * Barrel for the league settings module; re-exports the settings shape, the overridable subset and the validators.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 export * from './constants';
 export * from './types';
+export * from './validators';
