@@ -22,7 +22,13 @@ import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { LeagueRole } from '#shared/domain';
 import { MembershipStatus } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { ICreateLeagueRequest, IInviteLinkOptions, ILeagueMember } from '#shared/leagues';
+import type {
+  ICreateLeagueRequest,
+  IInviteLinkOptions,
+  ILeagueConfiguration,
+  ILeagueIdentity,
+  ILeagueMember,
+} from '#shared/leagues';
 import { DEFAULT_INVITE_EXPIRY_DAYS } from '#shared/leagues';
 import { defineSymbol } from '#shared/utils/symbol';
 import { useDatabase } from '#utils/db';
@@ -537,6 +543,47 @@ export async function readInviteSummary(token: string, userId: string | null): P
   return rows[0] ?? null;
 }
 
+/**
+ * Writes one settings section, but only while the league is still at the revision the page loaded.
+ *
+ * The revision is both the precondition and part of the write: it moves by one in the same statement, so two saves
+ * that read the same revision cannot both commit, and a save that loses the race writes nothing at all rather than
+ * overwriting the winner. Membership, invitation and game writes never touch it, so a commissioner's open editor is
+ * made stale only by another settings save
+ * @public
+ * @function
+ * @param leagueId - The league being saved, already checked to be a UUID
+ * @param revision - The revision the page loaded at
+ * @param identity - The profile fields, for the Identity section, or null
+ * @param settings - The complete merged settings object, or null for an Identity save
+ * @returns The persisted configuration at its new revision, or null when no row was at that revision
+ */
+export async function updateLeagueConfiguration(
+  leagueId: string,
+  revision: number,
+  identity: ILeagueIdentity | null,
+  settings: TLeagueSettings | null,
+): Promise<ILeagueConfiguration | null> {
+  const rows = await useDatabase()
+    .update(leagues)
+    .set({
+      ...(identity ?? {}),
+      ...(settings ? { settings } : {}),
+      configurationRevision: sql`${leagues.configurationRevision} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(leagues.id, leagueId), eq(leagues.configurationRevision, revision)))
+    .returning({
+      abbreviation: leagues.abbreviation,
+      configurationRevision: leagues.configurationRevision,
+      description: leagues.description,
+      name: leagues.name,
+      settings: leagues.settings,
+    });
+
+  return rows[0] ?? null;
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register readable names/descriptions so the unit suites can title their describe blocks from the source symbols
@@ -553,6 +600,11 @@ defineSymbol(readCreationRequest, {
 defineSymbol(insertLeague, {
   name: 'Insert League',
   description: 'Creates a league, its commissioner membership and the submission record in one statement.',
+});
+
+defineSymbol(updateLeagueConfiguration, {
+  name: 'Update League Configuration',
+  description: 'Writes one settings section while the league is still at the revision the page loaded.',
 });
 
 defineSymbol(readLeagueForMember, {

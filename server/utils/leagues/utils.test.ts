@@ -29,8 +29,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { LeagueRole } from '#shared/domain';
 import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
-import type { ICreateLeagueRequest, IInviteLink, IInvitePanel, ILeagueDetail } from '#shared/leagues';
-import { InviteLinkState, InviteLookupKind } from '#shared/leagues';
+import type {
+  ICreateLeagueRequest,
+  IInviteLink,
+  IInvitePanel,
+  ILeagueConfiguration,
+  ILeagueDetail,
+  ISaveSettingsRequest,
+} from '#shared/leagues';
+import { InviteLinkState, InviteLookupKind, SettingsSection } from '#shared/leagues';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
@@ -50,6 +57,7 @@ import {
   readLeagueDetail,
   replaceInvite,
   revokeInvite,
+  saveLeagueSettings,
   toInviteLink,
 } from './utils';
 
@@ -285,6 +293,80 @@ async function countRows(table: string): Promise<number> {
  */
 async function expireInvitation(id: string): Promise<void> {
   await database.execute(sql`UPDATE "invitations" SET "expires_at" = now() - interval '1 second' WHERE "id" = ${id}`);
+}
+
+/**
+ * The name every Identity save in these cases writes
+ * @internal
+ * @constant
+ */
+const SAVED_LEAGUE_NAME: string = 'Monday Ladder';
+
+/**
+ * Builds a Formats and scoring save carrying every field that section owns.
+ * @internal
+ * @function
+ * @param revision - The revision the page loaded at
+ * @param settings - The gameplay fields this case changes
+ * @returns The validated save the operation takes
+ */
+function buildFormatsSave(revision: number, settings: Record<string, unknown> = {}): ISaveSettingsRequest {
+  return {
+    identity: null,
+    revision,
+    section: SettingsSection.FORMATS,
+    settings: {
+      allowedGameTypes: STANDARD_LEAGUE_SETTINGS.allowedGameTypes,
+      cutthroatTimeCap: STANDARD_LEAGUE_SETTINGS.cutthroatTimeCap,
+      expediteEnabled: STANDARD_LEAGUE_SETTINGS.expediteEnabled,
+      matchFormat: STANDARD_LEAGUE_SETTINGS.matchFormat,
+      serviceInterval: STANDARD_LEAGUE_SETTINGS.serviceInterval,
+      targetScore: STANDARD_LEAGUE_SETTINGS.targetScore,
+      walkoverGracePeriod: STANDARD_LEAGUE_SETTINGS.walkoverGracePeriod,
+      winningMargin: STANDARD_LEAGUE_SETTINGS.winningMargin,
+      ...settings,
+    },
+  };
+}
+
+/**
+ * Builds an Identity save.
+ * @internal
+ * @function
+ * @param revision - The revision the page loaded at
+ * @param name - The name being saved
+ * @returns The validated save the operation takes
+ */
+function buildIdentitySave(revision: number, name: string = SAVED_LEAGUE_NAME): ISaveSettingsRequest {
+  return {
+    identity: {
+      abbreviation: 'MON',
+      description: null,
+      name,
+    },
+    revision,
+    section: SettingsSection.IDENTITY,
+    settings: {},
+  };
+}
+
+/**
+ * Reads a league's stored configuration straight from the table, past every operation.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @returns The stored name and revision, and the settings
+ */
+async function readStoredLeague(
+  leagueId: string,
+): Promise<{ configuration_revision: number; name: string; settings: Record<string, unknown> }> {
+  const { rows } = await database.execute<{
+    configuration_revision: number;
+    name: string;
+    settings: Record<string, unknown>;
+  }>(sql`SELECT "configuration_revision", "name", "settings" FROM "leagues" WHERE "id" = ${leagueId}`);
+
+  return rows[0]!;
 }
 
 /* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -1016,6 +1098,171 @@ describe(getTestFileName(import.meta.url), (): void => {
         statusCode: 410,
         statusMessage: 'This link is no longer live. Create a new link to invite players.',
       });
+    });
+  });
+
+  describe(symbolName(saveLeagueSettings), (): void => {
+    it('saves a section, returns what it persisted, and moves the revision by one', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 })),
+      );
+
+      expect(saved.configurationRevision).toBe(2);
+      expect(saved.settings.winningMargin).toBe(5);
+
+      // The name is not this section's to touch
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.name).toBe('Friday Ladder');
+      expect(stored.settings.winningMargin).toBe(5);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('saves the profile without disturbing the settings', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1)),
+      );
+
+      expect(saved.name).toBe(SAVED_LEAGUE_NAME);
+      expect(saved.settings).toEqual(STANDARD_LEAGUE_SETTINGS);
+      expect(saved.configurationRevision).toBe(2);
+    });
+
+    it('lets a manager save the profile and refuses them every other section', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, managerId, 'MANAGER');
+
+      expect(valueOf(await saveLeagueSettings(leagueId, managerId, buildIdentitySave(1))).name).toBe(SAVED_LEAGUE_NAME);
+
+      const refused: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        managerId,
+        buildFormatsSave(2, { winningMargin: 5 }),
+      );
+
+      expect(refused).toEqual({ ok: false, refusal: LeagueRefusal.SECTION_FORBIDDEN });
+
+      // Refused as a whole: the gameplay field is unchanged and so is the revision the manager's own save left
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('refuses a player every section, including the profile', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const playerId: string = await insertUser('Player');
+
+      await insertMembership(leagueId, playerId);
+
+      expect(await saveLeagueSettings(leagueId, playerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.SECTION_FORBIDDEN,
+      });
+    });
+
+    it('is a not-found for anyone who is not an active member, and for a league that is not there', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const strangerId: string = await insertUser('Stranger');
+
+      expect(await saveLeagueSettings(leagueId, strangerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+
+      expect(await saveLeagueSettings(UNKNOWN_LEAGUE_ID, commissionerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+
+      expect(await saveLeagueSettings('not-a-uuid', commissionerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+    });
+
+    it('refuses a save carrying a revision another save has already moved past, and writes nothing', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // Two tabs loaded at revision 1; the first one to save wins
+      valueOf(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 })));
+
+      const late: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        commissionerId,
+        buildFormatsSave(1, { winningMargin: 9 }),
+      );
+
+      expect(late).toEqual({ ok: false, refusal: LeagueRefusal.CONFIGURATION_CHANGED });
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(5);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('lets the same draft commit once it carries the revision it was refused at', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      valueOf(await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1)));
+
+      expect(
+        valueOf(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(2, { winningMargin: 9 })))
+          .configurationRevision,
+      ).toBe(3);
+    });
+
+    it('keeps the value of a field the section is hiding', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // A cutthroat-only league still carries the singles target it would play by if singles came back
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(
+          leagueId,
+          commissionerId,
+          buildFormatsSave(1, { allowedGameTypes: [GameType.CUTTHROAT] }),
+        ),
+      );
+
+      expect(saved.settings.targetScore).toEqual(STANDARD_LEAGUE_SETTINGS.targetScore);
+      expect(saved.settings.allowedGameTypes).toEqual([GameType.CUTTHROAT]);
+    });
+
+    it('refuses any section while a stored setting is outside its limits', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // A league configured before these limits existed; the Ratings section is not the one being saved
+      await database.execute(sql`
+        UPDATE "leagues"
+        SET "settings" = jsonb_set("settings", '{provisionalGames}', '0')
+        WHERE "id" = ${leagueId}`);
+
+      expect(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 }))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.SETTINGS_UNUSABLE,
+      });
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(1);
+    });
+
+    it('is not moved by an invitation write, so an open editor is made stale only by a settings save', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      await issueInvite(leagueId, commissionerId, { ...WEEK_NO_LIMIT, previousId: null });
+
+      // The page still holds revision 1, and its save commits
+      expect(
+        valueOf(await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1))).configurationRevision,
+      ).toBe(2);
     });
   });
 });

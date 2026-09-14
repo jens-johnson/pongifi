@@ -339,3 +339,29 @@ export interface ISaveSettingsRequest {
   /* The settings this section owns, for every section but Identity */
   settings: Partial<TLeagueSettings>;
 }
+
+/**
+ * A league's saveable configuration as the server persisted it: the profile fields, the settings, and the revision the
+ * next save must carry.
+ *
+ * Returned by a save rather than echoing what was submitted, so the page adopts what is stored rather than what it
+ * hoped for, and returned again with a refused save so a stale section can show current values beside its draft
+ * @public
+ * @interface
+ */
+export interface ILeagueConfiguration {
+  /* The stored short mark */
+  abbreviation: string;
+
+  /* The revision this configuration is at; the next save carries it */
+  configurationRevision: number;
+
+  /* The stored description, or null */
+  description: string | null;
+
+  /* The stored name */
+  name: string;
+
+  /* The stored settings */
+  settings: TLeagueSettings;
+}

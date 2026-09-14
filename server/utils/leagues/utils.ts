@@ -20,10 +20,9 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { createError, type H3Event, setResponseStatus } from 'h3';
 
-import type { LeagueRole } from '#shared/domain';
-import { InvitationStatus } from '#shared/domain';
+import { InvitationStatus, LeagueRole } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
+import { STANDARD_LEAGUE_SETTINGS, validateLeagueSettingsNumbers } from '#shared/league-settings';
 import type {
   IAcceptInviteResponse,
   ICreateLeagueRequest,
@@ -32,16 +31,20 @@ import type {
   IInviteLinkOptions,
   IInvitePanel,
   IIssueInviteRequest,
+  ILeagueConfiguration,
   ILeagueDetail,
   ILeagueMember,
   INotFoundResponse,
+  ISaveSettingsRequest,
+  SettingsSection,
   TInviteLookup,
 } from '#shared/leagues';
-import { InviteLinkState, InviteLookupKind, isInviteToken, isUuid } from '#shared/leagues';
+import { COMMISSIONER_ONLY_SECTIONS, InviteLinkState, InviteLookupKind, isInviteToken, isUuid } from '#shared/leagues';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import {
   CREATION_REQUEST_CONSTRAINT,
+  IDENTITY_EDITOR_ROLES,
   INVITE_MANAGER_ROLES,
   INVITE_TOKEN_BYTES,
   MAX_CAUSE_DEPTH,
@@ -66,6 +69,7 @@ import {
   readViewerRole,
   replaceInviteLink,
   revokeInviteLink,
+  updateLeagueConfiguration,
 } from './queries';
 import type {
   ICreationRequestRow,
@@ -671,6 +675,85 @@ export async function answerRefusal(event: H3Event, refusal: LeagueRefusal): Pro
   throw createError({ statusCode, statusMessage: message });
 }
 
+/**
+ * Whether a role may save a section of the settings page.
+ * @internal
+ * @function
+ * @param section - The section being saved
+ * @param role - The caller's role in the league, read fresh
+ * @returns Whether the save is theirs to make
+ */
+function maySaveSection(section: SettingsSection, role: LeagueRole): boolean {
+  return COMMISSIONER_ONLY_SECTIONS.includes(section)
+    ? role === LeagueRole.COMMISSIONER
+    : IDENTITY_EDITOR_ROLES.includes(role);
+}
+
+/**
+ * Saves one section of a league's settings, at the revision the page loaded and no other.
+ *
+ * The role is read fresh here rather than trusted from the page, so a manager whose page was rendered before their
+ * role changed, or one submitting a crafted body, is refused against what the database says now. The section decides
+ * which role is needed: the league profile is a commissioner's or a manager's, everything else a commissioner's.
+ *
+ * The complete merged settings object is validated, not only the fields submitted, so a league carrying a value from
+ * before these limits existed is refused rather than written back unchanged; the fields the editor hides are part of
+ * that object and are never exempt
+ * @public
+ * @function
+ * @param leagueId - The requested identifier, straight from the path
+ * @param userId - The identifier taken from the verified session
+ * @param request - The validated save
+ * @throws A redacted error for any database failure
+ * @returns The persisted configuration at its new revision, or the refusal
+ */
+export async function saveLeagueSettings(
+  leagueId: string,
+  userId: string,
+  request: ISaveSettingsRequest,
+): Promise<TLeagueOperationResult<ILeagueConfiguration>> {
+  if (!isUuid(leagueId)) {
+    return refuse(LeagueRefusal.LEAGUE_NOT_FOUND);
+  }
+
+  const league: ILeagueRow | null = await readLeagueForMember(leagueId, userId);
+
+  if (!league) {
+    return refuse((await readAccountRefusal(userId)) ?? LeagueRefusal.LEAGUE_NOT_FOUND);
+  }
+
+  if (!maySaveSection(request.section, league.viewerRole)) {
+    return refuse(LeagueRefusal.SECTION_FORBIDDEN);
+  }
+
+  // An Identity save leaves the settings object alone; every other section is merged into it whole
+  const settings: TLeagueSettings | null = request.identity
+    ? null
+    : ({ ...league.settings, ...request.settings } as TLeagueSettings);
+
+  if (!validateLeagueSettingsNumbers(settings ?? league.settings).ok) {
+    return refuse(LeagueRefusal.SETTINGS_UNUSABLE);
+  }
+
+  const saved: ILeagueConfiguration | null = await updateLeagueConfiguration(
+    leagueId,
+    request.revision,
+    request.identity,
+    settings,
+  );
+
+  if (saved) {
+    return succeed(saved);
+  }
+
+  // No row stood at that revision. Either another save moved it, or the league stopped being this caller's to save
+  return refuse(
+    (await readLeagueForMember(leagueId, userId))
+      ? LeagueRefusal.CONFIGURATION_CHANGED
+      : ((await readAccountRefusal(userId)) ?? LeagueRefusal.LEAGUE_NOT_FOUND),
+  );
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register readable names/descriptions so the unit suites can title their describe blocks from the source symbols
@@ -732,6 +815,11 @@ defineSymbol(lookupInvite, {
 defineSymbol(acceptInvite, {
   name: 'Accept Invite',
   description: 'Accepts an invite for the caller, or confirms they are already in.',
+});
+
+defineSymbol(saveLeagueSettings, {
+  name: 'Save League Settings',
+  description: 'Saves one settings section at the revision the page loaded, against a freshly read role.',
 });
 
 defineSymbol(answerRefusal, {

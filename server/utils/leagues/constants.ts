@@ -20,6 +20,7 @@ import type { SQL } from 'drizzle-orm';
 import { and, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { LeagueRole } from '#shared/domain';
+import { SETTINGS_SECTION_FORBIDDEN_MESSAGE, SETTINGS_STALE_MESSAGE } from '#shared/leagues';
 
 import { memberships } from '../../db/schema';
 import { users } from '../../db/schema/users';
@@ -63,6 +64,14 @@ export const INVITE_TOKEN_BYTES: number = 32;
  * @constant
  */
 export const INVITE_MANAGER_ROLES: readonly LeagueRole[] = [LeagueRole.COMMISSIONER, LeagueRole.MANAGER];
+
+/**
+ * The roles that may save the Identity section of the settings page: the league profile is a commissioner's or a
+ * manager's to change (pitch IV.IV), while every other section is a commissioner's alone.
+ * @public
+ * @constant
+ */
+export const IDENTITY_EDITOR_ROLES: readonly LeagueRole[] = [LeagueRole.COMMISSIONER, LeagueRole.MANAGER];
 
 /**
  * How far down an error's `cause` chain a database error is looked for; the driver wraps once, the ORM once more.
@@ -181,6 +190,14 @@ export const READ_LEAGUE_UPSTREAM_MESSAGE: string = 'Pongifi could not read the 
 export const INVITE_LINK_UPSTREAM_MESSAGE: string = 'Pongifi could not update the invite link.';
 
 /**
+ * Answered when the settings save cannot reach the database, which the page reads as an uncertain outcome and
+ * reconciles by re-reading rather than by saving again.
+ * @public
+ * @constant
+ */
+export const SAVE_SETTINGS_UPSTREAM_MESSAGE: string = 'Pongifi could not save these settings.';
+
+/**
  * The 502 message when an invite lookup cannot reach the database.
  * @public
  * @constant
@@ -201,9 +218,23 @@ export const ACCEPT_INVITE_UPSTREAM_MESSAGE: string = 'Pongifi could not add you
  * @public
  * @constant
  */
+/**
+ * Answered when a league's stored configuration is outside the limits the editor enforces, so no section of it can be
+ * saved until the offending value is corrected.
+ *
+ * Only reachable for a league configured before those limits existed; a save from the page cannot produce it
+ * @public
+ * @constant
+ */
+export const SETTINGS_UNUSABLE_MESSAGE: string =
+  'This league has a stored setting outside the allowed range, so it cannot be saved yet.';
+
 export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
   /* The session is stale; the browser signs in again */
   [LeagueRefusal.ACCOUNT_MISSING]: 401,
+
+  /* The settings page loaded before someone else's save; the page re-reads and compares */
+  [LeagueRefusal.CONFIGURATION_CHANGED]: 409,
 
   /* A replayed identifier with a different payload */
   [LeagueRefusal.CONFLICT]: 409,
@@ -223,6 +254,12 @@ export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
   /* The page routes the account through /welcome on this */
   [LeagueRefusal.NEEDS_WELCOME]: 403,
 
+  /* A manager reaching a commissioner's section, or a player reaching any of them */
+  [LeagueRefusal.SECTION_FORBIDDEN]: 403,
+
+  /* A well-formed save the stored configuration cannot accept */
+  [LeagueRefusal.SETTINGS_UNUSABLE]: 422,
+
   /* The panel re-reads on this */
   [LeagueRefusal.STALE]: 409,
 };
@@ -235,6 +272,9 @@ export const REFUSAL_STATUS: Readonly<Record<LeagueRefusal, number>> = {
 export const REFUSAL_MESSAGE: Readonly<Record<LeagueRefusal, string>> = {
   /* The account is gone */
   [LeagueRefusal.ACCOUNT_MISSING]: ACCOUNT_UNAVAILABLE_MESSAGE,
+
+  /* The configuration moved while the page was open */
+  [LeagueRefusal.CONFIGURATION_CHANGED]: SETTINGS_STALE_MESSAGE,
 
   /* The identifier was already spent */
   [LeagueRefusal.CONFLICT]: CREATE_CONFLICT_MESSAGE,
@@ -253,6 +293,12 @@ export const REFUSAL_MESSAGE: Readonly<Record<LeagueRefusal, string>> = {
 
   /* Welcome is outstanding */
   [LeagueRefusal.NEEDS_WELCOME]: WELCOME_REQUIRED_MESSAGE,
+
+  /* The section needs a role the caller does not have */
+  [LeagueRefusal.SECTION_FORBIDDEN]: SETTINGS_SECTION_FORBIDDEN_MESSAGE,
+
+  /* A stored value the editor's limits refuse */
+  [LeagueRefusal.SETTINGS_UNUSABLE]: SETTINGS_UNUSABLE_MESSAGE,
 
   /* The link moved on */
   [LeagueRefusal.STALE]: INVITE_STALE_MESSAGE,
