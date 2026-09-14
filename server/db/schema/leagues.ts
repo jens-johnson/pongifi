@@ -39,6 +39,8 @@ export const leagues = pgTable('leagues', {
   visibility: leagueVisibilityEnum('visibility').notNull().default('PRIVATE'),
   /* The league-level values from IV.II and IV.III; a game freezes its resolved form at start */
   settings: jsonb('settings').$type<TLeagueSettings>().notNull(),
+  /* Moved by every settings write and by nothing else, so a save carrying an older one is refused without writing */
+  configurationRevision: integer('configuration_revision').notNull().default(1),
   createdBy: uuid('created_by')
     .notNull()
     .references(() => users.id),
