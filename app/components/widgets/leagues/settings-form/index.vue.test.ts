@@ -28,6 +28,7 @@ import { LeagueRole } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
 import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
 import type { ILeagueConfiguration, ILeagueDetail, ISaveSettingsRequest } from '#shared/leagues';
+import { GameType } from '#shared/rules-engine';
 
 import SettingsForm from './index.vue';
 
@@ -161,6 +162,13 @@ const WIN_BY_INPUT: string = '#setting-winningMargin';
 const RENAMED: string = 'Renamed';
 
 /**
+ * A second name, so a case can tell a draft waiting to be sent from one that was sent and answered already
+ * @internal
+ * @constant
+ */
+const RENAMED_AGAIN: string = 'Renamed Again';
+
+/**
  * The question the page asks before a departure would take unsaved changes with it
  * @internal
  * @constant
@@ -175,11 +183,25 @@ const LEAVE_PROMPT: string = 'Leave without saving?';
 const WIN_BY_MESSAGE: string = 'Enter a whole number from 1 to 21.';
 
 /**
+ * The only action a section whose re-read also failed offers, which is a read rather than a second write
+ * @internal
+ * @constant
+ */
+const RETRY_CHECK: string = 'Retry check';
+
+/**
  * The line a section shows above a comparison, which is the one outcome a queued write must never cause
  * @internal
  * @constant
  */
 const STALE_LINE: string = 'These settings changed while you were editing.';
+
+/**
+ * The confirmation a section shows once its own write is known to have committed
+ * @internal
+ * @constant
+ */
+const SAVED_LINE: string = 'Saved.';
 
 /**
  * The control a cutthroat-only league's stored fault cases repair
@@ -201,6 +223,13 @@ const PROVISIONAL_INPUT: string = '#setting-provisionalGames';
  * @constant
  */
 const PROVISIONAL_MESSAGE: string = 'Enter a whole number from 1 to 1,000.';
+
+/**
+ * The message the cutthroat time cap's own bounds produce, which zero is inside and a stored 9000 is not
+ * @internal
+ * @constant
+ */
+const CAP_MESSAGE: string = 'Enter a whole number from 0 to 1,440.';
 
 /**
  * Every request the page has made, in order, each still waiting for its answer
@@ -476,6 +505,64 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
   });
 
+  describe('a section another section saved past', (): void => {
+    it('keeps its own draft and carries it at the revision that save moved it to', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      // Ratings is left dirty at a value nobody else touches, and Formats saves while it sits there
+      await wrapper.find(PROVISIONAL_INPUT).setValue('25');
+      await wrapper.find(WIN_BY_INPUT).setValue('5');
+      await save(wrapper, FORMATS);
+      calls.shift()!.resolve(configurationAt(2, { winningMargin: 5 }));
+      await settled();
+
+      // Its own baseline is still what came back, so it moves to the new revision rather than showing a comparison
+      expect(sectionOf(wrapper, RATINGS).text()).not.toContain(STALE_LINE);
+      expect((wrapper.find(PROVISIONAL_INPUT).element as HTMLInputElement).value).toBe('25');
+
+      await save(wrapper, RATINGS);
+
+      expect(onlyCall().body!.revision).toBe(2);
+      expect(onlyCall().body!.settings.provisionalGames).toBe(25);
+    });
+
+    it('keeps a queued Save of its own when the answer carries values it already saved once', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      // Identity saves once, so a body for it has been sent and answered before anything below is queued
+      await wrapper.find(NAME_INPUT).setValue(RENAMED);
+      await save(wrapper, IDENTITY);
+      calls.shift()!.resolve(configurationAt(2, {}, { name: RENAMED }));
+      await settled();
+
+      // A second Identity Save, carrying a different name, waits behind a Formats save
+      await wrapper.find(WIN_BY_INPUT).setValue('5');
+      await save(wrapper, FORMATS);
+      await wrapper.find(NAME_INPUT).setValue(RENAMED_AGAIN);
+      await save(wrapper, IDENTITY);
+
+      expect(calls).toHaveLength(1);
+
+      // The Formats answer still holds the first name, which is the body the first save sent and nothing is waiting on
+      calls.shift()!.resolve(configurationAt(3, { winningMargin: 5 }, { name: RENAMED }));
+      await settled();
+
+      // A queued Save is not an unresolved write: values a settled write of this section's put there are not its
+      // outcome, so the draft waiting to go out is neither replaced by them nor called saved on their account
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED_AGAIN);
+      expect(sectionOf(wrapper, IDENTITY).find('fieldset').attributes('disabled')).toBeDefined();
+      expect(onlyCall().body!.identity!.name).toBe(RENAMED_AGAIN);
+      expect(onlyCall().body!.revision).toBe(3);
+
+      // And it is its own request that settles it
+      calls.shift()!.resolve(configurationAt(4, { winningMargin: 5 }, { name: RENAMED_AGAIN }));
+      await settled();
+
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED_AGAIN);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(SAVED_LINE);
+    });
+  });
+
   describe('a section resolving its comparison', (): void => {
     it('reviews its draft at the revision it was shown, not one a later conflict moved the page to', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
@@ -734,14 +821,19 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(sectionOf(wrapper, RATINGS).text()).toContain(PROVISIONAL_MESSAGE);
     });
 
-    it('gives a player the same message, and still no control', async (): Promise<void> => {
+    it('gives a player a field the league itself is hiding, its message, and still no control', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm(
-        leagueWith(LeagueRole.PLAYER, { ratingEnabled: false, winningMargin: 0 }),
+        leagueWith(LeagueRole.PLAYER, { provisionalGames: 0, ratingEnabled: false }),
       );
 
-      expect(sectionOf(wrapper, FORMATS).find('fieldset').exists()).toBe(false);
-      expect(sectionOf(wrapper, FORMATS).text()).toContain(WIN_BY_MESSAGE);
-      expect(wrapper.find(WIN_BY_INPUT).exists()).toBe(false);
+      // Ratings off hides the provisional count from everyone, so only the stored fault can be drawing this row
+      expect(sectionOf(wrapper, RATINGS).find('fieldset').exists()).toBe(false);
+      expect(sectionOf(wrapper, RATINGS).text()).toContain('Provisional games');
+      expect(sectionOf(wrapper, RATINGS).text()).toContain(PROVISIONAL_MESSAGE);
+
+      // Revealing grants nobody editing: a player reads the fault and has nothing to repair it with
+      expect(wrapper.find(PROVISIONAL_INPUT).exists()).toBe(false);
+      expect(buttonIn(wrapper, RATINGS, 'Save')).toBeUndefined();
     });
 
     it('repairs one fault and leaves the other revealed until its own save', async (): Promise<void> => {
@@ -773,7 +865,31 @@ describe(getTestFileName(import.meta.url), (): void => {
       // The repaired control goes back into hiding; the one still stored outside its bounds stays out
       expect(wrapper.find(PROVISIONAL_INPUT).exists()).toBe(false);
       expect(wrapper.find(CAP_INPUT).exists()).toBe(true);
-      expect(sectionOf(wrapper, FORMATS).text()).toContain('Enter a whole number from 0 to 1,440.');
+      expect(sectionOf(wrapper, FORMATS).text()).toContain(CAP_MESSAGE);
+
+      // The second repair, at the revision the first one moved the page to
+      await wrapper.find(CAP_INPUT).setValue('15');
+      await save(wrapper, FORMATS);
+
+      expect(onlyCall().body!.revision).toBe(2);
+
+      calls.shift()!.resolve(
+        configurationAt(3, {
+          allowedGameTypes: [LEAGUE.settings.allowedGameTypes[0]],
+          cutthroatTimeCap: 15,
+          provisionalGames: 10,
+          ratingEnabled: false,
+        }),
+      );
+      await settled();
+
+      // Nothing is left revealed, said or outstanding: the league's own choices are hiding both controls again
+      expect(calls).toHaveLength(0);
+      expect(wrapper.find(CAP_INPUT).exists()).toBe(false);
+      expect(wrapper.find(PROVISIONAL_INPUT).exists()).toBe(false);
+      expect(sectionOf(wrapper, FORMATS).text()).not.toContain(CAP_MESSAGE);
+      expect(sectionOf(wrapper, RATINGS).text()).not.toContain(PROVISIONAL_MESSAGE);
+      expect(sectionOf(wrapper, FORMATS).text()).toContain(SAVED_LINE);
     });
   });
   describe('a retry queued behind another section', (): void => {
@@ -810,7 +926,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
     });
 
-    it('drops a retry whose own section another answer settled while it waited', async (): Promise<void> => {
+    it('drops a retry the answer it waited behind proves already committed, and reads as saved', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
       await lostTheAnswer(wrapper);
@@ -820,15 +936,18 @@ describe(getTestFileName(import.meta.url), (): void => {
       await buttonIn(wrapper, IDENTITY, 'Retry')!.trigger('click');
       await settled();
 
-      // The Formats answer brings back a league that already carries the lost write, so Identity has a comparison
+      // The Formats answer brings back a league that already carries the lost write, which is that write committing
       calls.shift()!.resolve(configurationAt(2, { winningMargin: 5 }, { name: RENAMED }));
       await settled();
 
+      // Nothing more is sent, and a success is never followed by a comparison of the draft against itself
       expect(calls).toHaveLength(0);
-      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(SAVED_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect(buttonIn(wrapper, IDENTITY, 'Retry')).toBeUndefined();
     });
 
-    it('reads again rather than sending at a revision it was never reviewed against', async (): Promise<void> => {
+    it('neither sends nor reads once the revision it was submitted at has been left behind', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
       await lostTheAnswer(wrapper);
@@ -838,21 +957,21 @@ describe(getTestFileName(import.meta.url), (): void => {
       await buttonIn(wrapper, IDENTITY, 'Retry')!.trigger('click');
       await settled();
 
-      // Formats commits at revision 2 without touching Identity, so the held body's revision no longer exists
+      // Formats commits at revision 2 without touching Identity, so the body held at revision 1 can never commit
       calls.shift()!.resolve(configurationAt(2, { winningMargin: 5 }));
       await settled();
 
-      // Not sent at revision 1, which would conflict, and not quietly upgraded, which is how two writes both commit
-      expect(onlyCall().url).toBe('/api/leagues/league-1');
+      // The Formats answer already said what is true here. A read would only find the draft differing from values
+      // nobody changed and ask about a conflict this page's own success invented
+      expect(calls).toHaveLength(0);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED);
 
-      calls.shift()!.resolve({
-        ...LEAGUE,
-        configurationRevision: 2,
-        settings: configurationAt(2, { winningMargin: 5 }).settings,
-      });
-      await settled();
+      await save(wrapper, IDENTITY);
 
-      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+      // The ordinary path from here: the same draft, at the revision the Formats save carried the section to
+      expect(onlyCall().body!.revision).toBe(2);
+      expect(onlyCall().body!.identity!.name).toBe(RENAMED);
     });
   });
 
@@ -870,7 +989,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(sectionOf(wrapper, IDENTITY).text()).toContain(
         'Pongifi could not check whether these settings were saved.',
       );
-      expect(buttonIn(wrapper, IDENTITY, 'Retry check')).toBeDefined();
+      expect(buttonIn(wrapper, IDENTITY, RETRY_CHECK)).toBeDefined();
       expect(buttonIn(wrapper, IDENTITY, 'Retry')).toBeUndefined();
       expect(buttonIn(wrapper, IDENTITY, 'Save')).toBeUndefined();
     });
@@ -885,7 +1004,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       calls.shift()!.reject({ statusCode: 500 });
       await settled();
 
-      await buttonIn(wrapper, IDENTITY, 'Retry check')!.trigger('click');
+      await buttonIn(wrapper, IDENTITY, RETRY_CHECK)!.trigger('click');
       await settled();
 
       expect(onlyCall().url).toBe('/api/leagues/league-1');
@@ -902,7 +1021,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(buttonIn(wrapper, IDENTITY, 'Use current values')).toBeDefined();
     });
 
-    it('drops a queued check whose section another answer settled', async (): Promise<void> => {
+    it('drops a queued check the answer it waited behind already made, and reads as saved', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
       await wrapper.find(NAME_INPUT).setValue(RENAMED);
@@ -914,14 +1033,46 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       await wrapper.find(WIN_BY_INPUT).setValue('5');
       await save(wrapper, FORMATS);
-      await buttonIn(wrapper, IDENTITY, 'Retry check')!.trigger('click');
+      await buttonIn(wrapper, IDENTITY, RETRY_CHECK)!.trigger('click');
       await settled();
 
+      // What the check was going to ask is answered by the Formats response: the write it could not see did commit
       calls.shift()!.resolve(configurationAt(2, { winningMargin: 5 }, { name: RENAMED }));
       await settled();
 
       expect(calls).toHaveLength(0);
-      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(SAVED_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect(buttonIn(wrapper, IDENTITY, RETRY_CHECK)).toBeUndefined();
+    });
+
+    it('makes no read at all once the revision moved under the check it was waiting to make', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      await wrapper.find(NAME_INPUT).setValue(RENAMED);
+      await save(wrapper, IDENTITY);
+      calls.shift()!.reject({ statusCode: 500 });
+      await settled();
+      calls.shift()!.reject({ statusCode: 500 });
+      await settled();
+
+      await wrapper.find(WIN_BY_INPUT).setValue('5');
+      await save(wrapper, FORMATS);
+      await buttonIn(wrapper, IDENTITY, RETRY_CHECK)!.trigger('click');
+      await settled();
+
+      // The same rule the retry follows: Formats commits at 2 without touching Identity, so the lost write is dead
+      calls.shift()!.resolve(configurationAt(2, { winningMargin: 5 }));
+      await settled();
+
+      expect(calls).toHaveLength(0);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect(buttonIn(wrapper, IDENTITY, RETRY_CHECK)).toBeUndefined();
+
+      await save(wrapper, IDENTITY);
+
+      expect(onlyCall().body!.revision).toBe(2);
+      expect(onlyCall().body!.identity!.name).toBe(RENAMED);
     });
   });
 
@@ -1004,23 +1155,41 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(wrapper.find('#setting-allowedGameTypes').attributes('tabindex')).toBe('-1');
     });
 
-    it('keeps an unchecked format target and brings it back with the format', async (): Promise<void> => {
+    it('saves an unchecked format target at the value it was left on, and brings that value back', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
+      // 15 rather than the standard 7, so a save that quietly reset the hidden value would be caught
+      await wrapper.find('#setting-targetScore-CUTTHROAT').setValue('15');
       await formatBox(wrapper, 'Cutthroat').setValue(false);
       await settled();
 
       expect(wrapper.find('#setting-targetScore-CUTTHROAT').exists()).toBe(false);
 
+      await save(wrapper, FORMATS);
+
+      // A hidden control's value is left exactly where it is, which means the save carries it rather than dropping it
+      expect(onlyCall().body!.settings.targetScore![GameType.CUTTHROAT]).toBe(15);
+
+      calls.shift()!.resolve(
+        configurationAt(2, {
+          allowedGameTypes: [GameType.SINGLES, GameType.DOUBLES],
+          targetScore: { ...LEAGUE.settings.targetScore, [GameType.CUTTHROAT]: 15 },
+        }),
+      );
+      await settled();
+
       await formatBox(wrapper, 'Cutthroat').setValue(true);
       await settled();
 
-      expect((wrapper.find('#setting-targetScore-CUTTHROAT').element as HTMLSelectElement).value).toBe('7');
+      expect((wrapper.find('#setting-targetScore-CUTTHROAT').element as HTMLSelectElement).value).toBe('15');
     });
 
-    it('hides the singles and doubles group in a cutthroat-only league, values intact', async (): Promise<void> => {
+    it('saves the hidden singles and doubles values in a cutthroat-only league, and brings them back', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
+      // Best of 5 and a service interval of 4, neither of them the standard value the controls load at
+      await wrapper.find('#setting-matchFormat').setValue('5');
+      await wrapper.find('#setting-serviceInterval').setValue('4');
       await formatBox(wrapper, 'Singles').setValue(false);
       await formatBox(wrapper, 'Doubles').setValue(false);
       await settled();
@@ -1028,10 +1197,25 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(wrapper.find('#setting-matchFormat').exists()).toBe(false);
       expect(wrapper.find('#setting-serviceInterval').exists()).toBe(false);
 
+      await save(wrapper, FORMATS);
+
+      expect(onlyCall().body!.settings.matchFormat).toBe(5);
+      expect(onlyCall().body!.settings.serviceInterval).toBe(4);
+
+      calls.shift()!.resolve(
+        configurationAt(2, {
+          allowedGameTypes: [GameType.CUTTHROAT],
+          matchFormat: 5,
+          serviceInterval: 4,
+        }),
+      );
+      await settled();
+
       await formatBox(wrapper, 'Singles').setValue(true);
       await settled();
 
-      expect((wrapper.find('#setting-serviceInterval').element as HTMLInputElement).value).toBe('2');
+      expect((wrapper.find('#setting-matchFormat').element as HTMLSelectElement).value).toBe('5');
+      expect((wrapper.find('#setting-serviceInterval').element as HTMLInputElement).value).toBe('4');
     });
   });
 
@@ -1060,20 +1244,36 @@ describe(getTestFileName(import.meta.url), (): void => {
   });
 
   describe('a setting hidden by another', (): void => {
-    it('returns the provisional count when ratings come back on', async (): Promise<void> => {
+    it('saves the provisional count it was left on and returns it when ratings come back on', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
+      // 25 rather than the standard 10, so a reset to the default could not pass for the value being kept
+      await wrapper.find(PROVISIONAL_INPUT).setValue('25');
       await ratingsBox(wrapper).setValue(false);
       await save(wrapper, RATINGS);
-      calls.shift()!.resolve(configurationAt(2, { ratingEnabled: false }));
+
+      expect(onlyCall().body!.settings.provisionalGames).toBe(25);
+
+      calls.shift()!.resolve(configurationAt(2, { provisionalGames: 25, ratingEnabled: false }));
       await settled();
 
       expect(wrapper.find(PROVISIONAL_INPUT).exists()).toBe(false);
 
+      // Turning ratings back on and saving that: the count it comes back with is the one that was stored
       await ratingsBox(wrapper).setValue(true);
       await settled();
 
-      expect((wrapper.find(PROVISIONAL_INPUT).element as HTMLInputElement).value).toBe('10');
+      expect((wrapper.find(PROVISIONAL_INPUT).element as HTMLInputElement).value).toBe('25');
+
+      await save(wrapper, RATINGS);
+
+      expect(onlyCall().body!.settings.provisionalGames).toBe(25);
+
+      calls.shift()!.resolve(configurationAt(3, { provisionalGames: 25, ratingEnabled: true }));
+      await settled();
+
+      expect((wrapper.find(PROVISIONAL_INPUT).element as HTMLInputElement).value).toBe('25');
+      expect(sectionOf(wrapper, RATINGS).text()).toContain(SAVED_LINE);
     });
   });
 
@@ -1124,6 +1324,24 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       // The second repair carries the revision the first one moved the page to
       expect(onlyCall().body!.revision).toBe(2);
+
+      calls.shift()!.resolve(
+        configurationAt(3, {
+          allowedGameTypes: [LEAGUE.settings.allowedGameTypes[0]],
+          cutthroatTimeCap: 15,
+          provisionalGames: 10,
+          ratingEnabled: false,
+        }),
+      );
+      await settled();
+
+      // The same end state as the other order, reached the other way round
+      expect(calls).toHaveLength(0);
+      expect(wrapper.find(CAP_INPUT).exists()).toBe(false);
+      expect(wrapper.find(PROVISIONAL_INPUT).exists()).toBe(false);
+      expect(sectionOf(wrapper, FORMATS).text()).not.toContain(CAP_MESSAGE);
+      expect(sectionOf(wrapper, RATINGS).text()).not.toContain(PROVISIONAL_MESSAGE);
+      expect(sectionOf(wrapper, RATINGS).text()).toContain(SAVED_LINE);
     });
   });
 

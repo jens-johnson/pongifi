@@ -53,6 +53,7 @@ import {
   GAME_CREATOR_LABELS,
   isFieldVisible,
   isSectionDirty,
+  matchesSubmittedSection,
   reconcileUncertainSave,
   resolveSectionAdoption,
   RESULT_RECORDER_CHOICES,
@@ -157,7 +158,13 @@ const states: Ref<Record<SettingsSection, ISectionState>> = ref({
 const staleAgainst: Ref<Partial<Record<SettingsSection, ISettingsComparison>>> = ref({});
 
 /**
- * The body a section submitted, held while its outcome is unknown so a retry sends exactly the same request.
+ * The body a section submitted whose outcome is still unknown, held so a retry sends exactly the same request.
+ *
+ * An entry means one thing: this section has a write nobody has an answer for. It is retired the moment that write
+ * settles — saved, compared or refused — and a fresh Save retires it before queueing, because the draft that Save
+ * carries supersedes it. Only Retry and Retry check keep it, which is the whole difference between them and a Save.
+ * Anything reading this to decide an outcome would otherwise read a body that was answered long ago (Astra, Fable,
+ * 2026-09-15)
  * @internal
  * @constant
  */
@@ -374,6 +381,18 @@ function quieten(section: SettingsSection): void {
 }
 
 /**
+ * Drops the body a section was holding, because its write is no longer unresolved.
+ * @internal
+ * @function
+ * @param section - The section
+ */
+function retire(section: SettingsSection): void {
+  submitted.value = Object.fromEntries(
+    Object.entries(submitted.value).filter(([held]: [string, ISaveSettingsRequest]): boolean => held !== section),
+  );
+}
+
+/**
  * Restores the values one section was loaded with.
  * @internal
  * @function
@@ -438,9 +457,11 @@ function focusField(field: string): void {
 /**
  * Takes a configuration a save returned, section by section.
  *
- * The section that saved shows what is stored rather than what it sent. A clean section adopts silently. A dirty one
- * keeps its draft, and moves to the new revision only while its own baseline is still current; otherwise it has the
- * comparison to show first (page spec, Saving)
+ * The section that saved shows what is stored rather than what it sent. So does a section holding an unresolved write
+ * the returned values turn out to be: whichever section's answer carried it here, that write committed, and a success
+ * is never followed by a comparison of a draft against itself (page spec 2.4, Saving; Fable, 2026-09-15). A clean
+ * section adopts silently. A dirty one keeps its draft, and moves to the new revision only while its own baseline is
+ * still current; otherwise it has the comparison to show first (page spec, Saving)
  * @internal
  * @function
  * @param saved - The section whose save returned this configuration
@@ -448,6 +469,7 @@ function focusField(field: string): void {
  */
 function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfiguration): void {
   const returnedDraft: ISettingsDraft = toSettingsDraft(returned);
+  const confirmed: SettingsSection[] = [];
 
   configuration.value = returned;
 
@@ -455,9 +477,13 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
   emit('saved', returned);
 
   for (const section of SETTINGS_SECTION_ORDER) {
-    if (section === saved) {
+    const held: ISaveSettingsRequest | undefined = submitted.value[section];
+
+    if (section === saved || (held !== undefined && matchesSubmittedSection(held, returned))) {
       draft.value = { ...draft.value, [section]: detach(returnedDraft[section]) };
       loaded.value = { ...loaded.value, [section]: detach(returnedDraft[section]) };
+      retire(section);
+      confirmed.push(section);
       states.value[section] = {
         alert: null,
         confirmed: true,
@@ -504,7 +530,9 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
   }
 
   window.setTimeout((): void => {
-    states.value[saved] = { ...states.value[saved], confirmed: false };
+    for (const section of confirmed) {
+      states.value[section] = { ...states.value[section], confirmed: false };
+    }
   }, SETTINGS_SAVED_DURATION_MS);
 }
 
@@ -517,6 +545,9 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
  */
 function showStale(section: SettingsSection, current: ILeagueConfiguration): void {
   configuration.value = current;
+
+  // The write is answered: it did not commit, and what replaces it is whatever the person chooses here
+  retire(section);
   staleAgainst.value = {
     ...staleAgainst.value,
     [section]: { draft: toSettingsDraft(current), revision: current.configurationRevision },
@@ -699,6 +730,8 @@ async function settleFailure(section: SettingsSection, request: ISaveSettingsReq
     return;
   }
 
+  // A definite refusal is an answer: the write did not commit, and nothing holds a body it may send again
+  retire(section);
   states.value[section] = {
     ...states.value[section],
     alert: toRefusalAlert(failure),
@@ -784,6 +817,10 @@ function onSave(section: SettingsSection): void {
     return;
   }
 
+  // The draft this Save carries supersedes whatever was held, so nothing left over can be read as this section's
+  // unresolved write while the new one waits its turn (Astra, 2026-09-15)
+  retire(section);
+
   // Locked the moment it is queued, not when it is sent: a section left editable behind another section's save could
   // be edited or cancelled while its own body was already committed to, and the cancelled values would still commit
   states.value[section] = {
@@ -800,12 +837,30 @@ function onSave(section: SettingsSection): void {
 }
 
 /**
+ * Settles a section whose held write the league's revision moved past while it waited.
+ *
+ * The uncertainty is already answered by the response that moved it: a body submitted at a revision the row has left
+ * can no longer commit, so nothing needs to be read and nothing may be sent. What the section shows is whatever that
+ * response made true — its own draft, at the revision it was carried to — never a comparison a success caused itself
+ * (page spec 2.4, Saving; Fable, 2026-09-15)
+ * @internal
+ * @function
+ * @param section - The section
+ */
+function dropSuperseded(section: SettingsSection): void {
+  retire(section);
+  quieten(section);
+  states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.IDLE };
+}
+
+/**
  * Sends a retry that waited behind another section's request, unless that request settled this one first.
  *
  * A retry is the one write the page may repeat, so what it is allowed to repeat is checked again here rather than at
  * the click: while it waited, another section's answer can have resolved this one outright, or moved the revision it
- * was submitted at. The held body is never sent at a revision it was not reviewed against, and never re-sent into a
- * section that has already settled (page spec 2.4, Saving)
+ * was submitted at. The held body is never sent at a revision it was not reviewed against, never quietly upgraded to
+ * one — which is how a delayed first write and its retry would both commit — and never re-sent into a section that
+ * has already settled (page spec 2.4, Saving)
  * @internal
  * @function
  * @param section - The section
@@ -819,12 +874,8 @@ async function dispatchQueuedRetry(section: SettingsSection, request: ISaveSetti
     return;
   }
 
-  // The revision moved under the retry. It cannot go out at the revision it was submitted at, which no longer exists,
-  // and must not be quietly upgraded, which is how a delayed first write and its retry would both commit: read again
   if (state.revision !== request.revision) {
-    states.value[section] = { ...state, phase: SettingsSectionPhase.RECONCILING };
-
-    await reconcile(section, request);
+    dropSuperseded(section);
 
     return;
   }
@@ -834,13 +885,25 @@ async function dispatchQueuedRetry(section: SettingsSection, request: ISaveSetti
 
 /**
  * Reads the league again for a check that waited behind another section's request, unless that request settled it.
+ *
+ * The same two questions the queued retry asks, because the read is only worth making while its answer could still
+ * change something: a section another answer settled has nothing left to check, and a body the revision has moved
+ * past is already known not to have committed
  * @internal
  * @function
  * @param section - The section
  * @param request - The body it held
  */
 async function dispatchQueuedCheck(section: SettingsSection, request: ISaveSettingsRequest): Promise<void> {
-  if (states.value[section].phase !== SettingsSectionPhase.RECONCILING) {
+  const state: ISectionState = states.value[section];
+
+  if (state.phase !== SettingsSectionPhase.RECONCILING) {
+    return;
+  }
+
+  if (state.revision !== request.revision) {
+    dropSuperseded(section);
+
     return;
   }
 
