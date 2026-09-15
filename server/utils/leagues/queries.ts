@@ -17,7 +17,7 @@
  */
 
 import type { SQL } from 'drizzle-orm';
-import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 
 import type { LeagueRole } from '#shared/domain';
 import { MembershipStatus } from '#shared/domain';
@@ -29,35 +29,9 @@ import { useDatabase } from '#utils/db';
 
 import { invitations, leagueCreationRequests, leagues, memberships } from '../../db/schema';
 import { users } from '../../db/schema/users';
+import { ELIGIBLE_ACCOUNT, ROLE_RANK, USABLE_LINK } from './constants';
 import { AccountStanding } from './enums';
 import type { ICreationRequestRow, IInviteLinkRow, IInviteSummaryRow, ILeagueRow } from './types';
-
-/**
- * The account half of every league-entry authorization: a live account that has finished /welcome.
- * @internal
- * @constant
- */
-const ELIGIBLE_ACCOUNT: SQL = and(isNull(users.deletedAt), isNotNull(users.profileCompletedAt)) as SQL;
-
-/**
- * Orders a roster commissioners first, then managers, then players, without depending on the enum's declared order.
- * @internal
- * @constant
- */
-const ROLE_RANK: SQL = sql`CASE ${memberships.role} WHEN 'COMMISSIONER' THEN 0 WHEN 'MANAGER' THEN 1 ELSE 2 END`;
-
-/**
- * The predicate that a PENDING link is still usable: unexpired by the database clock and under its use limit.
- *
- * Replace and revoke carry it, so naming a link that has run out of time or uses is a stale request that changes
- * nothing, exactly like naming one that was already replaced. `now()` is the statement's start, so a link that expires
- * while the request waits on its lock still counts as usable; one that runs out of uses while waiting does not
- * @internal
- * @constant
- */
-const USABLE_LINK: SQL = sql.raw(
-  `("expires_at" IS NULL OR "expires_at" > now()) AND ("max_uses" IS NULL OR "use_count" < "max_uses")`,
-);
 
 /**
  * The subquery that holds when the caller is, right now, an ACTIVE commissioner or manager of the league with an

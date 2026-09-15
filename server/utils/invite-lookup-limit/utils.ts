@@ -42,7 +42,11 @@ import {
 } from './constants';
 
 /**
- * The memoized limiter; built once per function instance, like the cache client it sits on
+ * The memoized limiter; built once per function instance, like the cache client it sits on.
+ *
+ * Deliberately module state rather than Nuxt's `useState`: that is app state, needing a Nuxt app instance this Nitro
+ * util never has, scoped to one request and serialized into the SSR payload. The limiter is a server-only client that
+ * must outlive the request and never reach the browser
  * @internal
  */
 let limiter: TRatelimit | undefined;

@@ -44,6 +44,7 @@ import {
   CREATION_REQUEST_CONSTRAINT,
   INVITE_MANAGER_ROLES,
   INVITE_TOKEN_BYTES,
+  MAX_CAUSE_DEPTH,
   REFUSAL_MESSAGE,
   REFUSAL_STATUS,
   SHARED_INVITE_CONSTRAINT,
@@ -74,13 +75,6 @@ import type {
   ILeagueRow,
   TLeagueOperationResult,
 } from './types';
-
-/**
- * How far down an error's `cause` chain a database error is looked for; the driver wraps once, the ORM once more.
- * @internal
- * @constant
- */
-const MAX_CAUSE_DEPTH: number = 4;
 
 /* ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
