@@ -511,23 +511,29 @@ function withUnit(field: string, text: string): string {
 
 /**
  * The rows a section shows to a viewer with no controls in it, and the rows a stale comparison lines up.
+ *
+ * A row carries the same message its control would, so a field a stored fault revealed reads as a fault to a role
+ * with no controls in that section too; revealing still grants nobody editing (page spec, Saving)
  * @public
  * @function
  * @param section - The section
  * @param draft - The draft the values are read from
  * @param revealed - The stored fields a fault is forcing into view
+ * @param messages - The message under each field, keyed as the editor addresses it
  * @returns One row per drawn control, in the order the page lays them out
  */
 export function toSectionRows(
   section: SettingsSection,
   draft: ISettingsDraft,
   revealed: readonly string[],
+  messages: TSectionFieldErrors,
 ): ISettingsRow[] {
   return SETTINGS_SECTION_CONTROL_ORDER[section]
     .filter((field: TSettingsControl): boolean => isFieldVisible(field, draft, revealed))
     .map((field: TSettingsControl): ISettingsRow => ({
       field,
       label: SETTINGS_FIELD_LABELS[field],
+      message: messages[field] ?? null,
       value: toFieldDisplayValue(field, draft),
     }));
 }

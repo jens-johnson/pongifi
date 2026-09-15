@@ -26,7 +26,7 @@
 import type { ComputedRef, Ref } from 'vue';
 import type { RouteLocationNormalized } from 'vue-router';
 
-import { LEAGUE_SETTINGS_NUMERIC_BOUNDS, MATCH_FORMAT_CHOICES, TARGET_SCORE_CHOICES } from '#shared/league-settings';
+import { MATCH_FORMAT_CHOICES, TARGET_SCORE_CHOICES } from '#shared/league-settings';
 import type { ILeagueConfiguration, ILeagueDetail, ISaveSettingsRequest } from '#shared/leagues';
 import {
   LEAGUE_GAME_TYPE_ORDER,
@@ -36,7 +36,14 @@ import {
 } from '#shared/leagues';
 import { GameType } from '#shared/rules-engine';
 import { GAME_TYPE_LABELS } from '~/utils/leagues/display';
-import type { ISectionState, ISettingsDraft, TSectionValidationResult } from '~/utils/leagues/settings';
+import type {
+  ISectionState,
+  ISettingsComparison,
+  ISettingsDraft,
+  TSectionFieldErrors,
+  TSectionValidationResult,
+  TSettingsControl,
+} from '~/utils/leagues/settings';
 import {
   buildSectionRequest,
   collectDraftFaultErrors,
@@ -57,6 +64,7 @@ import {
   SETTINGS_RATINGS_OFF_CAPTION,
   SETTINGS_RATINGS_ON_CAPTION,
   SETTINGS_SAVED_DURATION_MS,
+  SETTINGS_SECTION_CONTROL_ORDER,
   SETTINGS_SECTION_HEADINGS,
   SETTINGS_SECTION_ORDER,
   SETTINGS_SECTION_READ_ONLY_CAPTIONS,
@@ -138,11 +146,14 @@ const states: Ref<Record<SettingsSection, ISectionState>> = ref({
 });
 
 /**
- * The configuration a stale section draws beside its draft, per section.
+ * The configuration a stale section draws beside its draft, with the revision those values are at, per section.
+ *
+ * The revision travels with the values rather than being read off the page when the person answers: another section's
+ * conflict moves the page's own idea of current, and a section may only adopt the revision it was actually shown
  * @internal
  * @constant
  */
-const staleAgainst: Ref<Partial<Record<SettingsSection, ISettingsDraft>>> = ref({});
+const staleAgainst: Ref<Partial<Record<SettingsSection, ISettingsComparison>>> = ref({});
 
 /**
  * The body a section submitted, held while its outcome is unknown so a retry sends exactly the same request.
@@ -164,6 +175,37 @@ let queue: Promise<void> = Promise.resolve();
  * @constant
  */
 const pendingDeparture: Ref<string | null> = ref(null);
+
+/**
+ * What had focus when the departure question was asked, so answering Stay gives it back.
+ * @internal
+ * @constant
+ */
+let departureOrigin: HTMLElement | null = null;
+
+/**
+ * Whether the page is leaving because the session ended rather than because the person chose to.
+ *
+ * A forced exit is not a departure to ask about: the guard would block its own `navigateTo`, and Vue Router answers an
+ * aborted push with a failure rather than a rejection, so the section that triggered it would sit at Saving for good
+ * @internal
+ * @constant
+ */
+let leavingForSession: boolean = false;
+
+/**
+ * The departure question's safe answer, which takes focus while the question stands.
+ * @internal
+ * @constant
+ */
+const stayButton: Ref<HTMLButtonElement | null> = ref(null);
+
+/**
+ * The departure question's other answer, which Tab cycles back to.
+ * @internal
+ * @constant
+ */
+const leaveButton: Ref<HTMLButtonElement | null> = ref(null);
 
 /**
  * The exits a 401 or a welcome-owing 403 takes.
@@ -266,6 +308,24 @@ function messageFor(section: SettingsSection, field: string): string | null {
   }
 
   return revealed.value.includes(field) ? (draftFaults.value[field] ?? null) : null;
+}
+
+/**
+ * The message under every drawn row of one section, by the same rule its controls read.
+ *
+ * A viewer with no controls here reads rows rather than fields, and a row a stored fault revealed carries the message
+ * that fault would have put under the control, so the fault reads as a fault to every role (page spec, Saving)
+ * @internal
+ * @function
+ * @param section - The section
+ * @returns One message per field that has one
+ */
+function rowMessagesFor(section: SettingsSection): TSectionFieldErrors {
+  return Object.fromEntries(
+    SETTINGS_SECTION_CONTROL_ORDER[section]
+      .map((field: TSettingsControl): [string, string | null] => [field, messageFor(section, field)])
+      .filter((entry: [string, string | null]): entry is [string, string] => entry[1] !== null),
+  );
 }
 
 /**
@@ -407,7 +467,10 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
     }
 
     if (adoption.stale) {
-      staleAgainst.value = { ...staleAgainst.value, [section]: returnedDraft };
+      staleAgainst.value = {
+        ...staleAgainst.value,
+        [section]: { draft: returnedDraft, revision: returned.configurationRevision },
+      };
     } else {
       // A section whose own baseline is still current keeps its draft against values that have not moved under it
       loaded.value = { ...loaded.value, [section]: detach(returnedDraft[section]) };
@@ -436,7 +499,10 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
  */
 function showStale(section: SettingsSection, current: ILeagueConfiguration): void {
   configuration.value = current;
-  staleAgainst.value = { ...staleAgainst.value, [section]: toSettingsDraft(current) };
+  staleAgainst.value = {
+    ...staleAgainst.value,
+    [section]: { draft: toSettingsDraft(current), revision: current.configurationRevision },
+  };
   states.value[section] = {
     ...states.value[section],
     alert: SettingsSectionAlert.STALE,
@@ -555,6 +621,10 @@ async function reconcile(section: SettingsSection, request: ISaveSettingsRequest
  * @returns Whether the page is leaving, and nothing more should be settled
  */
 async function leftForSession(failure: WriteFailure): Promise<boolean> {
+  // The unsaved-changes question is not asked about an exit nobody chose: the guard would abort this very navigation,
+  // and an aborted push resolves rather than rejects, so the section would stay locked with nothing to say
+  leavingForSession = true;
+
   try {
     if (failure === WriteFailure.UNAUTHORIZED) {
       await exit.toSignIn();
@@ -565,6 +635,8 @@ async function leftForSession(failure: WriteFailure): Promise<boolean> {
     return failure === WriteFailure.FORBIDDEN && (await exit.toWelcomeIfOwed());
   } catch {
     return false;
+  } finally {
+    leavingForSession = false;
   }
 }
 
@@ -593,7 +665,8 @@ async function settleFailure(section: SettingsSection, request: ISaveSettingsReq
   }
 
   if (failure === WriteFailure.UNCERTAIN) {
-    states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.UNCERTAIN };
+    // Reconciling, not yet uncertain: Retry belongs to the settled state, or a person could queue one behind the read
+    states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.RECONCILING };
 
     await reconcile(section, request);
 
@@ -638,6 +711,28 @@ async function send(section: SettingsSection, request: ISaveSettingsRequest): Pr
 }
 
 /**
+ * Sends a save that waited behind another section's, once that one has settled.
+ *
+ * The wait is where a section can stop being savable: another section's answer can leave this one with a comparison
+ * to show first, and the held body is dropped rather than pushed through it. A revision that moved with this
+ * section's own values unchanged is adopted instead, which is the same rule its baseline already followed, so waiting
+ * behind another save never turns an ordinary save into a conflict
+ * @internal
+ * @function
+ * @param section - The section
+ * @param request - The body it queued
+ */
+async function dispatchQueuedSave(section: SettingsSection, request: ISaveSettingsRequest): Promise<void> {
+  const state: ISectionState = states.value[section];
+
+  if (state.phase === SettingsSectionPhase.STALE) {
+    return;
+  }
+
+  await send(section, { ...request, revision: state.revision });
+}
+
+/**
  * Validates one section and sends it, behind whatever save is already in flight.
  * @internal
  * @function
@@ -663,8 +758,19 @@ function onSave(section: SettingsSection): void {
     return;
   }
 
+  // Locked the moment it is queued, not when it is sent: a section left editable behind another section's save could
+  // be edited or cancelled while its own body was already committed to, and the cancelled values would still commit
+  states.value[section] = {
+    ...states.value[section],
+    alert: null,
+    confirmed: false,
+    errors: {},
+    message: null,
+    phase: SettingsSectionPhase.SAVING,
+  };
+
   // Serialized rather than concurrent: a second Save waits for the first to settle
-  queue = queue.then((): Promise<void> => send(section, built.value));
+  queue = queue.then((): Promise<void> => dispatchQueuedSave(section, built.value));
 }
 
 /**
@@ -691,6 +797,7 @@ function onRetryCheck(section: SettingsSection): void {
   const request: ISaveSettingsRequest | undefined = submitted.value[section];
 
   if (request !== undefined) {
+    states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.RECONCILING };
     queue = queue.then((): Promise<void> => reconcile(section, request));
   }
 }
@@ -702,19 +809,21 @@ function onRetryCheck(section: SettingsSection): void {
  * @param section - The section
  */
 function onUseCurrent(section: SettingsSection): void {
-  const current: ISettingsDraft | undefined = staleAgainst.value[section];
+  const current: ISettingsComparison | undefined = staleAgainst.value[section];
 
   if (current === undefined) {
     return;
   }
 
-  draft.value = { ...draft.value, [section]: detach(current[section]) };
-  loaded.value = { ...loaded.value, [section]: detach(current[section]) };
+  draft.value = { ...draft.value, [section]: detach(current.draft[section]) };
+  loaded.value = { ...loaded.value, [section]: detach(current.draft[section]) };
   quieten(section);
+
+  // The revision of the values that were shown, not whatever another section's conflict has moved the page on to
   states.value[section] = {
     ...states.value[section],
     phase: SettingsSectionPhase.IDLE,
-    revision: configuration.value.configurationRevision,
+    revision: current.revision,
   };
 }
 
@@ -725,19 +834,20 @@ function onUseCurrent(section: SettingsSection): void {
  * @param section - The section
  */
 function onReviewDraft(section: SettingsSection): void {
-  const current: ISettingsDraft | undefined = staleAgainst.value[section];
+  const current: ISettingsComparison | undefined = staleAgainst.value[section];
 
   if (current === undefined) {
     return;
   }
 
-  // The draft stays exactly as it is; only what it is compared against, and the revision its Save carries, move
-  loaded.value = { ...loaded.value, [section]: detach(current[section]) };
+  // The draft stays exactly as it is; only what it is compared against, and the revision its Save carries, move — and
+  // both come from the comparison that was actually shown, so a save cannot pass a revision it was never reviewed at
+  loaded.value = { ...loaded.value, [section]: detach(current.draft[section]) };
   quieten(section);
   states.value[section] = {
     ...states.value[section],
     phase: SettingsSectionPhase.IDLE,
-    revision: configuration.value.configurationRevision,
+    revision: current.revision,
   };
 }
 
@@ -750,6 +860,7 @@ async function onLeave(): Promise<void> {
   const destination: string | null = pendingDeparture.value;
 
   pendingDeparture.value = null;
+  departureOrigin = null;
 
   if (destination !== null) {
     loaded.value = detach(draft.value);
@@ -758,15 +869,37 @@ async function onLeave(): Promise<void> {
   }
 }
 
+/**
+ * Closes the departure question, leaving the draft and the page exactly as they were.
+ * @internal
+ * @function
+ */
+function onStay(): void {
+  const origin: HTMLElement | null = departureOrigin;
+
+  pendingDeparture.value = null;
+  departureOrigin = null;
+
+  // Focus goes back where the departure was attempted from, rather than to the top of the document
+  void nextTick((): void => origin?.focus());
+}
+
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
-// Asked once, in the page rather than through the browser's own dialog, and only when something is unsaved
+// Asked once, in the page rather than through the browser's own dialog, and only when something is unsaved. An
+// unanswered question is not permission: a second attempt while it stands is refused too, and only Leave departs
 onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
-  if (!anyDirty.value || pendingDeparture.value !== null) {
+  if (leavingForSession || !anyDirty.value) {
     return true;
   }
 
-  pendingDeparture.value = to.fullPath;
+  if (pendingDeparture.value === null) {
+    departureOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    pendingDeparture.value = to.fullPath;
+
+    // The question is the page's own dialog, so focus moves into it on the safe answer
+    void nextTick((): void => stayButton.value?.focus());
+  }
 
   return false;
 });
@@ -776,12 +909,14 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
   <div class="space-y-6">
     <!-- Identity -->
     <WidgetsLeaguesSettingsSection
-      :current-rows="toSectionRows(SettingsSection.IDENTITY, staleAgainst[SettingsSection.IDENTITY] ?? draft, revealed)"
+      :current-rows="
+        toSectionRows(SettingsSection.IDENTITY, staleAgainst[SettingsSection.IDENTITY]?.draft ?? draft, revealed, {})
+      "
       :dirty="dirty[SettingsSection.IDENTITY]"
       :editable="editable[SettingsSection.IDENTITY]"
       :heading="SETTINGS_SECTION_HEADINGS[SettingsSection.IDENTITY]"
       :read-only-caption="SETTINGS_SECTION_READ_ONLY_CAPTIONS[SettingsSection.IDENTITY]"
-      :rows="toSectionRows(SettingsSection.IDENTITY, draft, revealed)"
+      :rows="toSectionRows(SettingsSection.IDENTITY, draft, revealed, rowMessagesFor(SettingsSection.IDENTITY))"
       :section="SettingsSection.IDENTITY"
       :state="states[SettingsSection.IDENTITY]"
       @cancel="onCancel(SettingsSection.IDENTITY)"
@@ -848,12 +983,14 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
 
     <!-- Formats and scoring -->
     <WidgetsLeaguesSettingsSection
-      :current-rows="toSectionRows(SettingsSection.FORMATS, staleAgainst[SettingsSection.FORMATS] ?? draft, revealed)"
+      :current-rows="
+        toSectionRows(SettingsSection.FORMATS, staleAgainst[SettingsSection.FORMATS]?.draft ?? draft, revealed, {})
+      "
       :dirty="dirty[SettingsSection.FORMATS]"
       :editable="editable[SettingsSection.FORMATS]"
       :heading="SETTINGS_SECTION_HEADINGS[SettingsSection.FORMATS]"
       :read-only-caption="SETTINGS_SECTION_READ_ONLY_CAPTIONS[SettingsSection.FORMATS]"
-      :rows="toSectionRows(SettingsSection.FORMATS, draft, revealed)"
+      :rows="toSectionRows(SettingsSection.FORMATS, draft, revealed, rowMessagesFor(SettingsSection.FORMATS))"
       :section="SettingsSection.FORMATS"
       :state="states[SettingsSection.FORMATS]"
       @cancel="onCancel(SettingsSection.FORMATS)"
@@ -927,6 +1064,8 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
           </WidgetsLeaguesSettingsField>
         </template>
 
+        <!-- Text rather than a number input: Vue casts a number input's model for you, which would both break the draft
+             the shared validator reads as typed and quietly turn a typed 1,440 into 1 instead of refusing it -->
         <WidgetsLeaguesSettingsField
           v-slot="{ id, describedBy, invalid }"
           field="winningMargin"
@@ -941,9 +1080,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.winningMargin.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.winningMargin.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.winningMargin }}</span>
@@ -1002,9 +1139,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
                 :aria-invalid="invalid"
                 class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
                 inputmode="numeric"
-                :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.serviceInterval.max"
-                :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.serviceInterval.min"
-                type="number"
+                type="text"
               />
 
               <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.serviceInterval }}</span>
@@ -1039,9 +1174,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.cutthroatTimeCap.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.cutthroatTimeCap.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.cutthroatTimeCap }}</span>
@@ -1062,9 +1195,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.walkoverGracePeriod.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.walkoverGracePeriod.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.walkoverGracePeriod }}</span>
@@ -1075,12 +1206,14 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
 
     <!-- Results -->
     <WidgetsLeaguesSettingsSection
-      :current-rows="toSectionRows(SettingsSection.RESULTS, staleAgainst[SettingsSection.RESULTS] ?? draft, revealed)"
+      :current-rows="
+        toSectionRows(SettingsSection.RESULTS, staleAgainst[SettingsSection.RESULTS]?.draft ?? draft, revealed, {})
+      "
       :dirty="dirty[SettingsSection.RESULTS]"
       :editable="editable[SettingsSection.RESULTS]"
       :heading="SETTINGS_SECTION_HEADINGS[SettingsSection.RESULTS]"
       :read-only-caption="SETTINGS_SECTION_READ_ONLY_CAPTIONS[SettingsSection.RESULTS]"
-      :rows="toSectionRows(SettingsSection.RESULTS, draft, revealed)"
+      :rows="toSectionRows(SettingsSection.RESULTS, draft, revealed, rowMessagesFor(SettingsSection.RESULTS))"
       :section="SettingsSection.RESULTS"
       :state="states[SettingsSection.RESULTS]"
       @cancel="onCancel(SettingsSection.RESULTS)"
@@ -1166,9 +1299,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.resultConfirmationWindow.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.resultConfirmationWindow.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.resultConfirmationWindow }}</span>
@@ -1190,9 +1321,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.resultAmendmentWindow.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.resultAmendmentWindow.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.resultAmendmentWindow }}</span>
@@ -1203,12 +1332,14 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
 
     <!-- Ratings -->
     <WidgetsLeaguesSettingsSection
-      :current-rows="toSectionRows(SettingsSection.RATINGS, staleAgainst[SettingsSection.RATINGS] ?? draft, revealed)"
+      :current-rows="
+        toSectionRows(SettingsSection.RATINGS, staleAgainst[SettingsSection.RATINGS]?.draft ?? draft, revealed, {})
+      "
       :dirty="dirty[SettingsSection.RATINGS]"
       :editable="editable[SettingsSection.RATINGS]"
       :heading="SETTINGS_SECTION_HEADINGS[SettingsSection.RATINGS]"
       :read-only-caption="SETTINGS_SECTION_READ_ONLY_CAPTIONS[SettingsSection.RATINGS]"
-      :rows="toSectionRows(SettingsSection.RATINGS, draft, revealed)"
+      :rows="toSectionRows(SettingsSection.RATINGS, draft, revealed, rowMessagesFor(SettingsSection.RATINGS))"
       :section="SettingsSection.RATINGS"
       :state="states[SettingsSection.RATINGS]"
       @cancel="onCancel(SettingsSection.RATINGS)"
@@ -1250,9 +1381,7 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
               :aria-invalid="invalid"
               class="border-border bg-surface text-ink focus:border-accent block w-28 rounded-md border px-4 py-3 transition-colors outline-none disabled:opacity-60"
               inputmode="numeric"
-              :max="LEAGUE_SETTINGS_NUMERIC_BOUNDS.provisionalGames.max"
-              :min="LEAGUE_SETTINGS_NUMERIC_BOUNDS.provisionalGames.min"
-              type="number"
+              type="text"
             />
 
             <span class="text-ink-muted text-body-sm">{{ SETTINGS_FIELD_UNITS.provisionalGames }}</span>
@@ -1261,29 +1390,41 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
       </div>
     </WidgetsLeaguesSettingsSection>
 
-    <!-- Asked once, in the page, when a departure would take unsaved changes with it -->
+    <!-- Asked once, in the page, when a departure would take unsaved changes with it. Two answers and two tab stops,
+         so the cycle between them is the containment; Escape is Stay, the answer that changes nothing -->
     <div
       v-if="pendingDeparture !== null"
+      aria-labelledby="settings-leave-prompt"
+      aria-modal="true"
       class="bg-ink/40 fixed inset-0 z-50 flex items-center justify-center p-6"
       role="dialog"
-      aria-modal="true"
+      @keydown.esc="onStay()"
     >
       <div class="border-border bg-surface w-full max-w-sm rounded-lg border p-6">
-        <p class="text-ink text-body font-medium">{{ SETTINGS_LEAVE_PROMPT }}</p>
+        <p
+          id="settings-leave-prompt"
+          class="text-ink text-body font-medium"
+        >
+          {{ SETTINGS_LEAVE_PROMPT }}
+        </p>
 
         <div class="mt-6 flex flex-wrap gap-3">
           <button
+            ref="leaveButton"
             class="bg-accent text-accent-ink hover:bg-accent-hover text-body-sm rounded-md px-5 py-2.5 font-medium transition-colors"
             type="button"
             @click="onLeave()"
+            @keydown.shift.tab.prevent="stayButton?.focus()"
           >
             Leave
           </button>
 
           <button
+            ref="stayButton"
             class="border-border text-ink hover:border-accent text-body-sm rounded-md border px-5 py-2.5 font-medium transition-colors"
             type="button"
-            @click="pendingDeparture = null"
+            @click="onStay()"
+            @keydown.exact.tab.prevent="leaveButton?.focus()"
           >
             Stay
           </button>

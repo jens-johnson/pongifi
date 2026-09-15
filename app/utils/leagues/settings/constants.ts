@@ -97,6 +97,16 @@ export const SETTINGS_SAVED_MESSAGE: string = 'Saved.';
 export const SETTINGS_SAVED_DURATION_MS: number = 4000;
 
 /**
+ * The label the Retry button carries while the re-read that decides whether to offer it is still in flight.
+ *
+ * A section whose answer was lost shows this rather than Retry, so nothing can be sent until the read has said
+ * whether the write committed (Fable, 2026-09-14)
+ * @public
+ * @constant
+ */
+export const SETTINGS_CHECKING_LABEL: string = 'Checking…';
+
+/**
  * What the router asks before leaving a page with unsaved changes.
  * @public
  * @constant

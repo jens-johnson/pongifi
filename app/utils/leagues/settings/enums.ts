@@ -31,13 +31,16 @@ export enum SettingsSectionPhase {
   /* The re-read after an uncertain outcome could not be made either, so nothing may be sent */
   RECONCILE_FAILED = 'RECONCILE_FAILED',
 
+  /* The re-read after an uncertain outcome is in flight; nothing is offered until it says what happened */
+  RECONCILING = 'RECONCILING',
+
   /* The current configuration is shown beside the draft; nothing writes until the person chooses */
   STALE = 'STALE',
 
   /* A save is in flight */
   SAVING = 'SAVING',
 
-  /* The answer was lost; the submitted snapshot and its revision are held for an identical retry */
+  /* The re-read found the revision unmoved, so the submitted snapshot may be sent again exactly as it was */
   UNCERTAIN = 'UNCERTAIN',
 }
 

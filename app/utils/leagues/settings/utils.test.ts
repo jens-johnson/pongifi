@@ -49,6 +49,13 @@ import {
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * The message the provisional game count's own bounds produce, which the page shows rather than wording it again
+ * @internal
+ * @constant
+ */
+const PROVISIONAL_MESSAGE: string = 'Enter a whole number from 1 to 1,000.';
+
+/**
  * A league configuration at its standard settings, which every case varies one field of
  * @internal
  * @constant
@@ -272,7 +279,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(buildSectionRequest(SettingsSection.FORMATS, draft, 4)).toMatchObject({ ok: true });
       expect(buildSectionRequest(SettingsSection.RATINGS, draft, 4)).toEqual({
-        errors: { provisionalGames: 'Enter a whole number from 1 to 1,000.' },
+        errors: { provisionalGames: PROVISIONAL_MESSAGE },
         focus: 'provisionalGames',
         ok: false,
       });
@@ -325,7 +332,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(collectPersistedFaults(faulted.settings)).toEqual(['winningMargin', 'provisionalGames']);
       expect(toPersistedFaultErrors(faulted.settings)).toEqual({
-        provisionalGames: 'Enter a whole number from 1 to 1,000.',
+        provisionalGames: PROVISIONAL_MESSAGE,
         winningMargin: 'Enter a whole number from 1 to 21.',
       });
     });
@@ -430,6 +437,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         SettingsSection.FORMATS,
         draftWith(SettingsSection.FORMATS, { allowedGameTypes: [GameType.CUTTHROAT] }),
         [],
+        {},
       );
 
       expect(rows.map((row: ISettingsRow): string => row.field)).toEqual([
@@ -442,6 +450,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(rows[0]).toEqual({
         field: 'allowedGameTypes',
         label: 'Formats',
+        message: null,
         value: 'Cutthroat',
       });
     });
@@ -451,19 +460,37 @@ describe(getTestFileName(import.meta.url), (): void => {
         SettingsSection.RATINGS,
         draftWith(SettingsSection.RATINGS, { provisionalGames: '0', ratingEnabled: false }),
         ['provisionalGames'],
+        {},
       );
 
       expect(rows).toEqual([
         {
           field: 'ratingEnabled',
           label: 'Ratings',
+          message: null,
           value: 'Off',
         },
         {
           field: 'provisionalGames',
           label: 'Provisional games',
+          message: null,
           value: '0 games',
         },
+      ]);
+    });
+
+    it('carries the message a revealed row is given, so a fault reads as a fault without a control', (): void => {
+      const rows: ISettingsRow[] = toSectionRows(
+        SettingsSection.RATINGS,
+        draftWith(SettingsSection.RATINGS, { provisionalGames: '0', ratingEnabled: false }),
+        ['provisionalGames'],
+        { provisionalGames: PROVISIONAL_MESSAGE },
+      );
+
+      // Only the field the message names takes one; the rest of the section still reads as ordinary values
+      expect(rows.map((row: ISettingsRow): [string, string | null] => [row.field, row.message])).toEqual([
+        ['ratingEnabled', null],
+        ['provisionalGames', PROVISIONAL_MESSAGE],
       ]);
     });
   });

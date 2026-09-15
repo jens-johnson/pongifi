@@ -242,6 +242,23 @@ export interface ISectionAdoptionInput {
 }
 
 /**
+ * The values a stale section is compared against, and the revision they are at.
+ *
+ * The pair travels together because another section's conflict replaces the page's own idea of the current revision:
+ * a section that resolves its comparison must adopt the revision of the values it was actually shown, never a newer
+ * one it never compared against (Astra, 2026-09-14)
+ * @public
+ * @interface
+ */
+export interface ISettingsComparison {
+  /* The configuration this section was refused against, as a draft */
+  draft: ISettingsDraft;
+
+  /* The revision those values are at, which either resolution adopts */
+  revision: number;
+}
+
+/**
  * One control as a read-only row: the label above it and the value it holds.
  * @public
  * @interface
@@ -252,6 +269,9 @@ export interface ISettingsRow {
 
   /* The label the page puts above it */
   label: string;
+
+  /* The message beneath the row, so a revealed fault reads as a fault to a role with no controls here too */
+  message: string | null;
 
   /* The value as a person reads it */
   value: string;

@@ -26,7 +26,12 @@
 import type { ComputedRef } from 'vue';
 
 import type { ISettingsRow } from '~/utils/leagues/settings';
-import { SETTINGS_ALERT_MESSAGES, SETTINGS_SAVED_MESSAGE, SettingsSectionPhase } from '~/utils/leagues/settings';
+import {
+  SETTINGS_ALERT_MESSAGES,
+  SETTINGS_CHECKING_LABEL,
+  SETTINGS_SAVED_MESSAGE,
+  SettingsSectionPhase,
+} from '~/utils/leagues/settings';
 
 import type { ILeaguesSettingsSectionEmits, ILeaguesSettingsSectionProps } from './types';
 
@@ -56,14 +61,15 @@ const emit: ((event: 'cancel') => void) &
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * Whether the controls are locked: while a save is in flight, and while its outcome is unknown, so a retry sends
- * exactly what the first attempt did.
+ * Whether the controls are locked: while a save is in flight or queued behind one, while the re-read that follows a
+ * lost answer is in flight, and while its outcome is unknown, so a retry sends exactly what the first attempt did.
  * @internal
  * @constant
  */
 const locked: ComputedRef<boolean> = computed(
   (): boolean =>
     props.state.phase === SettingsSectionPhase.SAVING ||
+    props.state.phase === SettingsSectionPhase.RECONCILING ||
     props.state.phase === SettingsSectionPhase.UNCERTAIN ||
     props.state.phase === SettingsSectionPhase.RECONCILE_FAILED,
 );
@@ -77,6 +83,7 @@ const locked: ComputedRef<boolean> = computed(
 const savable: ComputedRef<boolean> = computed(
   (): boolean =>
     props.editable &&
+    props.state.phase !== SettingsSectionPhase.RECONCILING &&
     props.state.phase !== SettingsSectionPhase.UNCERTAIN &&
     props.state.phase !== SettingsSectionPhase.RECONCILE_FAILED &&
     props.state.phase !== SettingsSectionPhase.STALE,
@@ -176,6 +183,14 @@ const comparison: ComputedRef<ISettingsRow[]> = computed((): ISettingsRow[] =>
         <dt class="text-ink-subtle text-caption">{{ row.label }}</dt>
 
         <dd class="text-ink text-body">{{ row.value }}</dd>
+
+        <!-- The same message the control would carry, so a revealed fault reads as one without granting editing -->
+        <p
+          v-if="row.message"
+          class="text-negative-soft-ink text-body-sm mt-1"
+        >
+          {{ row.message }}
+        </p>
       </div>
     </dl>
 
@@ -209,6 +224,16 @@ const comparison: ComputedRef<ISettingsRow[]> = computed((): ISettingsRow[] =>
         @click="emit('retryCheck')"
       >
         Retry check
+      </button>
+
+      <!-- Nothing may be sent until the re-read says whether the write committed, so Retry is shown but never armed -->
+      <button
+        v-else-if="state.phase === SettingsSectionPhase.RECONCILING"
+        class="bg-accent text-accent-ink text-body-sm rounded-md px-5 py-2.5 font-medium disabled:cursor-not-allowed disabled:opacity-50"
+        disabled
+        type="button"
+      >
+        {{ SETTINGS_CHECKING_LABEL }}
       </button>
 
       <!-- The same request, at the same revision, so a delayed first write and its retry cannot both commit -->
