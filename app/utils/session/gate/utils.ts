@@ -20,7 +20,7 @@ import { defineSymbol } from '#shared/utils/symbol';
 
 import { HOME_ROUTE, SIGN_IN_ROUTE, WELCOME_ROUTE } from '../../marketing/routes';
 import { resolveWelcomeRedirect } from '../../sign-in/redirect';
-import { GATED_ROUTES } from './constants';
+import { GATED_LEAGUE_PATH_PATTERN, GATED_ROUTES } from './constants';
 import type { ISessionGateInput } from './types';
 
 /**
@@ -43,15 +43,17 @@ export function buildGatedReturnPath(route: string, returnPath: string): string 
  * Decides where a request belongs, or that it belongs where it is.
  *
  * Gating follows the session rather than the URL: signed out, `/` is the public landing and never gates; signed in,
- * `/` is the dashboard and gates exactly as `/profile` and `/leagues` do. Public informational pages are absent from
- * {@link GATED_ROUTES} entirely, so a player part-way through onboarding can still read them
+ * `/` is the dashboard and gates exactly as `/profile` and `/leagues` do. A league page is gated by its path's shape
+ * ({@link GATED_LEAGUE_PATH_PATTERN}), since its id cannot be listed. Public informational pages, and the invite
+ * landing that has to render signed out, are absent from both, so a player part-way through onboarding can still read
+ * them
  * @public
  * @function
  * @param input - The requested route and what the session says about the visitor
  * @returns The path to send them to, or null when the request may proceed
  */
 export function resolveSessionGate(input: ISessionGateInput): string | null {
-  if (!GATED_ROUTES.includes(input.path)) {
+  if (!GATED_ROUTES.includes(input.path) && !GATED_LEAGUE_PATH_PATTERN.test(input.path)) {
     return null;
   }
 

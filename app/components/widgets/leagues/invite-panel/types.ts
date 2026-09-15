@@ -1,4 +1,3 @@
-<script setup lang="ts">
 /**
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  *
@@ -10,29 +9,32 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████████ #pages/leagues.vue █████████████████████████████████████████████████
+ * █████████████████████████████████ #components/widgets/leagues/invite-panel/types.ts █████████████████████████████████
  *
- * The leagues the signed-in player belongs to.
- *
- * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
- *
- * GET /leagues
+ * Types for a league's invite panel.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-useHead({ title: 'Your leagues · Pongifi' });
-</script>
+/**
+ * Inputs for a league's invite panel.
+ * @public
+ * @interface
+ */
+export interface ILeaguesInvitePanelProps {
+  /* The league whose link the panel manages */
+  leagueId: string;
+}
 
-<template>
-  <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[720px]">
-      <h1 class="font-display text-display font-medium tracking-tight">Your leagues</h1>
+/**
+ * One choice in the expiry select.
+ * @public
+ * @interface
+ */
+export interface IInviteExpiryOption {
+  /* The duration in days, as the endpoints accept it */
+  days: number;
 
-      <!-- The dashboard's panel as a page; when discovery and entry ship, this page grows and the panel does not -->
-      <div class="mt-10">
-        <WidgetsLeaguesPanel :show-heading="false" />
-      </div>
-    </div>
-  </main>
-</template>
+  /* How the choice reads */
+  label: string;
+}

@@ -77,6 +77,38 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(resolveSessionGate(visitor({ path: '/nope' }))).toBeNull();
     });
 
+    it('gates the create and join pages like any other private page', (): void => {
+      expect(resolveSessionGate(visitor({ path: '/leagues/new' }))).toBe('/sign-in?redirect=%2Fleagues%2Fnew');
+      expect(resolveSessionGate(visitor({ path: '/leagues/join' }))).toBe('/sign-in?redirect=%2Fleagues%2Fjoin');
+    });
+
+    it('gates a league page by the shape of its path, whether or not the id could name a league', (): void => {
+      const uuid: string = '/leagues/1b0c7d1e-6f51-4a4e-9d39-0f5a3c7e2b11';
+
+      expect(resolveSessionGate(visitor({ path: uuid }))).toBe(`/sign-in?redirect=${encodeURIComponent(uuid)}`);
+      expect(resolveSessionGate(visitor({ path: '/leagues/not-a-uuid' }))).toBe(
+        '/sign-in?redirect=%2Fleagues%2Fnot-a-uuid',
+      );
+      expect(resolveSessionGate(visitor({ path: `${uuid}/` }))).toBe(
+        `/sign-in?redirect=${encodeURIComponent(`${uuid}/`)}`,
+      );
+      expect(
+        resolveSessionGate(
+          visitor({
+            loggedIn: true,
+            needsWelcome: true,
+            path: '/leagues/not-a-uuid',
+          }),
+        ),
+      ).toBe('/welcome?redirect=%2Fleagues%2Fnot-a-uuid');
+    });
+
+    it('leaves the bare league prefix, deeper league paths and the invite landing ungated', (): void => {
+      expect(resolveSessionGate(visitor({ path: '/leagues/' }))).toBeNull();
+      expect(resolveSessionGate(visitor({ path: '/leagues/x/y' }))).toBeNull();
+      expect(resolveSessionGate(visitor({ path: '/invite/abc' }))).toBeNull();
+    });
+
     it('lets a signed-out visitor see the landing page', (): void => {
       expect(resolveSessionGate(visitor({ path: '/' }))).toBeNull();
     });

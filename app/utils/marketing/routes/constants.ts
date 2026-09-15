@@ -63,3 +63,24 @@ export const PROFILE_ROUTE: string = '/profile';
  * @constant
  */
 export const WELCOME_ROUTE: string = '/welcome';
+
+/**
+ * The page a signed-in player creates a league on
+ * @public
+ * @constant
+ */
+export const LEAGUES_NEW_ROUTE: string = '/leagues/new';
+
+/**
+ * The page a signed-in player pastes an invite link into
+ * @public
+ * @constant
+ */
+export const LEAGUES_JOIN_ROUTE: string = '/leagues/join';
+
+/**
+ * The prefix of the invite landing, `/invite/:token`, which a signed-out visitor can reach
+ * @public
+ * @constant
+ */
+export const INVITE_ROUTE_PREFIX: string = '/invite/';
