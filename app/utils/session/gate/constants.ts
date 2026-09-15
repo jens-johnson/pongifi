@@ -53,3 +53,14 @@ export const GATED_ROUTES: readonly string[] = [
  * @constant
  */
 export const GATED_LEAGUE_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/?$/;
+
+/**
+ * The shape of a league's settings page: a league path with `/settings` on the end.
+ *
+ * Named separately rather than widening the league pattern to `/leagues/**`, because a wildcard would turn every
+ * mistyped deeper path into a sign-in prompt. `/leagues/<id>/anything-else` still 404s for a signed-out visitor, and
+ * only this one extra shape is gated (page spec, Route And Session Rules)
+ * @public
+ * @constant
+ */
+export const GATED_LEAGUE_SETTINGS_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/settings\/?$/;

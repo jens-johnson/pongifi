@@ -48,6 +48,13 @@ const WELCOME_MIGRATION: string = '0001_clammy_saracen.sql';
 const SHARED_LINK_MIGRATION: string = '0002_dusty_gauntlet.sql';
 
 /**
+ * The migration that gives every league the configuration revision its settings writes are checked against
+ * @internal
+ * @constant
+ */
+const REVISION_MIGRATION: string = '0003_stale_gateway.sql';
+
+/**
  * The league the invitation fixtures below belong to
  * @internal
  * @constant
@@ -243,6 +250,58 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       // This index is what makes two identical submissions produce one league rather than two
       await expect(insertRequest()).rejects.toThrow('league_creation_requests_creator_submission_unique');
+    });
+  });
+
+  describe(REVISION_MIGRATION, (): void => {
+    beforeEach(async (): Promise<void> => {
+      database = new PGlite();
+
+      await applyMigration(INITIAL_MIGRATION);
+      await applyMigration(WELCOME_MIGRATION);
+      await applyMigration(SHARED_LINK_MIGRATION);
+    });
+
+    /**
+     * Reads a league's configuration revision back.
+     * @internal
+     * @function
+     * @returns The stored revision
+     */
+    async function readRevision(): Promise<number | null> {
+      const { rows } = await database.query<{ configuration_revision: number | null }>(
+        'SELECT "configuration_revision" FROM "leagues" WHERE "id" = $1',
+        [LEAGUE_ID],
+      );
+
+      return rows[0]!.configuration_revision;
+    }
+
+    it('starts a league that existed before the column at the first revision', async (): Promise<void> => {
+      // An empty database cannot prove this: the row has to predate the migration that gives it a revision
+      await seedLeague();
+
+      await applyMigration(REVISION_MIGRATION);
+
+      expect(await readRevision()).toBe(1);
+    });
+
+    it('starts a league created afterwards at the same first revision', async (): Promise<void> => {
+      await applyMigration(REVISION_MIGRATION);
+
+      await seedLeague();
+
+      expect(await readRevision()).toBe(1);
+    });
+
+    it('refuses a league whose revision is set to null', async (): Promise<void> => {
+      await applyMigration(REVISION_MIGRATION);
+
+      await seedLeague();
+
+      await expect(
+        database.query('UPDATE "leagues" SET "configuration_revision" = NULL WHERE "id" = $1', [LEAGUE_ID]),
+      ).rejects.toThrow();
     });
   });
 });

@@ -54,12 +54,15 @@ const FAILURE_BY_STATUS: Readonly<Record<number, WriteFailure>> = {
 
 /**
  * Reads the HTTP status off whatever `$fetch` rejected with.
- * @internal
+ *
+ * Exported because a page sometimes needs the status itself rather than its class: the one refusal that names a field
+ * is told apart from every other 4xx here, and two readers of the same rejection shape would drift
+ * @public
  * @function
  * @param error - The rejection
  * @returns The status, or null when the request never got an answer
  */
-function readStatus(error: unknown): number | null {
+export function readWriteStatus(error: unknown): number | null {
   if (typeof error !== 'object' || error === null) {
     return null;
   }
@@ -81,7 +84,7 @@ function readStatus(error: unknown): number | null {
  * @returns How to read the failure
  */
 export function classifyWriteFailure(error: unknown): WriteFailure {
-  const status: number | null = readStatus(error);
+  const status: number | null = readWriteStatus(error);
 
   if (status === null || status >= FIRST_SERVER_ERROR_STATUS) {
     return WriteFailure.UNCERTAIN;
@@ -96,4 +99,9 @@ export function classifyWriteFailure(error: unknown): WriteFailure {
 defineSymbol(classifyWriteFailure, {
   name: 'Classify Write Failure',
   description: 'Classifies a failed league-entry write as a definite refusal or an uncertain outcome.',
+});
+
+defineSymbol(readWriteStatus, {
+  name: 'Read Write Status',
+  description: 'Reads the HTTP status off a rejected league write.',
 });

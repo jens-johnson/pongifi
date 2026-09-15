@@ -45,6 +45,9 @@ export enum LeagueRefusal {
   /* The submission identifier was already used for a different request */
   CONFLICT = 'CONFLICT',
 
+  /* The league's configuration moved between the settings page loading and the save */
+  CONFIGURATION_CHANGED = 'CONFIGURATION_CHANGED',
+
   /* The caller is a member but not a commissioner or manager */
   FORBIDDEN = 'FORBIDDEN',
 
@@ -59,6 +62,9 @@ export enum LeagueRefusal {
 
   /* The account still owes /welcome, which every write requires */
   NEEDS_WELCOME = 'NEEDS_WELCOME',
+
+  /* The caller is a member, but not of the role the settings section being saved requires */
+  SECTION_FORBIDDEN = 'SECTION_FORBIDDEN',
 
   /* The mutation named a link that is no longer the current one */
   STALE = 'STALE',

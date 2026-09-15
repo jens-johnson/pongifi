@@ -22,6 +22,13 @@
       "when": 1789065836375,
       "tag": "0002_dusty_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789426077040,
+      "tag": "0003_stale_gateway",
+      "breakpoints": true
     }
   ]
 }

@@ -20,7 +20,7 @@ import type { LeagueRole } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
 import type { GameType } from '#shared/rules-engine';
 
-import type { InviteLinkState, InviteLookupKind } from './enums';
+import type { InviteLinkState, InviteLookupKind, SettingsSection } from './enums';
 
 /* ─── Validation ─────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -182,6 +182,9 @@ export interface ILeagueDetail {
   /* The league's short mark */
   abbreviation: string;
 
+  /* The revision the settings page loads at and every save from it carries */
+  configurationRevision: number;
+
   /* The league's description, or null when it has none */
   description: string | null;
 
@@ -298,4 +301,85 @@ export interface INotFoundResponse {
 
   /* Always 404 */
   statusCode: number;
+}
+
+/**
+ * The body a stale settings save is refused with: the configuration as it now stands, in the shape a successful save
+ * returns, plus the message.
+ *
+ * The page needs the current values to show beside its draft, and the operation has already read them to tell a moved
+ * revision from a lost membership, so carrying them here spares the page a second request — and spares it the one state
+ * it has no copy for, a definite refusal whose follow-up read failed
+ * @public
+ * @interface
+ */
+export interface IStaleConfigurationResponse extends ILeagueConfiguration {
+  /* Why the save was refused */
+  message: string;
+
+  /* Always 409 */
+  statusCode: number;
+}
+
+/**
+ * The three league-profile fields the Identity section saves. They are columns on the league rather than settings.
+ * @public
+ * @interface
+ */
+export interface ILeagueIdentity {
+  /* The uppercased short mark */
+  abbreviation: string;
+
+  /* The trimmed description, or null when it was cleared */
+  description: string | null;
+
+  /* The trimmed name */
+  name: string;
+}
+
+/**
+ * One validated settings-page save: the section, the revision the page loaded at, and that section's values.
+ *
+ * Exactly one of `identity` and `settings` carries anything, decided by the section
+ * @public
+ * @interface
+ */
+export interface ISaveSettingsRequest {
+  /* The profile fields, for the Identity section only */
+  identity: ILeagueIdentity | null;
+
+  /* The revision the page loaded at, which the write is checked against */
+  revision: number;
+
+  /* The section being saved */
+  section: SettingsSection;
+
+  /* The settings this section owns, for every section but Identity */
+  settings: Partial<TLeagueSettings>;
+}
+
+/**
+ * A league's saveable configuration as the server persisted it: the profile fields, the settings, and the revision the
+ * next save must carry.
+ *
+ * Returned by a save rather than echoing what was submitted, so the page adopts what is stored rather than what it
+ * hoped for, and returned again with a refused save so a stale section can show current values beside its draft
+ * @public
+ * @interface
+ */
+export interface ILeagueConfiguration {
+  /* The stored short mark */
+  abbreviation: string;
+
+  /* The revision this configuration is at; the next save carries it */
+  configurationRevision: number;
+
+  /* The stored description, or null */
+  description: string | null;
+
+  /* The stored name */
+  name: string;
+
+  /* The stored settings */
+  settings: TLeagueSettings;
 }

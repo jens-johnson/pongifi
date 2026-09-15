@@ -9,13 +9,30 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #shared/league-settings/index.ts ██████████████████████████████████████████
+ * ██████████████████████████████ #components/widgets/leagues/settings-form/constants.ts ███████████████████████████████
  *
- * Barrel for the league settings module; re-exports the settings shape, the overridable subset and the validators.
+ * The state a settings section starts in.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-export * from './constants';
-export * from './types';
-export * from './validators';
+import type { ISectionState } from '~/utils/leagues/settings';
+import { SettingsSectionPhase } from '~/utils/leagues/settings';
+
+/**
+ * The state every section starts in.
+ * @public
+ * @function
+ * @param revision - The revision the page loaded at
+ * @returns A section with nothing in flight and nothing to say
+ */
+export function toInitialSectionState(revision: number): ISectionState {
+  return {
+    alert: null,
+    confirmed: false,
+    errors: {},
+    message: null,
+    phase: SettingsSectionPhase.IDLE,
+    revision,
+  };
+}

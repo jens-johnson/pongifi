@@ -16,7 +16,10 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { LeagueRole } from '#shared/domain';
 import { GameType } from '#shared/rules-engine';
+
+import { SettingsSection } from './enums';
 
 /* ─── League Fields ──────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -186,3 +189,76 @@ export const INVITE_TOKEN_PATTERN: RegExp = /^[\w-]{43}$/;
  * @constant
  */
 export const UUID_PATTERN: RegExp = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+/* ─── Settings Page ──────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The fields each settings section accepts, beside `section` and `revision`; anything else makes the body malformed.
+ *
+ * A section carries every field it owns, including the ones its own controls are currently hiding, because the saved
+ * settings object always holds a usable value for every format and every window whether or not the page is showing it.
+ *
+ * Each list is in the order that section lays its controls out, and is read both as the allowlist and as the order
+ * the fields are checked in, so the first refusal names the first control a commissioner would have reached. One list
+ * rather than a set beside an order, because two of them drift
+ * @public
+ * @constant
+ */
+export const SETTINGS_SECTION_FIELDS: Readonly<Record<SettingsSection, readonly string[]>> = {
+  [SettingsSection.FORMATS]: [
+    'allowedGameTypes',
+    'targetScore',
+    'winningMargin',
+    'matchFormat',
+    'serviceInterval',
+    'expediteEnabled',
+    'cutthroatTimeCap',
+    'walkoverGracePeriod',
+  ],
+  [SettingsSection.IDENTITY]: ['name', 'abbreviation', 'description'],
+  [SettingsSection.RATINGS]: ['ratingEnabled', 'provisionalGames'],
+  [SettingsSection.RESULTS]: [
+    'whoCanCreateGames',
+    'whoCanRecordResults',
+    'requireConfirmation',
+    'resultConfirmationWindow',
+    'resultAmendmentWindow',
+  ],
+};
+
+/**
+ * The roles that may save each section of the settings page: the league profile is a commissioner's or a manager's to
+ * change (pitch IV.IV), while every other section is a commissioner's alone.
+ *
+ * One map, read by the page deciding which sections to give controls, by the preflight read, and by the SQL boundary
+ * that authorizes the write. A section list beside a role list would be two declarations of one rule, and those drift
+ * @public
+ * @constant
+ */
+export const SETTINGS_EDITOR_ROLES: Readonly<Record<SettingsSection, readonly LeagueRole[]>> = {
+  [SettingsSection.FORMATS]: [LeagueRole.COMMISSIONER],
+  [SettingsSection.IDENTITY]: [LeagueRole.COMMISSIONER, LeagueRole.MANAGER],
+  [SettingsSection.RATINGS]: [LeagueRole.COMMISSIONER],
+  [SettingsSection.RESULTS]: [LeagueRole.COMMISSIONER],
+};
+
+/**
+ * Shown when a manager or player submits a section only a commissioner may change.
+ * @public
+ * @constant
+ */
+export const SETTINGS_SECTION_FORBIDDEN_MESSAGE: string = 'Only a commissioner can change these.';
+
+/**
+ * Returned when the league's configuration moved between the page loading and the save.
+ * @public
+ * @constant
+ */
+export const SETTINGS_STALE_MESSAGE: string = 'These settings changed while you were editing.';
+
+/**
+ * The status a save carrying a superseded revision is refused with.
+ * @public
+ * @constant
+ */
+export const SETTINGS_STALE_STATUS: number = 409;

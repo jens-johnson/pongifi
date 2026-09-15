@@ -9,13 +9,28 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████████████ #shared/league-settings/index.ts ██████████████████████████████████████████
+ * ████████████████████████████████ #components/widgets/leagues/settings-field/types.ts ████████████████████████████████
  *
- * Barrel for the league settings module; re-exports the settings shape, the overridable subset and the validators.
+ * Inputs for one labelled control on the league settings page.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-export * from './constants';
-export * from './types';
-export * from './validators';
+/**
+ * Inputs for one labelled control on the league settings page.
+ * @public
+ * @interface
+ */
+export interface ILeaguesSettingsFieldProps {
+  /* The caption beneath the control, or null when the label says enough */
+  caption?: string | null;
+
+  /* The control, as the editor addresses it; it becomes the element id the label points at */
+  field: string;
+
+  /* The label above the control */
+  label: string;
+
+  /* The message beneath the control, or null when the value is accepted */
+  message?: string | null;
+}

@@ -10,7 +10,7 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ███████████████████████████████████████████ #pages/leagues/[leagueId].vue ███████████████████████████████████████████
+ * ████████████████████████████████████████ #pages/leagues/[leagueId]/index.vue ████████████████████████████████████████
  *
  * A league as its members see it; one not-found page for anyone else.
  *
@@ -29,7 +29,7 @@ import { LeagueRole } from '#shared/domain';
 import type { ILeagueDetail } from '#shared/leagues';
 import { toRoleLabel } from '~/utils/account/format';
 import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
-import { HOME_ROUTE } from '~/utils/marketing/routes';
+import { HOME_ROUTE, LEAGUE_SETTINGS_ROUTE_SUFFIX, LEAGUES_ROUTE } from '~/utils/marketing/routes';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -77,13 +77,26 @@ const readState: ComputedRef<AccountReadState> = useAccountReadState((): IAccoun
 }));
 
 /**
- * Whether the viewer may see the invite panel (V.I: commissioners and managers).
+ * Whether the viewer runs the league rather than only playing in it (V.I: commissioners and managers).
+ *
+ * The same pair invites and reaches the settings page, so both read one answer; which sections the settings page then
+ * gives them controls in is its own question, decided there against the role map
  * @internal
  * @constant
  */
-const managesInvites: ComputedRef<boolean> = computed(
+const manages: ComputedRef<boolean> = computed(
   (): boolean =>
     league.value?.viewerRole === LeagueRole.COMMISSIONER || league.value?.viewerRole === LeagueRole.MANAGER,
+);
+
+/**
+ * Where the header's one action goes. It is a link, not an editor: there is one place a league is renamed, and this
+ * goes there.
+ * @internal
+ * @constant
+ */
+const settingsRoute: ComputedRef<string> = computed(
+  (): string => `${LEAGUES_ROUTE}/${String(route.params.leagueId)}${LEAGUE_SETTINGS_ROUTE_SUFFIX}`,
 );
 
 /**
@@ -159,7 +172,7 @@ useHead({
           {{ league.abbreviation }}
         </span>
 
-        <div class="min-w-0">
+        <div class="min-w-0 flex-1">
           <h1 class="font-display text-display font-medium tracking-tight break-words">{{ league.name }}</h1>
 
           <p
@@ -171,6 +184,15 @@ useHead({
 
           <p class="text-ink-subtle text-caption mt-2">{{ caption }}</p>
         </div>
+
+        <!-- The one header action, for the roles that may change something; a player sees none -->
+        <NuxtLink
+          v-if="manages"
+          class="border-border text-ink hover:border-accent text-body-sm shrink-0 rounded-md border px-4 py-2 font-medium transition-colors"
+          :to="settingsRoute"
+        >
+          Edit league
+        </NuxtLink>
       </div>
 
       <!-- Members and games on the left two thirds; invite and rules stacked on the right third -->
@@ -191,7 +213,7 @@ useHead({
         <div class="space-y-6">
           <!-- Rendered only for the roles that may invite; a player's page never asks for invitation data at all -->
           <WidgetsLeaguesInvitePanel
-            v-if="managesInvites"
+            v-if="manages"
             :league-id="league.id"
           />
 
