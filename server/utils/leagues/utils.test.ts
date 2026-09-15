@@ -1,0 +1,1561 @@
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * ████████████████████████████████████████ #server/utils/leagues/utils.test.ts ████████████████████████████████████████
+ *
+ * Unit tests for the league-entry operations, run against the real migrations on PGlite.
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+import { fileURLToPath } from 'node:url';
+
+import { PGlite } from '@electric-sql/pglite';
+import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
+import type { H3Error, H3Event } from 'h3';
+import type { Mock } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { LeagueRole } from '#shared/domain';
+import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
+import type {
+  ICreateLeagueRequest,
+  IInviteLink,
+  IInvitePanel,
+  ILeagueConfiguration,
+  ILeagueDetail,
+  ISaveSettingsRequest,
+} from '#shared/leagues';
+import { InviteLinkState, InviteLookupKind, SETTINGS_STALE_MESSAGE, SettingsSection } from '#shared/leagues';
+import { GameType } from '#shared/rules-engine';
+import { symbolName } from '#shared/utils/symbol';
+
+import { CREATION_REQUEST_CONSTRAINT, SHARED_INVITE_CONSTRAINT } from './constants';
+import { LeagueRefusal } from './enums';
+import type { IInviteLinkRow, ILeagueOperationFailure, TLeagueOperationResult } from './types';
+import {
+  acceptInvite,
+  answerRefusal,
+  createLeague,
+  digestCreateLeagueRequest,
+  generateInviteToken,
+  issueInvite,
+  isUniqueViolation,
+  lookupInvite,
+  readInvitePanel,
+  readLeagueDetail,
+  replaceInvite,
+  revokeInvite,
+  saveLeagueSettings,
+  toInviteLink,
+} from './utils';
+
+/* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The handle the mocked database module hands back.
+ * @internal
+ * @constant
+ */
+const databaseRef = vi.hoisted((): { current: unknown } => ({ current: undefined }));
+
+vi.mock('#utils/db', (): Record<string, unknown> => ({ useDatabase: (): unknown => databaseRef.current }));
+
+/**
+ * What to commit the next time a league is read for a member, after the read returns and before its caller writes.
+ *
+ * This is the only deterministic seam for the interleaving the authorization boundary exists for: a removal, demotion
+ * or soft deletion that lands between an operation's preflight read and its UPDATE. Nothing about losing a role moves
+ * the configuration revision, so the revision predicate alone cannot catch it
+ * @internal
+ * @constant
+ */
+const afterPreflight = vi.hoisted((): { current: null | (() => Promise<void>) } => ({ current: null }));
+
+vi.mock(
+  './queries',
+  async (importOriginal: () => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> => {
+    const actual: Record<string, unknown> = await importOriginal();
+    const read = actual.readLeagueForMember as (leagueId: string, userId: string) => Promise<unknown>;
+
+    return {
+      ...actual,
+      readLeagueForMember: async (leagueId: string, userId: string): Promise<unknown> => {
+        const row: unknown = await read(leagueId, userId);
+        const interleaved: null | (() => Promise<void>) = afterPreflight.current;
+
+        // Fires once, so the read that diagnoses an unwritten save sees the state this committed
+        afterPreflight.current = null;
+
+        if (interleaved) {
+          await interleaved();
+        }
+
+        return row;
+      },
+    };
+  },
+);
+
+/**
+ * The session boundary `answerRefusal` clears for a vanished account, stubbed as the auto-imported global.
+ * @internal
+ * @constant
+ */
+const clearUserSessionMock: Mock<(event: H3Event) => Promise<void>> = vi.fn(async (): Promise<void> => {});
+
+vi.stubGlobal('clearUserSession', clearUserSessionMock);
+
+/**
+ * The checked-in migration directory, applied so every statement runs against the real schema
+ * @internal
+ * @constant
+ */
+const MIGRATIONS_FOLDER: string = fileURLToPath(new URL('../../db/migrations', import.meta.url));
+
+/**
+ * A league identifier no league has
+ * @internal
+ * @constant
+ */
+const UNKNOWN_LEAGUE_ID: string = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * The name every seeded league is created with
+ * @internal
+ * @constant
+ */
+const SEEDED_LEAGUE_NAME: string = 'Friday Ladder';
+
+/**
+ * A well-formed token no invitation carries
+ * @internal
+ * @constant
+ */
+const UNKNOWN_TOKEN: string = 'A'.repeat(43);
+
+/**
+ * The options a link is issued with unless a case needs others
+ * @internal
+ * @constant
+ */
+const WEEK_NO_LIMIT: { expiresInDays: number; maxUses: number | null } = { expiresInDays: 7, maxUses: null };
+
+/**
+ * The PGlite instance under the handle, kept so it can be closed after the suite
+ * @internal
+ */
+let client: PGlite;
+
+/**
+ * The database under test, migrated once and emptied before every case
+ * @internal
+ */
+let database: ReturnType<typeof drizzle>;
+
+/**
+ * Inserts an account.
+ * @internal
+ * @function
+ * @param displayName - The account's display name, also used to derive its address
+ * @param options - Whether the account has finished /welcome and whether it is soft-deleted
+ * @returns The new account's identifier
+ */
+async function insertUser(
+  displayName: string,
+  options: { complete?: boolean; deleted?: boolean } = {},
+): Promise<string> {
+  const { complete = true, deleted = false }: { complete?: boolean; deleted?: boolean } = options;
+  const { rows } = await database.execute<{ id: string }>(sql`
+    INSERT INTO "users" ("email", "display_name", "profile_completed_at", "deleted_at")
+    VALUES (${`${displayName.toLowerCase()}@example.com`}, ${displayName},
+            ${complete ? sql`now()` : sql`NULL`}, ${deleted ? sql`now()` : sql`NULL`})
+    RETURNING "id"`);
+
+  return rows[0]!.id;
+}
+
+/**
+ * Builds a create request with a fresh submission identifier.
+ * @internal
+ * @function
+ * @param overrides - Fields the case changes
+ * @returns The request
+ */
+function buildRequest(overrides: Partial<ICreateLeagueRequest> = {}): ICreateLeagueRequest {
+  return {
+    abbreviation: 'FRI',
+    allowedGameTypes: [GameType.SINGLES, GameType.DOUBLES, GameType.CUTTHROAT],
+    description: 'Our office squad',
+    name: SEEDED_LEAGUE_NAME,
+    submissionId: crypto.randomUUID(),
+    ...overrides,
+  };
+}
+
+/**
+ * Unwraps a result the case expects to succeed.
+ * @internal
+ * @function
+ * @param result - The operation's result
+ * @throws When the operation refused, naming the refusal
+ * @returns The success value
+ */
+function valueOf<TValue>(result: TLeagueOperationResult<TValue>): TValue {
+  if (!result.ok) {
+    throw new Error(`Expected success, got ${result.refusal}.`);
+  }
+
+  return result.value;
+}
+
+/**
+ * Creates a league owned by a fresh commissioner.
+ * @internal
+ * @function
+ * @param commissionerName - The commissioner's display name, distinct per league a case seeds
+ * @returns The league and its commissioner
+ */
+async function seedLeague(
+  commissionerName: string = 'Commissioner',
+): Promise<{ commissionerId: string; leagueId: string }> {
+  const commissionerId: string = await insertUser(commissionerName);
+  const { leagueId } = valueOf(await createLeague(commissionerId, buildRequest()));
+
+  return { commissionerId, leagueId };
+}
+
+/**
+ * Adds a membership directly, for the states the app has no action for yet.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @param userId - The member
+ * @param role - Their role
+ * @param status - Their membership status
+ */
+async function insertMembership(
+  leagueId: string,
+  userId: string,
+  role: string = 'PLAYER',
+  status: string = 'ACTIVE',
+): Promise<void> {
+  await database.execute(sql`
+    INSERT INTO "memberships" ("league_id", "user_id", "role", "status", "joined_at", "left_at")
+    VALUES (${leagueId}, ${userId}, ${role}::league_role, ${status}::membership_status,
+            now() - interval '30 days', ${status === 'INACTIVE' ? sql`now() - interval '1 day'` : sql`NULL`})`);
+}
+
+/**
+ * Issues a link as the commissioner and returns it.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @param commissionerId - Its commissioner
+ * @param maxUses - The use limit
+ * @returns The usable link
+ */
+async function seedLink(leagueId: string, commissionerId: string, maxUses: number | null = null): Promise<IInviteLink> {
+  const panel: IInvitePanel = valueOf(
+    await issueInvite(leagueId, commissionerId, {
+      expiresInDays: 7,
+      maxUses,
+      previousId: null,
+    }),
+  );
+
+  return panel.link!;
+}
+
+/**
+ * Reads one column of one invitation back.
+ * @internal
+ * @function
+ * @param id - The invitation
+ * @returns Its stored status and use count
+ */
+async function readInvitation(id: string): Promise<{ status: string; use_count: number }> {
+  const { rows } = await database.execute<{ status: string; use_count: number }>(
+    sql`SELECT "status", "use_count" FROM "invitations" WHERE "id" = ${id}`,
+  );
+
+  return rows[0]!;
+}
+
+/**
+ * Reads a membership back.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @param userId - The member
+ * @returns The row's role, status, join date and leave date, or undefined when there is none
+ */
+async function readMembership(
+  leagueId: string,
+  userId: string,
+): Promise<{ joined_at: Date; left_at: Date | null; role: string; status: string } | undefined> {
+  const { rows } = await database.execute<{ joined_at: Date; left_at: Date | null; role: string; status: string }>(
+    sql`SELECT "role", "status", "joined_at", "left_at" FROM "memberships"
+         WHERE "league_id" = ${leagueId} AND "user_id" = ${userId}`,
+  );
+
+  return rows[0];
+}
+
+/**
+ * Counts the rows of one table.
+ * @internal
+ * @function
+ * @param table - The table name
+ * @returns The row count
+ */
+async function countRows(table: string): Promise<number> {
+  const { rows } = await database.execute<{ count: number }>(
+    sql.raw(`SELECT count(*)::int AS "count" FROM "${table}"`),
+  );
+
+  return rows[0]!.count;
+}
+
+/**
+ * Moves an invitation's expiry into the past.
+ * @internal
+ * @function
+ * @param id - The invitation
+ */
+async function expireInvitation(id: string): Promise<void> {
+  await database.execute(sql`UPDATE "invitations" SET "expires_at" = now() - interval '1 second' WHERE "id" = ${id}`);
+}
+
+/**
+ * The name every Identity save in these cases writes
+ * @internal
+ * @constant
+ */
+const SAVED_LEAGUE_NAME: string = 'Monday Ladder';
+
+/**
+ * Builds a Formats and scoring save carrying every field that section owns.
+ * @internal
+ * @function
+ * @param revision - The revision the page loaded at
+ * @param settings - The gameplay fields this case changes
+ * @returns The validated save the operation takes
+ */
+function buildFormatsSave(revision: number, settings: Record<string, unknown> = {}): ISaveSettingsRequest {
+  return {
+    identity: null,
+    revision,
+    section: SettingsSection.FORMATS,
+    settings: {
+      allowedGameTypes: STANDARD_LEAGUE_SETTINGS.allowedGameTypes,
+      cutthroatTimeCap: STANDARD_LEAGUE_SETTINGS.cutthroatTimeCap,
+      expediteEnabled: STANDARD_LEAGUE_SETTINGS.expediteEnabled,
+      matchFormat: STANDARD_LEAGUE_SETTINGS.matchFormat,
+      serviceInterval: STANDARD_LEAGUE_SETTINGS.serviceInterval,
+      targetScore: STANDARD_LEAGUE_SETTINGS.targetScore,
+      walkoverGracePeriod: STANDARD_LEAGUE_SETTINGS.walkoverGracePeriod,
+      winningMargin: STANDARD_LEAGUE_SETTINGS.winningMargin,
+      ...settings,
+    },
+  };
+}
+
+/**
+ * Builds an Identity save.
+ * @internal
+ * @function
+ * @param revision - The revision the page loaded at
+ * @param name - The name being saved
+ * @returns The validated save the operation takes
+ */
+function buildIdentitySave(revision: number, name: string = SAVED_LEAGUE_NAME): ISaveSettingsRequest {
+  return {
+    identity: {
+      abbreviation: 'MON',
+      description: null,
+      name,
+    },
+    revision,
+    section: SettingsSection.IDENTITY,
+    settings: {},
+  };
+}
+
+/**
+ * Builds a Ratings save carrying both fields that section owns.
+ * @internal
+ * @function
+ * @param revision - The revision the page loaded at
+ * @param settings - The rating fields this case changes
+ * @returns The validated save the operation takes
+ */
+function buildRatingsSave(revision: number, settings: Record<string, unknown> = {}): ISaveSettingsRequest {
+  return {
+    identity: null,
+    revision,
+    section: SettingsSection.RATINGS,
+    settings: {
+      provisionalGames: STANDARD_LEAGUE_SETTINGS.provisionalGames,
+      ratingEnabled: STANDARD_LEAGUE_SETTINGS.ratingEnabled,
+      ...settings,
+    },
+  };
+}
+
+/**
+ * Writes one stored setting straight into the league's JSON, standing in for a hand edit or a pre-limits league.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @param field - The setting's key
+ * @param value - Its JSON literal
+ */
+async function storeSettingDirectly(leagueId: string, field: string, value: string): Promise<void> {
+  await database.execute(sql`
+    UPDATE "leagues" SET "settings" = jsonb_set("settings", ${`{${field}}`}, ${value}::jsonb)
+    WHERE "id" = ${leagueId}`);
+}
+
+/**
+ * Reads a league's stored configuration straight from the table, past every operation.
+ * @internal
+ * @function
+ * @param leagueId - The league
+ * @returns The stored name and revision, and the settings
+ */
+async function readStoredLeague(
+  leagueId: string,
+): Promise<{ configuration_revision: number; name: string; settings: Record<string, unknown> }> {
+  const { rows } = await database.execute<{
+    configuration_revision: number;
+    name: string;
+    settings: Record<string, unknown>;
+  }>(sql`SELECT "configuration_revision", "name", "settings" FROM "leagues" WHERE "id" = ${leagueId}`);
+
+  return rows[0]!;
+}
+
+/* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+describe(getTestFileName(import.meta.url), (): void => {
+  beforeAll(async (): Promise<void> => {
+    client = new PGlite();
+    database = drizzle(client);
+    databaseRef.current = database;
+
+    await migrate(database, { migrationsFolder: MIGRATIONS_FOLDER });
+  });
+
+  beforeEach(async (): Promise<void> => {
+    afterPreflight.current = null;
+    clearUserSessionMock.mockClear();
+
+    // Emptied rather than rebuilt: the migrations are the slow part, and every case seeds what it needs
+    await database.execute(
+      sql`TRUNCATE "league_creation_requests", "invitations", "memberships", "leagues", "users" CASCADE`,
+    );
+  });
+
+  afterAll(async (): Promise<void> => {
+    await client.close();
+  });
+
+  describe(symbolName(generateInviteToken), (): void => {
+    it('produces a 43-character base64url token that differs on every call', (): void => {
+      const tokens: string[] = [generateInviteToken(), generateInviteToken()];
+
+      expect(tokens.every((token: string): boolean => /^[\w-]{43}$/.test(token))).toBe(true);
+      expect(tokens[0]).not.toBe(tokens[1]);
+    });
+  });
+
+  describe(symbolName(digestCreateLeagueRequest), (): void => {
+    it('ignores the submission identifier and changes with any field', (): void => {
+      const request: ICreateLeagueRequest = buildRequest();
+
+      expect(digestCreateLeagueRequest({ ...request, submissionId: crypto.randomUUID() })).toBe(
+        digestCreateLeagueRequest(request),
+      );
+      expect(digestCreateLeagueRequest({ ...request, name: 'Monday Ladder' })).not.toBe(
+        digestCreateLeagueRequest(request),
+      );
+      expect(digestCreateLeagueRequest({ ...request, allowedGameTypes: [GameType.SINGLES] })).not.toBe(
+        digestCreateLeagueRequest(request),
+      );
+    });
+  });
+
+  describe(symbolName(isUniqueViolation), (): void => {
+    it('recognizes the named constraint on a real driver error and nothing broader', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const { rows } = await database.execute<{ submission_id: string }>(
+        sql`SELECT "submission_id" FROM "league_creation_requests"`,
+      );
+      let thrown: unknown;
+
+      // A duplicate submission record, exactly what an identical racing submission meets
+      try {
+        await database.execute(sql`
+          INSERT INTO "league_creation_requests" ("created_by", "submission_id", "payload_digest", "league_id")
+          VALUES (${commissionerId}, ${rows[0]!.submission_id}, 'digest', ${leagueId})`);
+      } catch (error: unknown) {
+        thrown = error;
+      }
+
+      expect(isUniqueViolation(thrown, CREATION_REQUEST_CONSTRAINT)).toBe(true);
+      expect(isUniqueViolation(thrown, SHARED_INVITE_CONSTRAINT)).toBe(false);
+      expect(isUniqueViolation(new Error('unrelated'), CREATION_REQUEST_CONSTRAINT)).toBe(false);
+    });
+  });
+
+  describe(symbolName(toInviteLink), (): void => {
+    /**
+     * A usable row the cases vary one field at a time.
+     * @internal
+     * @constant
+     */
+    const usable: IInviteLinkRow = {
+      expired: false,
+      expiresAt: new Date('2026-09-17T12:00:00.000Z'),
+      expiresInDays: 7,
+      id: 'id',
+      maxUses: 5,
+      status: 'PENDING',
+      token: 'token',
+      useCount: 2,
+    };
+
+    it('carries the token only while the link is usable', (): void => {
+      expect(toInviteLink(usable)).toMatchObject({ state: InviteLinkState.USABLE, token: 'token' });
+      expect(toInviteLink({ ...usable, expired: true })).toMatchObject({ state: InviteLinkState.EXPIRED, token: null });
+    });
+
+    it('reads a link out of both uses and time as exhausted', (): void => {
+      expect(
+        toInviteLink({
+          ...usable,
+          expired: true,
+          useCount: 5,
+        }).state,
+      ).toBe(InviteLinkState.EXHAUSTED);
+    });
+
+    it('reads stored retirements as they were recorded', (): void => {
+      expect(toInviteLink({ ...usable, status: 'REVOKED' }).state).toBe(InviteLinkState.REVOKED);
+      expect(toInviteLink({ ...usable, status: 'EXPIRED' }).state).toBe(InviteLinkState.EXPIRED);
+    });
+  });
+
+  describe(symbolName(createLeague), (): void => {
+    it('writes the league, the commissioner membership and the standard settings with the chosen formats', async (): Promise<void> => {
+      const creatorId: string = await insertUser('Maya');
+      const { leagueId } = valueOf(
+        await createLeague(creatorId, buildRequest({ allowedGameTypes: [GameType.CUTTHROAT] })),
+      );
+      const { rows } = await database.execute<{ settings: unknown; visibility: string }>(
+        sql`SELECT "settings", "visibility" FROM "leagues" WHERE "id" = ${leagueId}`,
+      );
+
+      expect(rows[0]).toEqual({
+        settings: { ...STANDARD_LEAGUE_SETTINGS, allowedGameTypes: [GameType.CUTTHROAT] },
+        visibility: 'PRIVATE',
+      });
+      expect(await readMembership(leagueId, creatorId)).toMatchObject({ role: 'COMMISSIONER', status: 'ACTIVE' });
+    });
+
+    it('answers a replayed submission with the league it already created', async (): Promise<void> => {
+      const creatorId: string = await insertUser('Maya');
+      const request: ICreateLeagueRequest = buildRequest();
+      const first: TLeagueOperationResult<{ leagueId: string }> = await createLeague(creatorId, request);
+
+      expect(await createLeague(creatorId, request)).toEqual(first);
+      expect(await countRows('leagues')).toBe(1);
+      expect(await countRows('memberships')).toBe(1);
+    });
+
+    it('refuses a replayed identifier carrying a different league, writing nothing', async (): Promise<void> => {
+      const creatorId: string = await insertUser('Maya');
+      const request: ICreateLeagueRequest = buildRequest();
+
+      await createLeague(creatorId, request);
+
+      expect(await createLeague(creatorId, { ...request, name: 'Monday Ladder' })).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.CONFLICT,
+      });
+      expect(await countRows('leagues')).toBe(1);
+    });
+
+    it('treats the same identifier from a different creator as a separate submission', async (): Promise<void> => {
+      const request: ICreateLeagueRequest = buildRequest();
+
+      await createLeague(await insertUser('Maya'), request);
+      await createLeague(await insertUser('Sam'), request);
+
+      expect(await countRows('leagues')).toBe(2);
+    });
+
+    it('refuses an account that still owes welcome, and one that no longer exists', async (): Promise<void> => {
+      const unfinishedId: string = await insertUser('Maya', { complete: false });
+      const deletedId: string = await insertUser('Sam', { deleted: true });
+
+      expect(await createLeague(unfinishedId, buildRequest())).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.NEEDS_WELCOME,
+      });
+      expect(await createLeague(deletedId, buildRequest())).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.ACCOUNT_MISSING,
+      });
+      expect(await countRows('leagues')).toBe(0);
+    });
+  });
+
+  describe(symbolName(readLeagueDetail), (): void => {
+    it('returns the league and its active roster in role then join order, with no email anywhere', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const playerId: string = await insertUser('Player');
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, playerId);
+      await insertMembership(leagueId, managerId, 'MANAGER');
+      await insertMembership(leagueId, await insertUser('Gone'), 'PLAYER', 'REMOVED');
+
+      const detail: ILeagueDetail = valueOf(await readLeagueDetail(leagueId, playerId));
+
+      expect(detail.viewerRole).toBe(LeagueRole.PLAYER);
+      expect(detail.members.map((member: ILeagueDetail['members'][number]): string => member.displayName)).toEqual([
+        'Commissioner',
+        'Manager',
+        'Player',
+      ]);
+      expect(JSON.stringify(detail)).not.toContain('@example.com');
+      expect(JSON.stringify(detail)).not.toContain(commissionerId);
+    });
+
+    it('answers a nonmember, an unknown id and a malformed id with the same refusal', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const outsiderId: string = await insertUser('Outsider');
+      const refused: { ok: false; refusal: LeagueRefusal } = { ok: false, refusal: LeagueRefusal.LEAGUE_NOT_FOUND };
+
+      expect(await readLeagueDetail(leagueId, outsiderId)).toEqual(refused);
+      expect(await readLeagueDetail(UNKNOWN_LEAGUE_ID, outsiderId)).toEqual(refused);
+      expect(await readLeagueDetail('not-a-uuid', outsiderId)).toEqual(refused);
+    });
+
+    it('does not admit an inactive or removed member', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const inactiveId: string = await insertUser('Inactive');
+      const removedId: string = await insertUser('Removed');
+
+      await insertMembership(leagueId, inactiveId, 'PLAYER', 'INACTIVE');
+      await insertMembership(leagueId, removedId, 'PLAYER', 'REMOVED');
+
+      expect((await readLeagueDetail(leagueId, inactiveId)).ok).toBe(false);
+      expect((await readLeagueDetail(leagueId, removedId)).ok).toBe(false);
+    });
+  });
+
+  describe(symbolName(readInvitePanel), (): void => {
+    it('shows an empty panel to a commissioner and refuses a player and a nonmember', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const playerId: string = await insertUser('Player');
+
+      await insertMembership(leagueId, playerId);
+
+      expect(await readInvitePanel(leagueId, commissionerId)).toEqual({ ok: true, value: { link: null } });
+      expect(await readInvitePanel(leagueId, playerId)).toEqual({ ok: false, refusal: LeagueRefusal.FORBIDDEN });
+      expect(await readInvitePanel(leagueId, await insertUser('Outsider'))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+    });
+  });
+
+  describe(symbolName(issueInvite), (): void => {
+    it('creates a usable link with the chosen expiry and limit', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 3);
+
+      expect(link).toMatchObject({
+        expiresInDays: 7,
+        maxUses: 3,
+        state: InviteLinkState.USABLE,
+        useCount: 0,
+      });
+      expect(link.token).toMatch(/^[\w-]{43}$/);
+    });
+
+    it('lets a manager issue, and refuses a player without writing', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+      const playerId: string = await insertUser('Player');
+
+      await insertMembership(leagueId, managerId, 'MANAGER');
+      await insertMembership(leagueId, playerId);
+
+      expect(await issueInvite(leagueId, playerId, { ...WEEK_NO_LIMIT, previousId: null })).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.FORBIDDEN,
+      });
+      expect(await countRows('invitations')).toBe(0);
+      expect((await issueInvite(leagueId, managerId, { ...WEEK_NO_LIMIT, previousId: null })).ok).toBe(true);
+    });
+
+    it('returns the usable link that already exists instead of rotating it', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const again: IInvitePanel = valueOf(
+        await issueInvite(leagueId, commissionerId, {
+          expiresInDays: 30,
+          maxUses: 1,
+          previousId: null,
+        }),
+      );
+
+      expect(again.link).toEqual(link);
+      expect(await countRows('invitations')).toBe(1);
+    });
+
+    it('retires an expired predecessor as EXPIRED and issues its successor', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      const panel: IInvitePanel = valueOf(
+        await issueInvite(leagueId, commissionerId, {
+          expiresInDays: 1,
+          maxUses: 2,
+          previousId: link.id,
+        }),
+      );
+
+      expect(panel.link).toMatchObject({
+        expiresInDays: 1,
+        maxUses: 2,
+        state: InviteLinkState.USABLE,
+        useCount: 0,
+      });
+      expect((await readInvitation(link.id)).status).toBe('EXPIRED');
+    });
+
+    it('retires an exhausted predecessor and issues its successor', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      await acceptInvite(link.token!, await insertUser('Joiner'));
+
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXHAUSTED);
+
+      const panel: IInvitePanel = valueOf(
+        await issueInvite(leagueId, commissionerId, {
+          expiresInDays: 7,
+          maxUses: 1,
+          previousId: link.id,
+        }),
+      );
+
+      expect(panel.link).toMatchObject({ state: InviteLinkState.USABLE, useCount: 0 });
+      expect((await readInvitation(link.id)).status).toBe('REVOKED');
+    });
+
+    it('refuses a create naming a link other than the dead one that is current', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      expect(await issueInvite(leagueId, commissionerId, { ...WEEK_NO_LIMIT, previousId: UNKNOWN_LEAGUE_ID })).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+    });
+
+    it('issues a fresh link after a revoke', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await revokeInvite(leagueId, commissionerId, link.id);
+
+      const panel: IInvitePanel = valueOf(
+        await issueInvite(leagueId, commissionerId, { ...WEEK_NO_LIMIT, previousId: link.id }),
+      );
+
+      expect(panel.link?.state).toBe(InviteLinkState.USABLE);
+      expect(panel.link?.id).not.toBe(link.id);
+    });
+  });
+
+  describe(symbolName(replaceInvite), (): void => {
+    it('revokes the named link and issues its replacement with the chosen options', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const panel: IInvitePanel = valueOf(
+        await replaceInvite(leagueId, commissionerId, link.id, { expiresInDays: 30, maxUses: 4 }),
+      );
+
+      expect(panel.link).toMatchObject({
+        expiresInDays: 30,
+        maxUses: 4,
+        state: InviteLinkState.USABLE,
+        useCount: 0,
+      });
+      expect(panel.link?.token).not.toBe(link.token);
+      expect((await readInvitation(link.id)).status).toBe('REVOKED');
+    });
+
+    it('refuses a stale replace without touching the current link', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const current: IInviteLink = valueOf(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).link!;
+
+      // The first replace's request replayed after it committed
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link).toEqual(current);
+    });
+
+    it('refuses a replace of a link that has since expired as not live, changing nothing', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      // Nothing replaced it, so the stale answer's instruction to re-read would send the caller back to this same link
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+      expect((await readInvitation(link.id)).status).toBe('PENDING');
+    });
+
+    it('refuses a replace of a link that has spent its uses as not live', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      await acceptInvite(link.token!, await insertUser('Joiner'));
+
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(await countRows('invitations')).toBe(1);
+    });
+
+    it('keeps the stale answer for a link a commissioner revoked, which time and uses did not kill', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await revokeInvite(leagueId, commissionerId, link.id);
+
+      expect(await replaceInvite(leagueId, commissionerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+    });
+
+    it('refuses a player without retiring the link', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const playerId: string = await insertUser('Player');
+
+      await insertMembership(leagueId, playerId);
+
+      expect(await replaceInvite(leagueId, playerId, link.id, WEEK_NO_LIMIT)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.FORBIDDEN,
+      });
+      expect((await readInvitation(link.id)).status).toBe('PENDING');
+    });
+  });
+
+  describe(symbolName(revokeInvite), (): void => {
+    it('revokes the link, keeps memberships, and draws it without a token', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const joinerId: string = await insertUser('Joiner');
+
+      await acceptInvite(link.token!, joinerId);
+
+      const panel: IInvitePanel = valueOf(await revokeInvite(leagueId, commissionerId, link.id));
+
+      expect(panel.link).toMatchObject({
+        id: link.id,
+        state: InviteLinkState.REVOKED,
+        token: null,
+      });
+      expect((await readMembership(leagueId, joinerId))?.status).toBe('ACTIVE');
+    });
+
+    it('succeeds again on the exact revoked id without touching its successor', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await revokeInvite(leagueId, commissionerId, link.id);
+
+      const successor: IInviteLink = valueOf(
+        await issueInvite(leagueId, commissionerId, { ...WEEK_NO_LIMIT, previousId: link.id }),
+      ).link!;
+
+      expect((await revokeInvite(leagueId, commissionerId, link.id)).ok).toBe(true);
+      expect((await readInvitation(successor.id)).status).toBe('PENDING');
+    });
+
+    it('refuses a revoke of a link that has since expired as not live', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await expireInvitation(link.id);
+
+      // Nothing replaced it, so the stale answer's instruction to re-read would send the caller back to this same link
+      expect(await revokeInvite(leagueId, commissionerId, link.id)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXPIRED);
+    });
+
+    it('refuses a revoke of a link that has spent its uses as not live', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      await acceptInvite(link.token!, await insertUser('Joiner'));
+
+      expect(await revokeInvite(leagueId, commissionerId, link.id)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LINK_NOT_LIVE,
+      });
+      expect(valueOf(await readInvitePanel(leagueId, commissionerId)).link?.state).toBe(InviteLinkState.EXHAUSTED);
+    });
+
+    it("refuses an unknown id and another league's link as stale", async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const other: { commissionerId: string; leagueId: string } = await seedLeague('Elsewhere');
+      const foreign: IInviteLink = await seedLink(other.leagueId, other.commissionerId);
+
+      await revokeInvite(other.leagueId, other.commissionerId, foreign.id);
+
+      expect(await revokeInvite(leagueId, commissionerId, UNKNOWN_LEAGUE_ID)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+      expect(await revokeInvite(leagueId, commissionerId, foreign.id)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.STALE,
+      });
+    });
+  });
+
+  describe(symbolName(lookupInvite), (): void => {
+    it('shows a signed-out visitor exactly the summary allowlist', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      await insertMembership(leagueId, await insertUser('Player'));
+
+      expect(await lookupInvite(link.token!, null)).toEqual({
+        ok: true,
+        value: {
+          inviterName: 'Commissioner',
+          kind: InviteLookupKind.INVITE,
+          leagueName: SEEDED_LEAGUE_NAME,
+          memberCount: 2,
+        },
+      });
+    });
+
+    it('answers malformed, unknown, expired, revoked and exhausted tokens identically', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const unavailable: { ok: false; refusal: LeagueRefusal } = {
+        ok: false,
+        refusal: LeagueRefusal.INVITE_UNAVAILABLE,
+      };
+      const expired: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+
+      expect(await lookupInvite('short', null)).toEqual(unavailable);
+      expect(await lookupInvite(UNKNOWN_TOKEN, null)).toEqual(unavailable);
+
+      await expireInvitation(expired.id);
+      expect(await lookupInvite(expired.token!, null)).toEqual(unavailable);
+
+      const revoked: IInviteLink = valueOf(
+        await issueInvite(leagueId, commissionerId, {
+          expiresInDays: 7,
+          maxUses: 1,
+          previousId: expired.id,
+        }),
+      ).link!;
+
+      await revokeInvite(leagueId, commissionerId, revoked.id);
+      expect(await lookupInvite(revoked.token!, null)).toEqual(unavailable);
+
+      const exhausted: IInviteLink = valueOf(
+        await issueInvite(leagueId, commissionerId, {
+          expiresInDays: 7,
+          maxUses: 1,
+          previousId: revoked.id,
+        }),
+      ).link!;
+
+      await acceptInvite(exhausted.token!, await insertUser('Joiner'));
+      expect(await lookupInvite(exhausted.token!, null)).toEqual(unavailable);
+    });
+
+    it('sends an active member home even through a revoked link', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const joinerId: string = await insertUser('Joiner');
+
+      await acceptInvite(link.token!, joinerId);
+      await revokeInvite(leagueId, commissionerId, link.id);
+
+      expect(await lookupInvite(link.token!, joinerId)).toEqual({
+        ok: true,
+        value: { kind: InviteLookupKind.MEMBER, leagueId },
+      });
+    });
+
+    it('refuses a removed member the summary of a usable link', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const removedId: string = await insertUser('Removed');
+
+      await insertMembership(leagueId, removedId, 'PLAYER', 'REMOVED');
+
+      expect(await lookupInvite(link.token!, removedId)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.INVITE_UNAVAILABLE,
+      });
+    });
+  });
+
+  describe(symbolName(acceptInvite), (): void => {
+    it('joins a new player as an active player and spends one use', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 5);
+      const joinerId: string = await insertUser('Joiner');
+
+      expect(await acceptInvite(link.token!, joinerId)).toEqual({ ok: true, value: { leagueId } });
+      expect(await readMembership(leagueId, joinerId)).toMatchObject({ role: 'PLAYER', status: 'ACTIVE' });
+      expect((await readInvitation(link.id)).use_count).toBe(1);
+    });
+
+    it('answers a repeat with the same league and spends nothing', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 5);
+      const joinerId: string = await insertUser('Joiner');
+
+      await acceptInvite(link.token!, joinerId);
+
+      expect(await acceptInvite(link.token!, joinerId)).toEqual({ ok: true, value: { leagueId } });
+      expect((await readInvitation(link.id)).use_count).toBe(1);
+    });
+
+    it('reactivates an inactive former manager as a player, keeping the original join date', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const formerId: string = await insertUser('Former');
+
+      await insertMembership(leagueId, formerId, 'MANAGER', 'INACTIVE');
+
+      const before: { joined_at: Date } | undefined = await readMembership(leagueId, formerId);
+
+      await acceptInvite(link.token!, formerId);
+
+      expect(await readMembership(leagueId, formerId)).toEqual({
+        joined_at: before!.joined_at,
+        left_at: null,
+        role: 'PLAYER',
+        status: 'ACTIVE',
+      });
+    });
+
+    it('refuses a removed member without any mutation', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+      const removedId: string = await insertUser('Removed');
+
+      await insertMembership(leagueId, removedId, 'PLAYER', 'REMOVED');
+
+      expect(await acceptInvite(link.token!, removedId)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.INVITE_UNAVAILABLE,
+      });
+      expect((await readMembership(leagueId, removedId))?.status).toBe('REMOVED');
+      expect((await readInvitation(link.id)).use_count).toBe(0);
+    });
+
+    it('admits one player on the last use and refuses the next', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId, 1);
+      const secondId: string = await insertUser('Second');
+
+      await acceptInvite(link.token!, await insertUser('First'));
+
+      expect(await acceptInvite(link.token!, secondId)).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.INVITE_UNAVAILABLE,
+      });
+      expect(await readMembership(leagueId, secondId)).toBeUndefined();
+    });
+
+    it('refuses an account still owing welcome without spending a use', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const link: IInviteLink = await seedLink(leagueId, commissionerId);
+
+      expect(await acceptInvite(link.token!, await insertUser('Fresh', { complete: false }))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.NEEDS_WELCOME,
+      });
+      expect((await readInvitation(link.id)).use_count).toBe(0);
+    });
+  });
+
+  describe(symbolName(answerRefusal), (): void => {
+    /**
+     * Fabricates an event that records the status it is given.
+     * @internal
+     * @function
+     * @returns The event and the status it recorded
+     */
+    function recordingEvent(): { event: H3Event; status: { code?: number } } {
+      const status: { code?: number } = {};
+      const event = {
+        node: {
+          res: {
+            set statusCode(code: number) {
+              status.code = code;
+            },
+          },
+        },
+      } as unknown as H3Event;
+
+      return { event, status };
+    }
+
+    it('returns the same not-found body for a league and sets 404 rather than throwing', async (): Promise<void> => {
+      const { event, status } = recordingEvent();
+
+      expect(await answerRefusal(event, { ok: false, refusal: LeagueRefusal.LEAGUE_NOT_FOUND })).toEqual({
+        message: 'Pongifi could not find that league.',
+        statusCode: 404,
+      });
+      expect(status.code).toBe(404);
+    });
+
+    it('returns a stale save as a 409 body carrying the configuration, not a thrown error', async (): Promise<void> => {
+      const { event, status } = recordingEvent();
+
+      expect(
+        await answerRefusal(event, {
+          configuration: {
+            abbreviation: 'FRI',
+            configurationRevision: 7,
+            description: null,
+            name: SEEDED_LEAGUE_NAME,
+            settings: STANDARD_LEAGUE_SETTINGS,
+          },
+          ok: false,
+          refusal: LeagueRefusal.CONFIGURATION_CHANGED,
+        }),
+      ).toEqual({
+        abbreviation: 'FRI',
+        configurationRevision: 7,
+        description: null,
+        message: SETTINGS_STALE_MESSAGE,
+        name: SEEDED_LEAGUE_NAME,
+        settings: STANDARD_LEAGUE_SETTINGS,
+        statusCode: 409,
+      });
+      expect(status.code).toBe(409);
+    });
+
+    it('throws a stale refusal that carries no configuration, rather than answering an empty body', async (): Promise<void> => {
+      const { event } = recordingEvent();
+
+      await expect(
+        answerRefusal(event, { ok: false, refusal: LeagueRefusal.CONFIGURATION_CHANGED }),
+      ).rejects.toMatchObject({ statusCode: 409, statusMessage: SETTINGS_STALE_MESSAGE });
+    });
+
+    it('throws every other refusal with its status, clearing the session for a vanished account', async (): Promise<void> => {
+      const { event } = recordingEvent();
+      let thrown: H3Error | undefined;
+
+      try {
+        await answerRefusal(event, { ok: false, refusal: LeagueRefusal.ACCOUNT_MISSING });
+      } catch (error: unknown) {
+        thrown = error as H3Error;
+      }
+
+      expect(thrown?.statusCode).toBe(401);
+      expect(clearUserSessionMock).toHaveBeenCalledWith(event);
+      await expect(answerRefusal(event, { ok: false, refusal: LeagueRefusal.STALE })).rejects.toMatchObject({
+        statusCode: 409,
+      });
+      await expect(answerRefusal(event, { ok: false, refusal: LeagueRefusal.LINK_NOT_LIVE })).rejects.toMatchObject({
+        statusCode: 410,
+        statusMessage: 'This link is no longer live. Create a new link to invite players.',
+      });
+    });
+  });
+
+  describe(symbolName(saveLeagueSettings), (): void => {
+    it('saves a section, returns what it persisted, and moves the revision by one', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 })),
+      );
+
+      expect(saved.configurationRevision).toBe(2);
+      expect(saved.settings.winningMargin).toBe(5);
+
+      // The name is not this section's to touch
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.name).toBe(SEEDED_LEAGUE_NAME);
+      expect(stored.settings.winningMargin).toBe(5);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('saves the profile without disturbing the settings', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1)),
+      );
+
+      expect(saved.name).toBe(SAVED_LEAGUE_NAME);
+      expect(saved.settings).toEqual(STANDARD_LEAGUE_SETTINGS);
+      expect(saved.configurationRevision).toBe(2);
+    });
+
+    it('lets a manager save the profile and refuses them every other section', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, managerId, 'MANAGER');
+
+      expect(valueOf(await saveLeagueSettings(leagueId, managerId, buildIdentitySave(1))).name).toBe(SAVED_LEAGUE_NAME);
+
+      const refused: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        managerId,
+        buildFormatsSave(2, { winningMargin: 5 }),
+      );
+
+      expect(refused).toEqual({ ok: false, refusal: LeagueRefusal.SECTION_FORBIDDEN });
+
+      // Refused as a whole: the gameplay field is unchanged and so is the revision the manager's own save left
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('refuses a player every section, including the profile', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const playerId: string = await insertUser('Player');
+
+      await insertMembership(leagueId, playerId);
+
+      expect(await saveLeagueSettings(leagueId, playerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.SECTION_FORBIDDEN,
+      });
+    });
+
+    it('is a not-found for anyone who is not an active member, and for a league that is not there', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const strangerId: string = await insertUser('Stranger');
+
+      expect(await saveLeagueSettings(leagueId, strangerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+
+      expect(await saveLeagueSettings(UNKNOWN_LEAGUE_ID, commissionerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+
+      expect(await saveLeagueSettings('not-a-uuid', commissionerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+    });
+
+    it('refuses a save carrying a revision another save has already moved past, and writes nothing', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // Two tabs loaded at revision 1; the first one to save wins
+      valueOf(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 })));
+
+      const late: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        commissionerId,
+        buildFormatsSave(1, { winningMargin: 9 }),
+      );
+
+      expect(late.ok).toBe(false);
+      expect(late).toMatchObject({ ok: false, refusal: LeagueRefusal.CONFIGURATION_CHANGED });
+
+      // The page shows these beside its draft, so the refusal carries them rather than making it ask again
+      expect((late as ILeagueOperationFailure).configuration).toMatchObject({
+        configurationRevision: 2,
+        name: SEEDED_LEAGUE_NAME,
+      });
+      expect((late as ILeagueOperationFailure).configuration?.settings.winningMargin).toBe(5);
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(5);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('lets the same draft commit once it carries the revision it was refused at', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      valueOf(await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1)));
+
+      expect(
+        valueOf(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(2, { winningMargin: 9 })))
+          .configurationRevision,
+      ).toBe(3);
+    });
+
+    it('keeps the value of a field the section is hiding', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // A cutthroat-only league still carries the singles target it would play by if singles came back
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(
+          leagueId,
+          commissionerId,
+          buildFormatsSave(1, { allowedGameTypes: [GameType.CUTTHROAT] }),
+        ),
+      );
+
+      expect(saved.settings.targetScore).toEqual(STANDARD_LEAGUE_SETTINGS.targetScore);
+      expect(saved.settings.allowedGameTypes).toEqual([GameType.CUTTHROAT]);
+    });
+
+    it('carries a stored fault in another section through unchanged rather than refusing this save', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // A hand-edited league; provisionalGames is the Ratings section's, and Ratings is not what is being saved
+      await storeSettingDirectly(leagueId, 'provisionalGames', '0');
+
+      const saved: ILeagueConfiguration = valueOf(
+        await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 })),
+      );
+
+      expect(saved.configurationRevision).toBe(2);
+      expect(saved.settings.winningMargin).toBe(5);
+
+      // Carried, never reset and never normalized: its own section is the only thing that can correct it
+      expect(saved.settings.provisionalGames).toBe(0);
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.provisionalGames).toBe(0);
+    });
+
+    it('repairs a league with a fault in two sections, in either order', async (): Promise<void> => {
+      const first = await seedLeague('First Commissioner');
+
+      await storeSettingDirectly(first.leagueId, 'winningMargin', '0');
+      await storeSettingDirectly(first.leagueId, 'provisionalGames', '0');
+
+      // Formats first, then Ratings
+      expect(
+        valueOf(
+          await saveLeagueSettings(first.leagueId, first.commissionerId, buildFormatsSave(1, { winningMargin: 2 })),
+        ).settings.provisionalGames,
+      ).toBe(0);
+      expect(
+        valueOf(
+          await saveLeagueSettings(first.leagueId, first.commissionerId, buildRatingsSave(2, { provisionalGames: 5 })),
+        ).settings,
+      ).toMatchObject({ provisionalGames: 5, winningMargin: 2 });
+
+      const second = await seedLeague('Second Commissioner');
+
+      await storeSettingDirectly(second.leagueId, 'winningMargin', '0');
+      await storeSettingDirectly(second.leagueId, 'provisionalGames', '0');
+
+      // Ratings first, then Formats: the same two saves, the other way round
+      expect(
+        valueOf(
+          await saveLeagueSettings(
+            second.leagueId,
+            second.commissionerId,
+            buildRatingsSave(1, { provisionalGames: 5 }),
+          ),
+        ).settings.winningMargin,
+      ).toBe(0);
+      expect(
+        valueOf(
+          await saveLeagueSettings(second.leagueId, second.commissionerId, buildFormatsSave(2, { winningMargin: 2 })),
+        ).settings,
+      ).toMatchObject({ provisionalGames: 5, winningMargin: 2 });
+    });
+
+    it('lets a manager save the profile of a league carrying a gameplay fault, without touching it', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, managerId, 'MANAGER');
+      await storeSettingDirectly(leagueId, 'winningMargin', '0');
+
+      const saved: ILeagueConfiguration = valueOf(await saveLeagueSettings(leagueId, managerId, buildIdentitySave(1)));
+
+      expect(saved.name).toBe(SAVED_LEAGUE_NAME);
+
+      // A fault the page has to show a manager is still not a gameplay field they may write
+      expect(saved.settings.winningMargin).toBe(0);
+      expect(await saveLeagueSettings(leagueId, managerId, buildFormatsSave(2, { winningMargin: 2 }))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.SECTION_FORBIDDEN,
+      });
+      expect((await readStoredLeague(leagueId)).settings.winningMargin).toBe(0);
+    });
+
+    it('refuses a save claiming a revision ahead of the row it read, without merging it', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      const ahead: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        commissionerId,
+        buildFormatsSave(9, { winningMargin: 5 }),
+      );
+
+      expect(ahead).toMatchObject({ ok: false, refusal: LeagueRefusal.CONFIGURATION_CHANGED });
+      expect((ahead as ILeagueOperationFailure).configuration?.configurationRevision).toBe(1);
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(1);
+    });
+
+    it('cannot overwrite another section by claiming the revision that section is about to reach', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      // The crafted save claims revision 2 while the row stands at 1, and a Ratings save then takes the row to 2
+      afterPreflight.current = async (): Promise<void> => {
+        valueOf(await saveLeagueSettings(leagueId, commissionerId, buildRatingsSave(1, { provisionalGames: 7 })));
+      };
+
+      const crafted: TLeagueOperationResult<ILeagueConfiguration> = await saveLeagueSettings(
+        leagueId,
+        commissionerId,
+        buildFormatsSave(2, { winningMargin: 5 }),
+      );
+
+      expect(crafted).toMatchObject({ ok: false, refusal: LeagueRefusal.CONFIGURATION_CHANGED });
+
+      const stored = await readStoredLeague(leagueId);
+
+      // The Ratings save stands; the crafted Formats save neither committed nor carried its stale copy of Ratings back
+      expect(stored.settings.provisionalGames).toBe(7);
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(2);
+    });
+
+    it('writes nothing when the caller is demoted between the read and the update', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, managerId, 'COMMISSIONER');
+
+      afterPreflight.current = async (): Promise<void> => {
+        await database.execute(sql`
+          UPDATE "memberships" SET "role" = 'MANAGER'::league_role
+          WHERE "league_id" = ${leagueId} AND "user_id" = ${managerId}`);
+      };
+
+      // Diagnosed as the role it is, not as a revision conflict: nothing about a demotion moves the revision
+      expect(await saveLeagueSettings(leagueId, managerId, buildFormatsSave(1, { winningMargin: 5 }))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.SECTION_FORBIDDEN,
+      });
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(1);
+      expect(commissionerId).not.toBe(managerId);
+    });
+
+    it('writes nothing when the caller is removed between the read and the update', async (): Promise<void> => {
+      const { leagueId } = await seedLeague();
+      const managerId: string = await insertUser('Manager');
+
+      await insertMembership(leagueId, managerId, 'MANAGER');
+
+      afterPreflight.current = async (): Promise<void> => {
+        await database.execute(sql`
+          UPDATE "memberships" SET "status" = 'REMOVED'::membership_status
+          WHERE "league_id" = ${leagueId} AND "user_id" = ${managerId}`);
+      };
+
+      expect(await saveLeagueSettings(leagueId, managerId, buildIdentitySave(1))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.LEAGUE_NOT_FOUND,
+      });
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.name).toBe(SEEDED_LEAGUE_NAME);
+      expect(stored.configuration_revision).toBe(1);
+    });
+
+    it('writes nothing when the account is soft-deleted between the read and the update', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      afterPreflight.current = async (): Promise<void> => {
+        await database.execute(sql`UPDATE "users" SET "deleted_at" = now() WHERE "id" = ${commissionerId}`);
+      };
+
+      expect(await saveLeagueSettings(leagueId, commissionerId, buildFormatsSave(1, { winningMargin: 5 }))).toEqual({
+        ok: false,
+        refusal: LeagueRefusal.ACCOUNT_MISSING,
+      });
+
+      const stored = await readStoredLeague(leagueId);
+
+      expect(stored.settings.winningMargin).toBe(STANDARD_LEAGUE_SETTINGS.winningMargin);
+      expect(stored.configuration_revision).toBe(1);
+    });
+
+    it('is not moved by an invitation write, so an open editor is made stale only by a settings save', async (): Promise<void> => {
+      const { commissionerId, leagueId } = await seedLeague();
+
+      await issueInvite(leagueId, commissionerId, { ...WEEK_NO_LIMIT, previousId: null });
+
+      // The page still holds revision 1, and its save commits
+      expect(
+        valueOf(await saveLeagueSettings(leagueId, commissionerId, buildIdentitySave(1))).configurationRevision,
+      ).toBe(2);
+    });
+  });
+});

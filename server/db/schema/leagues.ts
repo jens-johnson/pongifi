@@ -16,6 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { sql } from 'drizzle-orm';
 import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 
 import type { TLeagueSettings } from '#shared/league-settings';
@@ -38,6 +39,8 @@ export const leagues = pgTable('leagues', {
   visibility: leagueVisibilityEnum('visibility').notNull().default('PRIVATE'),
   /* The league-level values from IV.II and IV.III; a game freezes its resolved form at start */
   settings: jsonb('settings').$type<TLeagueSettings>().notNull(),
+  /* Moved by every settings write and by nothing else, so a save carrying an older one is refused without writing */
+  configurationRevision: integer('configuration_revision').notNull().default(1),
   createdBy: uuid('created_by')
     .notNull()
     .references(() => users.id),
@@ -103,5 +106,41 @@ export const invitations = pgTable(
   (table) => [
     uniqueIndex('invitations_token_unique').on(table.token),
     index('invitations_league_status_idx').on(table.leagueId, table.status),
+    /* One usable shareable link per league (VI.I). A partial unique index rather than an application rule, because
+       two managers replacing the link at the same moment each see a snapshot without the other's new row: the row
+       lock on the link they are retiring cannot serialize an insert of a row that does not exist yet */
+    uniqueIndex('invitations_league_shared_pending_unique')
+      .on(table.leagueId)
+      .where(sql`${table.status} = 'PENDING' AND ${table.email} IS NULL`),
+  ],
+);
+
+/**
+ * The record of a create-league submission, which makes a retry after a lost response safe. The row is written in the
+ * same statement as the league and its first membership, so the unique index below is what decides a race between two
+ * identical submissions: the loser's whole statement rolls back, league included, and the handler answers with the
+ * league the winner created
+ * @public
+ * @constant
+ */
+export const leagueCreationRequests = pgTable(
+  'league_creation_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /* The identifier the create form generates when it mounts and repeats on every retry from that form */
+    submissionId: uuid('submission_id').notNull(),
+    /* Digest of the normalized request, so the same identifier carrying a different league is a conflict rather than
+       a silent second answer */
+    payloadDigest: text('payload_digest').notNull(),
+    leagueId: uuid('league_id')
+      .notNull()
+      .references(() => leagues.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('league_creation_requests_creator_submission_unique').on(table.createdBy, table.submissionId),
   ],
 );

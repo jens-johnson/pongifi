@@ -20,6 +20,8 @@
 
 # ─── Nuxt ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
 .nuxt
+# Written by @nuxt/test-utils the first time a suite asks for the nuxt environment; a marker, not configuration
+.nuxtrc
 .output
 .data
 .nitro

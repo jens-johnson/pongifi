@@ -12,7 +12,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ████████████████████████████████████ #components/widgets/leagues/panel/index.vue ████████████████████████████████████
  *
- * The player's leagues, with loading, zero, populated and error states.
+ * The signed-in player's leagues: a list of links, its zero state, a skeleton, or a retryable failure.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
@@ -20,6 +20,11 @@
  *
  * ─── PROPS ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
+ *   • showEntryActions
+ *     - Description: offer Create a league and Join with an invite in the zero state
+ *     - Type: boolean
+ *     - Required: false
+ *     - Default: true
  *   • showHeading
  *     - Description: render the panel's own heading
  *     - Type: boolean
@@ -41,6 +46,7 @@ import type { ComputedRef } from 'vue';
 
 import type { ILeagueMembership } from '#shared/profile';
 import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
+import { LEAGUES_ROUTE } from '~/utils/marketing/routes';
 
 import { SKELETON_ROWS } from './constants';
 import type { ILeaguesPanelProps } from './types';
@@ -52,10 +58,12 @@ import type { ILeaguesPanelProps } from './types';
  * @internal
  * @constant
  */
-const props: TPropsWithDefaults<ILeaguesPanelProps, 'showHeading' | 'showNextSteps'> = withDefaults(
-  defineProps<ILeaguesPanelProps>(),
-  { showHeading: true, showNextSteps: false },
-);
+const props: TPropsWithDefaults<ILeaguesPanelProps, 'showEntryActions' | 'showHeading' | 'showNextSteps'> =
+  withDefaults(defineProps<ILeaguesPanelProps>(), {
+    showEntryActions: true,
+    showHeading: true,
+    showNextSteps: false,
+  });
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -155,7 +163,11 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
         that counts.
       </p>
 
-      <!-- No buttons: creating and joining do not exist yet, and a control that goes nowhere is worse than none -->
+      <WidgetsLeaguesEntryActions
+        v-if="props.showEntryActions"
+        class="mt-6"
+      />
+
       <WidgetsHomeNextSteps v-if="props.showNextSteps" />
     </div>
 
@@ -166,22 +178,27 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
       <li
         v-for="league in leagues"
         :key="league.id"
-        class="border-border flex items-center gap-4 rounded-md border p-4"
       >
-        <span
-          aria-hidden="true"
-          class="bg-brand-soft text-brand-soft-ink text-body-sm flex size-11 shrink-0 items-center justify-center rounded-md font-medium"
+        <!-- The whole row is the link; nothing else in it changes -->
+        <NuxtLink
+          class="border-border hover:border-accent flex items-center gap-4 rounded-md border p-4 transition-colors"
+          :to="`${LEAGUES_ROUTE}/${league.id}`"
         >
-          {{ league.abbreviation }}
-        </span>
-
-        <span class="min-w-0">
-          <span class="text-ink text-body block truncate font-medium">{{ league.name }}</span>
-
-          <span class="text-ink-subtle text-caption block">
-            {{ toRoleLabel(league.role) }} · Joined {{ toMonthYear(league.joinedAt) }}
+          <span
+            aria-hidden="true"
+            class="bg-brand-soft text-brand-soft-ink text-body-sm flex size-11 shrink-0 items-center justify-center rounded-md font-medium"
+          >
+            {{ league.abbreviation }}
           </span>
-        </span>
+
+          <span class="min-w-0">
+            <span class="text-ink text-body block truncate font-medium">{{ league.name }}</span>
+
+            <span class="text-ink-subtle text-caption block">
+              {{ toRoleLabel(league.role) }} · Joined {{ toMonthYear(league.joinedAt) }}
+            </span>
+          </span>
+        </NuxtLink>
       </li>
     </ul>
   </section>

@@ -63,3 +63,34 @@ export const PROFILE_ROUTE: string = '/profile';
  * @constant
  */
 export const WELCOME_ROUTE: string = '/welcome';
+
+/**
+ * The page a signed-in player creates a league on
+ * @public
+ * @constant
+ */
+export const LEAGUES_NEW_ROUTE: string = '/leagues/new';
+
+/**
+ * The page a signed-in player pastes an invite link into
+ * @public
+ * @constant
+ */
+export const LEAGUES_JOIN_ROUTE: string = '/leagues/join';
+
+/**
+ * The prefix of the invite landing, `/invite/:token`, which a signed-out visitor can reach
+ * @public
+ * @constant
+ */
+export const INVITE_ROUTE_PREFIX: string = '/invite/';
+
+/**
+ * The segment that follows a league's own path to reach its settings page.
+ *
+ * A suffix rather than a builder because the gate matches it as part of a pattern and the league page links it onto an
+ * id it already holds; both read the same constant so the route exists in one place
+ * @public
+ * @constant
+ */
+export const LEAGUE_SETTINGS_ROUTE_SUFFIX: string = '/settings';

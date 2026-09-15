@@ -60,6 +60,10 @@ declare global {
 
       /* Upstash Redis REST endpoint; named after the legacy Vercel KV variables the integration creates */
       UPSTASH_REDIS_REST_KV_REST_API_URL?: string;
+
+      /* Set by the platform when Vercel's system environment variables are exposed. The invite lookup limiter trusts
+         the forwarded client address only when this is present, since off-platform that header is caller-controlled */
+      VERCEL?: string;
     }
   }
 }
