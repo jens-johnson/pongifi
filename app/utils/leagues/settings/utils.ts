@@ -205,22 +205,6 @@ export function collectPersistedFaults(settings: TLeagueSettings): string[] {
 }
 
 /**
- * The messages a stored fault puts under its revealed controls from load.
- * @public
- * @function
- * @param settings - The settings object as it is stored
- * @returns One message per faulty field
- */
-export function toPersistedFaultErrors(settings: TLeagueSettings): TSectionFieldErrors {
-  return Object.fromEntries(
-    collectLeagueSettingsNumberIssues(settings).map((issue: ISettingsNumberIssue): [string, string] => [
-      issue.field,
-      issue.message,
-    ]),
-  );
-}
-
-/**
  * Validates the Identity section the way the create form validates the same three fields.
  * @internal
  * @function
@@ -649,11 +633,6 @@ defineSymbol(isSectionDirty, {
 defineSymbol(collectPersistedFaults, {
   name: 'Collect Persisted Faults',
   description: 'The stored numeric fields a page reveals until they are corrected.',
-});
-
-defineSymbol(toPersistedFaultErrors, {
-  name: 'To Persisted Fault Errors',
-  description: 'The messages a stored fault puts under its revealed controls from load.',
 });
 
 defineSymbol(buildSectionRequest, {

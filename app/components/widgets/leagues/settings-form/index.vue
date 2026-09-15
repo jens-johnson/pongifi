@@ -31,6 +31,7 @@ import type { ILeagueConfiguration, ILeagueDetail, ISaveSettingsRequest } from '
 import {
   LEAGUE_GAME_TYPE_ORDER,
   LEAGUE_GAME_TYPES_EMPTY_MESSAGE,
+  LEAGUE_VALUE_REJECTED_STATUS,
   SETTINGS_EDITOR_ROLES,
   SettingsSection,
 } from '#shared/leagues';
@@ -75,7 +76,7 @@ import {
   toSettingsDraft,
   UncertainReconciliation,
 } from '~/utils/leagues/settings';
-import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failure';
+import { classifyWriteFailure, readWriteStatus, WriteFailure } from '~/utils/leagues/write-failure';
 
 import { toInitialSectionState } from './constants';
 import type {
@@ -271,6 +272,23 @@ const anyDirty: ComputedRef<boolean> = computed((): boolean =>
 const draftFaults: ComputedRef<Record<string, string>> = computed(
   (): Record<string, string> => collectDraftFaultErrors(draft.value) as Record<string, string>,
 );
+
+/**
+ * The line under the ratings toggle, which says what the draft would change rather than what the league already is.
+ *
+ * Off reads as what playing without ratings means. On reads as when ratings would start, and only while the loaded
+ * value was off: a league whose ratings have always been on is not starting anything, and was reading a promise about
+ * its next game from load (page spec 2.4, Ratings)
+ * @internal
+ * @constant
+ */
+const ratingsCaption: ComputedRef<string | null> = computed((): string | null => {
+  if (!draft.value[SettingsSection.RATINGS].ratingEnabled) {
+    return SETTINGS_RATINGS_OFF_CAPTION;
+  }
+
+  return loaded.value[SettingsSection.RATINGS].ratingEnabled ? null : SETTINGS_RATINGS_ON_CAPTION;
+});
 
 /* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -536,12 +554,20 @@ function readStaleConfiguration(error: unknown): ILeagueConfiguration | null {
 
 /**
  * Reads the line a definite refusal carried, so a value the client let through is named rather than generalized.
+ *
+ * Only the value rejection is read this way. Every other refusal the page words itself, because the server's own line
+ * for a 429 or a plain 4xx is not the line the page promises, and letting a body through replaced pinned copy with
+ * whatever the endpoint happened to say (page spec, Saving; Fable, 2026-09-15)
  * @internal
  * @function
  * @param error - What `$fetch` rejected with
- * @returns The message, or null
+ * @returns The message, or null when the refusal is not the one that names a field
  */
 function readRefusalMessage(error: unknown): string | null {
+  if (readWriteStatus(error) !== LEAGUE_VALUE_REJECTED_STATUS) {
+    return null;
+  }
+
   const rejection: ISettingsWriteRejection = error as ISettingsWriteRejection;
   const body: ISettingsRefusalBody =
     typeof rejection.data === 'object' && rejection.data !== null ? (rejection.data as ISettingsRefusalBody) : {};
@@ -676,7 +702,7 @@ async function settleFailure(section: SettingsSection, request: ISaveSettingsReq
   states.value[section] = {
     ...states.value[section],
     alert: toRefusalAlert(failure),
-    message: failure === WriteFailure.FORBIDDEN ? null : readRefusalMessage(error),
+    message: readRefusalMessage(error),
     phase: SettingsSectionPhase.IDLE,
   };
 }
@@ -774,7 +800,58 @@ function onSave(section: SettingsSection): void {
 }
 
 /**
+ * Sends a retry that waited behind another section's request, unless that request settled this one first.
+ *
+ * A retry is the one write the page may repeat, so what it is allowed to repeat is checked again here rather than at
+ * the click: while it waited, another section's answer can have resolved this one outright, or moved the revision it
+ * was submitted at. The held body is never sent at a revision it was not reviewed against, and never re-sent into a
+ * section that has already settled (page spec 2.4, Saving)
+ * @internal
+ * @function
+ * @param section - The section
+ * @param request - The body it held
+ */
+async function dispatchQueuedRetry(section: SettingsSection, request: ISaveSettingsRequest): Promise<void> {
+  const state: ISectionState = states.value[section];
+
+  // Anything other than the phase the click left behind means something else settled this section while it waited
+  if (state.phase !== SettingsSectionPhase.SAVING) {
+    return;
+  }
+
+  // The revision moved under the retry. It cannot go out at the revision it was submitted at, which no longer exists,
+  // and must not be quietly upgraded, which is how a delayed first write and its retry would both commit: read again
+  if (state.revision !== request.revision) {
+    states.value[section] = { ...state, phase: SettingsSectionPhase.RECONCILING };
+
+    await reconcile(section, request);
+
+    return;
+  }
+
+  await send(section, request);
+}
+
+/**
+ * Reads the league again for a check that waited behind another section's request, unless that request settled it.
+ * @internal
+ * @function
+ * @param section - The section
+ * @param request - The body it held
+ */
+async function dispatchQueuedCheck(section: SettingsSection, request: ISaveSettingsRequest): Promise<void> {
+  if (states.value[section].phase !== SettingsSectionPhase.RECONCILING) {
+    return;
+  }
+
+  await reconcile(section, request);
+}
+
+/**
  * Sends the held snapshot again, at the revision it carried the first time.
+ *
+ * Disarmed where it is pressed rather than where it is sent: the phase moves before the queue is touched, so the
+ * button is gone for the whole wait and a second press cannot append a second write behind the first
  * @internal
  * @function
  * @param section - The section
@@ -782,9 +859,12 @@ function onSave(section: SettingsSection): void {
 function onRetry(section: SettingsSection): void {
   const request: ISaveSettingsRequest | undefined = submitted.value[section];
 
-  if (request !== undefined) {
-    queue = queue.then((): Promise<void> => send(section, request));
+  if (request === undefined || states.value[section].phase !== SettingsSectionPhase.UNCERTAIN) {
+    return;
   }
+
+  states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.SAVING };
+  queue = queue.then((): Promise<void> => dispatchQueuedRetry(section, request));
 }
 
 /**
@@ -796,10 +876,12 @@ function onRetry(section: SettingsSection): void {
 function onRetryCheck(section: SettingsSection): void {
   const request: ISaveSettingsRequest | undefined = submitted.value[section];
 
-  if (request !== undefined) {
-    states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.RECONCILING };
-    queue = queue.then((): Promise<void> => reconcile(section, request));
+  if (request === undefined || states.value[section].phase !== SettingsSectionPhase.RECONCILE_FAILED) {
+    return;
   }
+
+  states.value[section] = { ...states.value[section], phase: SettingsSectionPhase.RECONCILING };
+  queue = queue.then((): Promise<void> => dispatchQueuedCheck(section, request));
 }
 
 /**
@@ -1001,10 +1083,13 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
       @use-current="onUseCurrent(SettingsSection.FORMATS)"
     >
       <div class="space-y-6">
+        <!-- The refusal names the group rather than a checkbox, so the group is what takes focus; never tabbed to -->
         <fieldset
+          id="setting-allowedGameTypes"
           :aria-describedby="
             messageFor(SettingsSection.FORMATS, 'allowedGameTypes') ? 'setting-allowedGameTypes-message' : undefined
           "
+          tabindex="-1"
         >
           <legend class="text-ink text-body-sm font-medium">{{ SETTINGS_FIELD_LABELS.allowedGameTypes }}</legend>
 
@@ -1360,8 +1445,11 @@ onBeforeRouteLeave((to: RouteLocationNormalized): boolean => {
             {{ SETTINGS_FIELD_LABELS.ratingEnabled }}
           </label>
 
-          <p class="text-ink-subtle text-caption mt-2">
-            {{ draft.RATINGS.ratingEnabled ? SETTINGS_RATINGS_ON_CAPTION : SETTINGS_RATINGS_OFF_CAPTION }}
+          <p
+            v-if="ratingsCaption !== null"
+            class="text-ink-subtle text-caption mt-2"
+          >
+            {{ ratingsCaption }}
           </p>
         </div>
 

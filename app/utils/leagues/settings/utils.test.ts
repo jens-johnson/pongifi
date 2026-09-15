@@ -40,7 +40,6 @@ import {
   reconcileUncertainSave,
   resolveSectionAdoption,
   toFieldDisplayValue,
-  toPersistedFaultErrors,
   toRefusalAlert,
   toSectionRows,
   toSettingsDraft,
@@ -324,17 +323,12 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(collectPersistedFaults), (): void => {
     it('finds nothing in a league at the standard settings', (): void => {
       expect(collectPersistedFaults(CONFIGURATION.settings)).toEqual([]);
-      expect(toPersistedFaultErrors(CONFIGURATION.settings)).toEqual({});
     });
 
     it('names every stored fault, in the order the page lists its controls', (): void => {
       const faulted: ILeagueConfiguration = configurationWith({ provisionalGames: 0, winningMargin: 0 });
 
       expect(collectPersistedFaults(faulted.settings)).toEqual(['winningMargin', 'provisionalGames']);
-      expect(toPersistedFaultErrors(faulted.settings)).toEqual({
-        provisionalGames: PROVISIONAL_MESSAGE,
-        winningMargin: 'Enter a whole number from 1 to 21.',
-      });
     });
 
     it('names a fault the page would otherwise be hiding, which is what makes it repairable', (): void => {
