@@ -190,6 +190,13 @@ const WIN_BY_MESSAGE: string = 'Enter a whole number from 1 to 21.';
 const RETRY_CHECK: string = 'Retry check';
 
 /**
+ * The action a comparison offers beside Review draft, which a settled section is not offering at all
+ * @internal
+ * @constant
+ */
+const USE_CURRENT: string = 'Use current values';
+
+/**
  * The line a section shows above a comparison, which is the one outcome a queued write must never cause
  * @internal
  * @constant
@@ -506,6 +513,51 @@ describe(getTestFileName(import.meta.url), (): void => {
   });
 
   describe('a section another section saved past', (): void => {
+    it('keeps a new draft after an uncertain write was settled by another section adoption conflict', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      await lostTheAnswer(wrapper);
+
+      // Another tab changes Identity while the lost write is still held at revision 1.
+      await wrapper.find(WIN_BY_INPUT).setValue('5');
+      await save(wrapper, FORMATS);
+      calls.shift()!.reject({
+        data: configurationAt(2, {}, { name: 'External Name' }),
+        statusCode: 409,
+      });
+      await settled();
+      await buttonIn(wrapper, FORMATS, 'Review draft')!.trigger('click');
+      await save(wrapper, FORMATS);
+      expect(onlyCall().body!.revision).toBe(2);
+      calls.shift()!.resolve(configurationAt(3, { winningMargin: 5 }, { name: 'External Name' }));
+      await settled();
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+
+      // The person resolves Identity's comparison and starts a new, unsaved draft.
+      await buttonIn(wrapper, IDENTITY, USE_CURRENT)!.trigger('click');
+      await wrapper.find(NAME_INPUT).setValue(RENAMED_AGAIN);
+
+      // Another tab later uses the old submitted name. A new Formats save sees its revision first as a 409.
+      await wrapper.find(WIN_BY_INPUT).setValue('6');
+      await save(wrapper, FORMATS);
+      calls.shift()!.reject({
+        data: configurationAt(4, { winningMargin: 5 }, { name: RENAMED }),
+        statusCode: 409,
+      });
+      await settled();
+      await buttonIn(wrapper, FORMATS, 'Review draft')!.trigger('click');
+      await save(wrapper, FORMATS);
+      expect(onlyCall().body!.revision).toBe(4);
+      calls.shift()!.resolve(configurationAt(5, { winningMargin: 6 }, { name: RENAMED }));
+      await settled();
+
+      // The old write cannot be this draft's success. Keep the new draft and show the actual conflict.
+      expect(calls).toHaveLength(0);
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED_AGAIN);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(SAVED_LINE);
+    });
+
     it('keeps its own draft and carries it at the revision that save moved it to', async (): Promise<void> => {
       const { wrapper }: { wrapper: VueWrapper } = await mountForm();
 
@@ -600,7 +652,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       calls.shift()!.reject({ data: configurationAt(3, { winningMargin: 9 }), statusCode: 409 });
       await settled();
 
-      await buttonIn(wrapper, FORMATS, 'Use current values')!.trigger('click');
+      await buttonIn(wrapper, FORMATS, USE_CURRENT)!.trigger('click');
       await settled();
 
       // The values it adopted are the ones it was shown, and its baseline is the revision those values are at
@@ -806,6 +858,66 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(onlyCall().body!.revision).toBe(1);
       expect(onlyCall().body!.identity!.name).toBe(RENAMED);
+    });
+  });
+
+  describe('a conflict the stored values already satisfy', (): void => {
+    it('reads a retry refused by its own delayed write as the save it turned out to be', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      await lostTheAnswer(wrapper);
+
+      // The retry goes out at the revision it was reviewed against, and the delayed first write has landed meanwhile
+      await buttonIn(wrapper, IDENTITY, 'Retry')!.trigger('click');
+      await settled();
+
+      expect(onlyCall().body!.revision).toBe(1);
+      calls.shift()!.reject({ data: configurationAt(2, {}, { name: RENAMED }), statusCode: 409 });
+      await settled();
+
+      // Stored is what was submitted, so there is nothing to merge and nothing to ask
+      expect(calls).toHaveLength(0);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(SAVED_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect(buttonIn(wrapper, IDENTITY, 'Retry')).toBeUndefined();
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED);
+
+      // The revision the answer carried is the one the section now saves at
+      await wrapper.find(NAME_INPUT).setValue(RENAMED_AGAIN);
+      await save(wrapper, IDENTITY);
+
+      expect(onlyCall().body!.revision).toBe(2);
+    });
+
+    it('reads an ordinary save refused by the same values as the save it asked for', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      await wrapper.find(NAME_INPUT).setValue(RENAMED);
+      await save(wrapper, IDENTITY);
+
+      // Another tab wrote the very name this save carries, so the refusal describes the outcome it wanted
+      calls.shift()!.reject({ data: configurationAt(2, {}, { name: RENAMED }), statusCode: 409 });
+      await settled();
+
+      expect(calls).toHaveLength(0);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(SAVED_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(STALE_LINE);
+      expect(buttonIn(wrapper, IDENTITY, USE_CURRENT)).toBeUndefined();
+      expect((wrapper.find(NAME_INPUT).element as HTMLInputElement).value).toBe(RENAMED);
+    });
+
+    it('still shows the comparison when the stored values are not what it sent', async (): Promise<void> => {
+      const { wrapper }: { wrapper: VueWrapper } = await mountForm();
+
+      await wrapper.find(NAME_INPUT).setValue(RENAMED);
+      await save(wrapper, IDENTITY);
+      calls.shift()!.reject({ data: configurationAt(2, {}, { name: 'External Name' }), statusCode: 409 });
+      await settled();
+
+      expect(calls).toHaveLength(0);
+      expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
+      expect(sectionOf(wrapper, IDENTITY).text()).not.toContain(SAVED_LINE);
+      expect(buttonIn(wrapper, IDENTITY, USE_CURRENT)).toBeDefined();
     });
   });
 
@@ -1018,7 +1130,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await settled();
 
       expect(sectionOf(wrapper, IDENTITY).text()).toContain(STALE_LINE);
-      expect(buttonIn(wrapper, IDENTITY, 'Use current values')).toBeDefined();
+      expect(buttonIn(wrapper, IDENTITY, USE_CURRENT)).toBeDefined();
     });
 
     it('drops a queued check the answer it waited behind already made, and reads as saved', async (): Promise<void> => {

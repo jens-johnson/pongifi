@@ -511,6 +511,10 @@ function adoptConfiguration(saved: SettingsSection, returned: ILeagueConfigurati
     }
 
     if (adoption.stale) {
+      // The comparison settles the write as surely as a save or a refusal does: whatever this section had outstanding
+      // did not become what is stored, and a body left held here would be read as a later draft's success by any
+      // answer that happened to carry the old values back (Astra, 2026-09-15)
+      retire(section);
       staleAgainst.value = {
         ...staleAgainst.value,
         [section]: { draft: returnedDraft, revision: returned.configurationRevision },
@@ -716,7 +720,15 @@ async function settleFailure(section: SettingsSection, request: ISaveSettingsReq
   const current: ILeagueConfiguration | null = failure === WriteFailure.CONFLICT ? readStaleConfiguration(error) : null;
 
   if (current !== null) {
-    showStale(section, current);
+    // A 409 whose stored values already are what this section submitted is a success whichever way the write got
+    // there: nothing is left to merge, and asking the person to resolve a draft against itself would be the stale
+    // comparison a success caused itself. Adoption runs the whole loop, so this answer also settles any other section
+    // whose held body it proves committed (page spec 2.5, Saving; Fable, 2026-09-15)
+    if (matchesSubmittedSection(request, current)) {
+      adoptConfiguration(section, current);
+    } else {
+      showStale(section, current);
+    }
 
     return;
   }
