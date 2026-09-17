@@ -443,6 +443,59 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.find(LINK_FIELD).attributes('value')).toContain(SUCCESSOR.token);
   });
 
+  it('saves nothing for a file whose encoding outlived the link it was drawn from', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    let release: (file: Blob | null) => void = (): void => undefined;
+
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback: BlobCallback): void => {
+      release = callback;
+    });
+
+    const saving: Promise<void> = control(wrapper, DOWNLOAD)?.trigger('click') ?? Promise.resolve();
+
+    // The check has answered and the code is drawn; only the encoding is still outstanding
+    await flush();
+
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+
+    release(new Blob(['png'], { type: 'image/png' }));
+    await saving;
+    await flush();
+
+    // A file encoded for a link that has since been revoked is not saved, and mints no object URL to leak
+    expect(saved).toEqual([]);
+    expect(minted.count).toBe(0);
+    expect(endpoint.writes).toEqual(['revoke']);
+  });
+
+  it('saves nothing for a file whose encoding outlived the panel itself', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    let release: (file: Blob | null) => void = (): void => undefined;
+
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback: BlobCallback): void => {
+      release = callback;
+    });
+
+    const saving: Promise<void> = control(wrapper, DOWNLOAD)?.trigger('click') ?? Promise.resolve();
+
+    await flush();
+
+    wrapper.unmount();
+
+    // An anchor clicked here would mint an object URL nothing left alive is holding, and arm a timer to release it
+    release(new Blob(['png'], { type: 'image/png' }));
+    await saving;
+    await flush();
+
+    expect(saved).toEqual([]);
+    expect(minted.count).toBe(0);
+  });
+
   it('clears the shown code and controls when a check observes removed membership', async (): Promise<void> => {
     const wrapper: VueWrapper = await mountPanel(USABLE);
 
