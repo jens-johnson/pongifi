@@ -12,16 +12,25 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ████████████████████████████████ #components/widgets/leagues/invite-panel/index.vue █████████████████████████████████
  *
- * A league's invite panel for commissioners and managers: create, copy, replace and revoke one shareable link.
+ * A league's invite panel for commissioners and managers: create, copy, show as a code, save, replace and revoke one
+ * shareable link.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
- * <WidgetsLeaguesInvitePanel :league-id="league.id" />
+ * <WidgetsLeaguesInvitePanel :abbreviation="league.abbreviation" :league-id="league.id" :league-name="league.name" />
  *
  * ─── PROPS ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
+ *   • abbreviation
+ *     - Description: the league's short mark, which names the downloaded code
+ *     - Type: string
+ *     - Required: true
  *   • leagueId
  *     - Description: the league whose link the panel manages
+ *     - Type: string
+ *     - Required: true
+ *   • leagueName
+ *     - Description: the league's name, shown beside the code and printed under the downloaded one
  *     - Type: string
  *     - Required: true
  *
@@ -46,18 +55,23 @@ import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failur
 
 import {
   COPIED_VISIBLE_MS,
+  DOWNLOAD_RELEASE_MS,
+  INVITE_AUTHORITY_LOST_MESSAGE,
   INVITE_EXPIRY_OPTIONS,
   INVITE_MAX_USES_MESSAGE,
+  INVITE_QR_UNAVAILABLE_MESSAGE,
+  INVITE_QR_UNREAD_MESSAGE,
   INVITE_UPDATE_FAILED_MESSAGE,
+  QR_IMAGE_TYPE,
 } from './constants';
 import { InvitePanelMode } from './enums';
 import type { ILeaguesInvitePanelProps } from './types';
-import { settleInviteWrite } from './utils';
+import { drawInviteQr, settleInviteWrite, toInviteQrCaptions, toInviteQrFile, toInviteQrFileName } from './utils';
 
 /* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The league whose link this panel manages.
+ * The league whose link this panel manages, and the name and short mark its code is captioned and saved with.
  * @internal
  * @constant
  */
@@ -152,10 +166,51 @@ const exit: ReturnType<typeof useSessionExit> = useSessionExit();
 const origin: string = useRequestURL().origin;
 
 /**
+ * The code the open region shows, as an image, or null when the region is closed.
+ * @internal
+ * @constant
+ */
+const qrImage: Ref<string | null> = ref(null);
+
+/**
+ * Whether a QR action is checking the link or drawing its code.
+ * @internal
+ * @constant
+ */
+const qrChecking: Ref<boolean> = ref(false);
+
+/**
+ * Whether the viewer still runs this league, as the panel's own reads have observed it. A read that answers otherwise
+ * takes every control with it rather than leaving a token on screen the server would no longer serve.
+ * @internal
+ * @constant
+ */
+const authority: Ref<boolean> = ref(true);
+
+/**
  * The timer that hides Copied, tracked so a second copy cannot leave an orphaned one behind.
  * @internal
  */
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * The identity of the QR action in flight. Every invalidation moves it, and a completion that no longer matches is
+ * discarded before anything is shown or saved, so a code checked before a revoke never arrives after one.
+ * @internal
+ */
+let qrGeneration: number = 0;
+
+/**
+ * The temporary URL the last download was handed over, held only until the browser has taken it.
+ * @internal
+ */
+let downloadUrl: string | null = null;
+
+/**
+ * The timer that releases it.
+ * @internal
+ */
+let releaseTimer: ReturnType<typeof setTimeout> | undefined;
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -192,6 +247,19 @@ const usable: ComputedRef<boolean> = computed((): boolean => link.value?.state =
  */
 const inviteUrl: ComputedRef<string> = computed((): string =>
   link.value?.token ? buildInviteUrl(origin, link.value.token) : '',
+);
+
+/**
+ * Which link a drawn code belongs to, or an empty key when there is no link a code could encode.
+ *
+ * Identity and usability only: a link whose use count has moved is still the same link, and redrawing a code because
+ * somebody joined would be noise. Watched rather than compared inside each action, so a replacement observed by any
+ * read at all invalidates a code, not only one this panel asked for
+ * @internal
+ * @constant
+ */
+const qrLinkKey: ComputedRef<string> = computed((): string =>
+  usable.value && link.value?.token ? `${link.value.id}:${link.value.token}` : '',
 );
 
 /* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -252,6 +320,9 @@ function readOptions(): IInviteLinkOptions | null {
  */
 async function runWrite(write: () => Promise<IInvitePanel>): Promise<void> {
   const before: string = JSON.stringify(link.value);
+
+  // A write begins: whatever link a code was drawn from is about to stop being the answer
+  clearQr();
 
   busy.value = true;
   alert.value = null;
@@ -392,6 +463,182 @@ async function onCopy(): Promise<void> {
   }, COPIED_VISIBLE_MS);
 }
 
+/**
+ * Drops the code on screen and orphans anything still being drawn.
+ * @internal
+ * @function
+ */
+function clearQr(): void {
+  qrGeneration += 1;
+  qrImage.value = null;
+}
+
+/**
+ * Releases the last download's temporary URL.
+ * @internal
+ * @function
+ */
+function releaseDownload(): void {
+  clearTimeout(releaseTimer);
+
+  if (downloadUrl !== null) {
+    URL.revokeObjectURL(downloadUrl);
+    downloadUrl = null;
+  }
+}
+
+/**
+ * Reads the panel from the server and answers only with a link that is usable at this moment.
+ *
+ * A failed read answers nothing rather than falling back on what the panel happens to be holding: a panel that loaded
+ * a usable link keeps showing it through a failed read, and treating that as an answer is exactly how a revoked code
+ * would be drawn. A read that succeeds replaces the panel, so a link revoked elsewhere renders as the state it is in
+ * @internal
+ * @function
+ * @returns The usable link, or null when the read failed or answered anything else
+ */
+async function readUsableLink(): Promise<IInviteLink | null> {
+  try {
+    const fresh: IInvitePanel = await $fetch<IInvitePanel>(`/api/leagues/${props.leagueId}/invitations`);
+
+    panel.value = fresh;
+
+    const current: IInviteLink | null = fresh.link;
+
+    if (current === null || current.state !== InviteLinkState.USABLE || (current.token ?? '') === '') {
+      return null;
+    }
+
+    return current;
+  } catch (caught: unknown) {
+    const failure: WriteFailure = classifyWriteFailure(caught);
+
+    if (failure === WriteFailure.UNAUTHORIZED) {
+      await exit.toSignIn();
+
+      return null;
+    }
+
+    // A player is refused this endpoint, so a 403 no welcome step explains is the role itself being gone
+    if (failure === WriteFailure.FORBIDDEN) {
+      if (!(await exit.toWelcomeIfOwed())) {
+        authority.value = false;
+        clearQr();
+      }
+
+      return null;
+    }
+
+    alert.value = INVITE_QR_UNREAD_MESSAGE;
+
+    return null;
+  }
+}
+
+/**
+ * Hands a finished file to the browser and releases its temporary URL once the browser has taken it.
+ * @internal
+ * @function
+ * @param file - The file
+ * @param name - The name to save it under
+ */
+function saveDownload(file: Blob, name: string): void {
+  releaseDownload();
+
+  const anchor: HTMLAnchorElement = document.createElement('a');
+
+  downloadUrl = URL.createObjectURL(file);
+  anchor.download = name;
+  anchor.href = downloadUrl;
+  anchor.click();
+
+  releaseTimer = setTimeout(releaseDownload, DOWNLOAD_RELEASE_MS);
+}
+
+/**
+ * Opens the code under the link, or hides it.
+ *
+ * Hiding is local and asks the server nothing. Opening checks the link first, and the identity it carries is taken
+ * before that check, so a revoke that lands while the check is in flight discards the code rather than racing it
+ * @internal
+ * @function
+ */
+async function onToggleQr(): Promise<void> {
+  if (qrImage.value !== null) {
+    clearQr();
+
+    return;
+  }
+
+  const mine: number = (qrGeneration += 1);
+
+  qrChecking.value = true;
+  alert.value = null;
+
+  try {
+    const current: IInviteLink | null = await readUsableLink();
+
+    if (current === null || mine !== qrGeneration) {
+      return;
+    }
+
+    const canvas: HTMLCanvasElement | null = drawInviteQr(buildInviteUrl(origin, current.token ?? ''), []);
+
+    if (canvas === null) {
+      alert.value = INVITE_QR_UNAVAILABLE_MESSAGE;
+
+      return;
+    }
+
+    if (mine === qrGeneration) {
+      qrImage.value = canvas.toDataURL(QR_IMAGE_TYPE);
+    }
+  } finally {
+    qrChecking.value = false;
+  }
+}
+
+/**
+ * Saves the code as a file carrying the league and the day the link stops working.
+ *
+ * Nothing is minted, spent or rotated by saving one, and a saved image cannot be recalled: a replaced or revoked link
+ * stops working through the token's own lifecycle, which is what the printed expiry is honest about
+ * @internal
+ * @function
+ */
+async function onDownloadQr(): Promise<void> {
+  const mine: number = (qrGeneration += 1);
+
+  qrChecking.value = true;
+  alert.value = null;
+
+  try {
+    const current: IInviteLink | null = await readUsableLink();
+
+    if (current === null || mine !== qrGeneration) {
+      return;
+    }
+
+    const canvas: HTMLCanvasElement | null = drawInviteQr(
+      buildInviteUrl(origin, current.token ?? ''),
+      toInviteQrCaptions(props.leagueName, current),
+    );
+    const file: Blob | null = canvas === null ? null : await toInviteQrFile(canvas);
+
+    if (file === null) {
+      alert.value = INVITE_QR_UNAVAILABLE_MESSAGE;
+
+      return;
+    }
+
+    if (mine === qrGeneration) {
+      saveDownload(file, toInviteQrFileName(props.abbreviation));
+    }
+  } finally {
+    qrChecking.value = false;
+  }
+}
+
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // The controls start from the link they would replace or succeed, whenever a fresh panel arrives
@@ -401,8 +648,13 @@ watch(link, (current: IInviteLink | null): void => {
   }
 });
 
+// Synchronous, so a read that replaces the panel has invalidated the old code before the action that read it resumes
+watch(qrLinkKey, clearQr, { flush: 'sync' });
+
 onBeforeUnmount((): void => {
   clearTimeout(copiedTimer);
+  clearQr();
+  releaseDownload();
 });
 </script>
 
@@ -433,10 +685,19 @@ onBeforeUnmount((): void => {
       class="bg-surface-raised mt-4 h-24 animate-pulse rounded-md"
     />
 
+    <!-- A check answered that the role is gone: the controls go with it rather than showing a token nothing serves -->
+    <p
+      v-else-if="readState === AccountReadState.READY && !authority"
+      class="text-ink text-body mt-4"
+      role="alert"
+    >
+      {{ INVITE_AUTHORITY_LOST_MESSAGE }}
+    </p>
+
     <div v-else-if="readState === AccountReadState.READY">
-      <!-- A usable link: copy it, or replace or revoke it by id -->
+      <!-- A usable link: copy it, show or save its code, or replace or revoke it by id -->
       <template v-if="usable && link">
-        <div class="mt-4 flex gap-2">
+        <div class="mt-4">
           <label
             class="sr-only"
             for="invite-url"
@@ -447,12 +708,15 @@ onBeforeUnmount((): void => {
           <input
             id="invite-url"
             ref="linkField"
-            class="border-border bg-surface-raised text-ink text-body-sm min-w-0 flex-1 rounded-md border px-3 py-2 font-mono"
+            class="border-border bg-surface-raised text-ink text-body-sm block w-full rounded-md border px-3 py-2 font-mono"
             readonly
             type="text"
             :value="inviteUrl"
           />
+        </div>
 
+        <!-- The link's own actions, wrapping together rather than squeezing the field they act on -->
+        <div class="mt-2 flex flex-wrap gap-2">
           <button
             class="border-border text-ink hover:border-accent text-body-sm shrink-0 rounded-md border px-4 py-2 font-medium transition-colors"
             type="button"
@@ -460,9 +724,43 @@ onBeforeUnmount((): void => {
           >
             {{ copied ? 'Copied' : 'Copy' }}
           </button>
+
+          <button
+            class="border-border text-ink hover:border-accent text-body-sm shrink-0 rounded-md border px-4 py-2 font-medium transition-colors disabled:opacity-50"
+            :disabled="busy || qrChecking"
+            type="button"
+            @click="onToggleQr"
+          >
+            {{ qrImage ? 'Hide QR' : 'Show QR' }}
+          </button>
+
+          <button
+            class="border-border text-ink hover:border-accent text-body-sm shrink-0 rounded-md border px-4 py-2 font-medium transition-colors disabled:opacity-50"
+            :disabled="busy || qrChecking"
+            type="button"
+            @click="onDownloadQr"
+          >
+            Download QR
+          </button>
         </div>
 
         <p class="text-ink-subtle text-caption mt-2">{{ describeInviteLink(link) }}</p>
+
+        <!-- The code, drawn in this browser from the link above; showing it mints, spends and rotates nothing -->
+        <div
+          v-if="qrImage"
+          class="border-border mt-4 rounded-md border p-4"
+        >
+          <img
+            :alt="`QR code for the ${leagueName} invite link`"
+            class="mx-auto block h-auto w-full max-w-[260px]"
+            :src="qrImage"
+          />
+
+          <p class="text-ink text-body-sm mt-3 text-center break-words">{{ leagueName }}</p>
+
+          <p class="text-ink-subtle text-caption mt-1 text-center">{{ describeInviteLink(link) }}</p>
+        </div>
 
         <div
           v-if="mode === InvitePanelMode.VIEW"

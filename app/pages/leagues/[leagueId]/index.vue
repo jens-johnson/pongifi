@@ -214,10 +214,16 @@ useHead({
           <!-- Rendered only for the roles that may invite; a player's page never asks for invitation data at all -->
           <WidgetsLeaguesInvitePanel
             v-if="manages"
+            :abbreviation="league.abbreviation"
             :league-id="league.id"
+            :league-name="league.name"
           />
 
-          <WidgetsLeaguesRulesPanel :settings="league.settings" />
+          <WidgetsLeaguesRulesPanel
+            :settings="league.settings"
+            :settings-route="settingsRoute"
+            :viewer-role="league.viewerRole"
+          />
         </div>
       </div>
     </template>
