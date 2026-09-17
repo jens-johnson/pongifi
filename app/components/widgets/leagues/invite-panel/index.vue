@@ -59,14 +59,23 @@ import {
   INVITE_AUTHORITY_LOST_MESSAGE,
   INVITE_EXPIRY_OPTIONS,
   INVITE_MAX_USES_MESSAGE,
+  INVITE_QR_REGION_ID,
   INVITE_QR_UNAVAILABLE_MESSAGE,
   INVITE_QR_UNREAD_MESSAGE,
+  INVITE_STALE_MESSAGE,
   INVITE_UPDATE_FAILED_MESSAGE,
   QR_IMAGE_TYPE,
 } from './constants';
 import { InvitePanelMode } from './enums';
 import type { ILeaguesInvitePanelProps } from './types';
-import { drawInviteQr, settleInviteWrite, toInviteQrCaptions, toInviteQrFile, toInviteQrFileName } from './utils';
+import {
+  drawInviteQr,
+  settleInviteWrite,
+  toInviteQrCaptions,
+  toInviteQrFile,
+  toInviteQrFileName,
+  toInviteQrLinkKey,
+} from './utils';
 
 /* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -252,15 +261,12 @@ const inviteUrl: ComputedRef<string> = computed((): string =>
 /**
  * Which link a drawn code belongs to, or an empty key when there is no link a code could encode.
  *
- * Identity and usability only: a link whose use count has moved is still the same link, and redrawing a code because
- * somebody joined would be noise. Watched rather than compared inside each action, so a replacement observed by any
- * read at all invalidates a code, not only one this panel asked for
+ * Watched rather than compared inside each action, so a replacement observed by any read at all invalidates a code,
+ * not only one this panel asked for
  * @internal
  * @constant
  */
-const qrLinkKey: ComputedRef<string> = computed((): string =>
-  usable.value && link.value?.token ? `${link.value.id}:${link.value.token}` : '',
-);
+const qrLinkKey: ComputedRef<string> = computed((): string => toInviteQrLinkKey(link.value));
 
 /* ─── Handlers ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -492,14 +498,23 @@ function releaseDownload(): void {
  *
  * A failed read answers nothing rather than falling back on what the panel happens to be holding: a panel that loaded
  * a usable link keeps showing it through a failed read, and treating that as an answer is exactly how a revoked code
- * would be drawn. A read that succeeds replaces the panel, so a link revoked elsewhere renders as the state it is in
+ * would be drawn. A read that succeeds and is still the panel's newest word replaces the panel, so a link revoked
+ * elsewhere renders as the state it is in; an answer the panel has already moved past is dropped whole rather than
+ * adopted, because a revoke's own result is the newer truth and an older read would put its dead link back on screen
+ * with every control that acts on one
  * @internal
  * @function
- * @returns The usable link, or null when the read failed or answered anything else
+ * @param mine - The identity of the action asking, so a superseded answer is dropped rather than adopted
+ * @returns The usable link, or null when the read failed, was superseded, or answered anything else
  */
-async function readUsableLink(): Promise<IInviteLink | null> {
+async function readUsableLink(mine: number): Promise<IInviteLink | null> {
   try {
     const fresh: IInvitePanel = await $fetch<IInvitePanel>(`/api/leagues/${props.leagueId}/invitations`);
+
+    // A revoke, a replacement, a hide or an unmount has landed since the read began: this answer is already history
+    if (mine !== qrGeneration) {
+      return null;
+    }
 
     panel.value = fresh;
 
@@ -519,7 +534,15 @@ async function readUsableLink(): Promise<IInviteLink | null> {
       return null;
     }
 
-    // A player is refused this endpoint, so a 403 no welcome step explains is the role itself being gone
+    // A player is refused this endpoint and a former member is not shown the league at all, so a 403 no welcome step
+    // explains and a 404 both mean the role is gone; the code and every control that acts on a token go with it
+    if (failure === WriteFailure.NOT_FOUND) {
+      authority.value = false;
+      clearQr();
+
+      return null;
+    }
+
     if (failure === WriteFailure.FORBIDDEN) {
       if (!(await exit.toWelcomeIfOwed())) {
         authority.value = false;
@@ -529,10 +552,30 @@ async function readUsableLink(): Promise<IInviteLink | null> {
       return null;
     }
 
-    alert.value = INVITE_QR_UNREAD_MESSAGE;
+    // A read that failed for a click the panel has already moved past stays as quiet as the move that overtook it
+    if (mine === qrGeneration) {
+      alert.value = INVITE_QR_UNREAD_MESSAGE;
+    }
 
     return null;
   }
+}
+
+/**
+ * Whether a check answered with a usable link other than the one the person acted on.
+ *
+ * The click is refused either way, because a code nobody has read the link of is not the code they asked for. This is
+ * the one invalidation the panel says out loud: a hide, an unmount, a write beginning or a revoke elsewhere all leave
+ * the panel showing what happened, while a replacement elsewhere leaves a field and a caption that quietly changed
+ * under the click
+ * @internal
+ * @function
+ * @param clicked - The key of the link the action was started on
+ * @param current - The link the check answered with, or null
+ * @returns Whether the link was replaced while the panel was showing the old one
+ */
+function wasReplacedElsewhere(clicked: string, current: IInviteLink | null): boolean {
+  return clicked !== '' && current !== null && toInviteQrLinkKey(current) !== clicked;
 }
 
 /**
@@ -570,13 +613,20 @@ async function onToggleQr(): Promise<void> {
     return;
   }
 
+  const clicked: string = qrLinkKey.value;
   const mine: number = (qrGeneration += 1);
 
   qrChecking.value = true;
   alert.value = null;
 
   try {
-    const current: IInviteLink | null = await readUsableLink();
+    const current: IInviteLink | null = await readUsableLink(mine);
+
+    if (wasReplacedElsewhere(clicked, current)) {
+      alert.value = INVITE_STALE_MESSAGE;
+
+      return;
+    }
 
     if (current === null || mine !== qrGeneration) {
       return;
@@ -607,13 +657,20 @@ async function onToggleQr(): Promise<void> {
  * @function
  */
 async function onDownloadQr(): Promise<void> {
+  const clicked: string = qrLinkKey.value;
   const mine: number = (qrGeneration += 1);
 
   qrChecking.value = true;
   alert.value = null;
 
   try {
-    const current: IInviteLink | null = await readUsableLink();
+    const current: IInviteLink | null = await readUsableLink(mine);
+
+    if (wasReplacedElsewhere(clicked, current)) {
+      alert.value = INVITE_STALE_MESSAGE;
+
+      return;
+    }
 
     if (current === null || mine !== qrGeneration) {
       return;
@@ -725,7 +782,10 @@ onBeforeUnmount((): void => {
             {{ copied ? 'Copied' : 'Copy' }}
           </button>
 
+          <!-- A disclosure exactly like the rules card's heading row, and announced as one -->
           <button
+            :aria-controls="INVITE_QR_REGION_ID"
+            :aria-expanded="qrImage !== null"
             class="border-border text-ink hover:border-accent text-body-sm shrink-0 rounded-md border px-4 py-2 font-medium transition-colors disabled:opacity-50"
             :disabled="busy || qrChecking"
             type="button"
@@ -746,20 +806,26 @@ onBeforeUnmount((): void => {
 
         <p class="text-ink-subtle text-caption mt-2">{{ describeInviteLink(link) }}</p>
 
-        <!-- The code, drawn in this browser from the link above; showing it mints, spends and rotates nothing -->
+        <!--
+          The code, drawn in this browser from the link above; showing it mints, spends and rotates nothing. The region
+          is kept in the document while closed so the control's `aria-controls` always names something
+        -->
         <div
-          v-if="qrImage"
+          v-show="qrImage"
+          :id="INVITE_QR_REGION_ID"
           class="border-border mt-4 rounded-md border p-4"
         >
-          <img
-            :alt="`QR code for the ${leagueName} invite link`"
-            class="mx-auto block h-auto w-full max-w-[260px]"
-            :src="qrImage"
-          />
+          <template v-if="qrImage">
+            <img
+              :alt="`QR code for the ${leagueName} invite link`"
+              class="mx-auto block h-auto w-full max-w-[260px]"
+              :src="qrImage"
+            />
 
-          <p class="text-ink text-body-sm mt-3 text-center break-words">{{ leagueName }}</p>
+            <p class="text-ink text-body-sm mt-3 text-center break-words">{{ leagueName }}</p>
 
-          <p class="text-ink-subtle text-caption mt-1 text-center">{{ describeInviteLink(link) }}</p>
+            <p class="text-ink-subtle text-caption mt-1 text-center">{{ describeInviteLink(link) }}</p>
+          </template>
         </div>
 
         <div

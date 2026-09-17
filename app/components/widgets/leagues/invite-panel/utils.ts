@@ -20,6 +20,7 @@ import type { QrCodeGenerateResult } from 'uqr';
 import { encode } from 'uqr';
 
 import type { IInviteLink } from '#shared/leagues';
+import { InviteLinkState } from '#shared/leagues';
 import { defineSymbol } from '#shared/utils/symbol';
 import { toDayMonthYear } from '~/utils/leagues/display';
 import { WriteFailure } from '~/utils/leagues/write-failure';
@@ -280,6 +281,22 @@ export function toInviteQrFileName(abbreviation: string): string {
   return `${stem === '' ? INVITE_QR_FALLBACK_NAME : stem}${INVITE_QR_FILE_SUFFIX}`;
 }
 
+/**
+ * Which link a drawn code belongs to, or an empty key when there is no link a code could encode.
+ *
+ * Identity and usability only: a link whose use count has moved is still the same link, and redrawing a code because
+ * somebody joined would be noise
+ * @public
+ * @function
+ * @param link - The link, or null
+ * @returns The key
+ */
+export function toInviteQrLinkKey(link: IInviteLink | null): string {
+  return link !== null && link.state === InviteLinkState.USABLE && (link.token ?? '') !== ''
+    ? `${link.id}:${link.token}`
+    : '';
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register a readable name/description so the unit suite can title its describe block from the source symbol
@@ -306,4 +323,9 @@ defineSymbol(toInviteQrCaptions, {
 defineSymbol(toInviteQrFileName, {
   name: 'To Invite QR File Name',
   description: 'The name a downloaded code is saved under.',
+});
+
+defineSymbol(toInviteQrLinkKey, {
+  name: 'To Invite QR Link Key',
+  description: 'Which link a drawn code belongs to.',
 });

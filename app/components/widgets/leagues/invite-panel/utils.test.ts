@@ -11,7 +11,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ██████████████████████████████ #components/widgets/leagues/invite-panel/utils.test.ts ███████████████████████████████
  *
- * Unit tests for the invite-panel write settler.
+ * Unit tests for the invite-panel write settler, code captions, file names and link key.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -25,7 +25,7 @@ import { symbolName } from '#shared/utils/symbol';
 import { WriteFailure } from '~/utils/leagues/write-failure';
 
 import { INVITE_NOT_LIVE_MESSAGE, INVITE_STALE_MESSAGE, INVITE_UPDATE_FAILED_MESSAGE } from './constants';
-import { settleInviteWrite, toInviteQrCaptions, toInviteQrFileName } from './utils';
+import { settleInviteWrite, toInviteQrCaptions, toInviteQrFileName, toInviteQrLinkKey } from './utils';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -81,6 +81,22 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     it('says nothing about an expiry it cannot read, rather than printing half a line', (): void => {
       expect(toInviteQrCaptions(LEAGUE_NAME, { ...LINK, expiresAt: null })).toEqual([LEAGUE_NAME]);
+    });
+  });
+
+  describe(symbolName(toInviteQrLinkKey), (): void => {
+    it('keys a code to the link it encodes, not to how often it has been used', (): void => {
+      expect(toInviteQrLinkKey(LINK)).toBe('id:token');
+      expect(toInviteQrLinkKey({ ...LINK, useCount: LINK.useCount + 1 })).toBe('id:token');
+      expect(toInviteQrLinkKey({ ...LINK, id: 'successor' })).toBe('successor:token');
+      expect(toInviteQrLinkKey({ ...LINK, token: 'fresh' })).toBe('id:fresh');
+    });
+
+    it('keys nothing to a link no code could be drawn from', (): void => {
+      expect(toInviteQrLinkKey(null)).toBe('');
+      expect(toInviteQrLinkKey({ ...LINK, state: InviteLinkState.REVOKED })).toBe('');
+      expect(toInviteQrLinkKey({ ...LINK, token: null })).toBe('');
+      expect(toInviteQrLinkKey({ ...LINK, token: '' })).toBe('');
     });
   });
 

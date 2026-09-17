@@ -37,6 +37,13 @@ export const INVITE_EXPIRY_OPTIONS: readonly IInviteExpiryOption[] = [
 export const COPIED_VISIBLE_MS: number = 2000;
 
 /**
+ * The id of the region the code opens into, named so the control can point `aria-controls` at it.
+ * @public
+ * @constant
+ */
+export const INVITE_QR_REGION_ID: string = 'league-invite-qr';
+
+/**
  * Shown when a create, replace or revoke was refused, or could not be confirmed and the re-read shows no change.
  * @public
  * @constant
@@ -44,7 +51,7 @@ export const COPIED_VISIBLE_MS: number = 2000;
 export const INVITE_UPDATE_FAILED_MESSAGE: string = 'Pongifi could not update the invite link. Try again.';
 
 /**
- * Shown when a replace or revoke named a link that another request had already replaced.
+ * Shown when a replace, a revoke or a QR action named a link that another request had already replaced.
  * @public
  * @constant
  */

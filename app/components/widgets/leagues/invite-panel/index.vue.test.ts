@@ -11,7 +11,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ████████████████████████████ #components/widgets/leagues/invite-panel/index.vue.test.ts █████████████████████████████
  *
- * Mounted component tests for the invite panel's QR check, render, download and invalidation.
+ * Mounted component tests for the invite panel's QR disclosure, check, render, download and invalidation.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -26,7 +26,12 @@ import { nextTick } from 'vue';
 import type { IInviteLink, IInvitePanel } from '#shared/leagues';
 import { InviteLinkState } from '#shared/leagues';
 
-import { INVITE_QR_UNREAD_MESSAGE } from './constants';
+import {
+  INVITE_AUTHORITY_LOST_MESSAGE,
+  INVITE_QR_REGION_ID,
+  INVITE_QR_UNREAD_MESSAGE,
+  INVITE_STALE_MESSAGE,
+} from './constants';
 import InvitePanel from './index.vue';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -61,6 +66,27 @@ const DOWNLOAD: string = 'Download QR';
 const REVOKE: string = 'Revoke link';
 
 /**
+ * The other write that retires the link a code was checked against
+ * @internal
+ * @constant
+ */
+const REPLACE: string = 'Replace link';
+
+/**
+ * The line the panel shows once the last link has been revoked
+ * @internal
+ * @constant
+ */
+const REVOKED_LINE: string = 'Last link: revoked';
+
+/**
+ * The read-only field holding the link, offered only while there is a link to copy
+ * @internal
+ * @constant
+ */
+const LINK_FIELD: string = '#invite-url';
+
+/**
  * A usable link, the state every QR control is offered in
  * @internal
  * @constant
@@ -84,6 +110,18 @@ const REVOKED: IInviteLink = {
   ...USABLE,
   state: InviteLinkState.REVOKED,
   token: null,
+};
+
+/**
+ * The link that replaced it, issued in another tab: a different link, and one anybody could still use
+ * @internal
+ * @constant
+ */
+const SUCCESSOR: IInviteLink = {
+  ...USABLE,
+  id: 'invite-2',
+  token: 'zyxwvutsrqponmlkjihgfedc',
+  useCount: 0,
 };
 
 /**
@@ -151,6 +189,14 @@ async function mountPanel(link: IInviteLink | null): Promise<VueWrapper> {
       endpoint.writes.push('revoke');
 
       return Promise.resolve({ link: REVOKED });
+    },
+    method: 'POST',
+  });
+  registerEndpoint(`/api/leagues/${leagueId}/invitations/${USABLE.id}/replace`, {
+    handler: (): Promise<IInvitePanel> => {
+      endpoint.writes.push('replace');
+
+      return Promise.resolve({ link: SUCCESSOR });
     },
     method: 'POST',
   });
@@ -250,6 +296,20 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(endpoint.writes).toEqual([]);
   });
 
+  it('announces the code as a disclosure, open or closed', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    expect(control(wrapper, SHOW)?.attributes('aria-controls')).toBe(INVITE_QR_REGION_ID);
+    expect(control(wrapper, SHOW)?.attributes('aria-expanded')).toBe('false');
+    expect(wrapper.find(`#${INVITE_QR_REGION_ID}`).exists()).toBe(true);
+
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    expect(control(wrapper, 'Hide QR')?.attributes('aria-expanded')).toBe('true');
+    expect(wrapper.find(`#${INVITE_QR_REGION_ID}`).exists()).toBe(true);
+  });
+
   it('renders no code for a link revoked in another tab, and shows the state it is in', async (): Promise<void> => {
     const wrapper: VueWrapper = await mountPanel(USABLE);
 
@@ -258,8 +318,37 @@ describe(getTestFileName(import.meta.url), (): void => {
     await flush();
 
     expect(wrapper.find('img').exists()).toBe(false);
-    expect(wrapper.text()).toContain('Last link: revoked');
+    expect(wrapper.text()).toContain(REVOKED_LINE);
     expect(control(wrapper, SHOW)).toBeUndefined();
+
+    // The panel already says what happened; only a link that quietly changed under the click needs saying out loud
+    expect(wrapper.text()).not.toContain(INVITE_STALE_MESSAGE);
+  });
+
+  it('refuses a code for a link replaced in another tab, and says the link changed', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    answerWith(SUCCESSOR);
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.text()).toContain(INVITE_STALE_MESSAGE);
+    expect(wrapper.find(LINK_FIELD).attributes('value')).toContain(SUCCESSOR.token);
+    expect(control(wrapper, SHOW)).toBeDefined();
+  });
+
+  it('saves nothing for a link replaced in another tab, and says the link changed', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    answerWith(SUCCESSOR);
+    await control(wrapper, DOWNLOAD)?.trigger('click');
+    await flush();
+
+    expect(saved).toEqual([]);
+    expect(minted.count).toBe(0);
+    expect(wrapper.text()).toContain(INVITE_STALE_MESSAGE);
+    expect(wrapper.find(LINK_FIELD).attributes('value')).toContain(SUCCESSOR.token);
   });
 
   it('refuses rather than falling back on the usable link it is still holding', async (): Promise<void> => {
@@ -271,7 +360,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(wrapper.find('img').exists()).toBe(false);
     expect(wrapper.text()).toContain(INVITE_QR_UNREAD_MESSAGE);
-    expect(wrapper.find('#invite-url').attributes('value')).toContain(USABLE.token);
+    expect(wrapper.find(LINK_FIELD).attributes('value')).toContain(USABLE.token);
   });
 
   it('saves the code under the league short mark, writing nothing', async (): Promise<void> => {
@@ -293,7 +382,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(saved).toEqual([]);
     expect(minted.count).toBe(0);
-    expect(wrapper.text()).toContain('Last link: revoked');
+    expect(wrapper.text()).toContain(REVOKED_LINE);
   });
 
   it('discards a code whose check was overtaken by a revoke', async (): Promise<void> => {
@@ -320,6 +409,118 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(wrapper.find('img').exists()).toBe(false);
     expect(endpoint.writes).toEqual(['revoke']);
+
+    // Nor adopted: an answer older than the revoke would put the dead link and its controls back on screen
+    expect(wrapper.find(LINK_FIELD).exists()).toBe(false);
+    expect(wrapper.text()).toContain(REVOKED_LINE);
+    expect(control(wrapper, SHOW)).toBeUndefined();
+  });
+
+  it('keeps the link a replacement left, rather than the one a held download read answers with', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    let release: (panel: IInvitePanel) => void = (): void => undefined;
+
+    endpoint.read = (): Promise<IInvitePanel> =>
+      new Promise((resolve: (panel: IInvitePanel) => void): void => {
+        release = resolve;
+      });
+
+    const saving: Promise<void> = control(wrapper, DOWNLOAD)?.trigger('click') ?? Promise.resolve();
+
+    await control(wrapper, REPLACE)?.trigger('click');
+    await flush();
+    await control(wrapper, REPLACE)?.trigger('click');
+    await flush();
+
+    release({ link: USABLE });
+    await saving;
+    await flush();
+
+    expect(saved).toEqual([]);
+    expect(minted.count).toBe(0);
+    expect(endpoint.writes).toEqual(['replace']);
+    expect(wrapper.find(LINK_FIELD).attributes('value')).toContain(SUCCESSOR.token);
+  });
+
+  it('clears the shown code and controls when a check observes removed membership', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    expect(wrapper.find('img').exists()).toBe(true);
+
+    endpoint.read = (): Promise<IInvitePanel> => Promise.reject(createError({ statusCode: 404 }));
+    await control(wrapper, DOWNLOAD)?.trigger('click');
+    await flush();
+
+    expect(saved).toEqual([]);
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.find(LINK_FIELD).exists()).toBe(false);
+    expect(control(wrapper, DOWNLOAD)).toBeUndefined();
+  });
+
+  it('says nothing about a read that failed for a click a write had already overtaken', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    let fail: (failure: unknown) => void = (): void => undefined;
+
+    // One promise for every call, because a failed read is retried once and both attempts must answer the same way
+    const held: Promise<IInvitePanel> = new Promise(
+      (_resolve: (panel: IInvitePanel) => void, reject: (failure: unknown) => void): void => {
+        fail = reject;
+      },
+    );
+
+    endpoint.read = (): Promise<IInvitePanel> => held;
+
+    const showing: Promise<void> = control(wrapper, SHOW)?.trigger('click') ?? Promise.resolve();
+
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+
+    fail(createError({ statusCode: 502 }));
+    await showing;
+    await flush();
+
+    expect(wrapper.text()).not.toContain(INVITE_QR_UNREAD_MESSAGE);
+    expect(wrapper.text()).toContain(REVOKED_LINE);
+  });
+
+  it('lets the controls go for a lost role, even on a click a write had already overtaken', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    let fail: (failure: unknown) => void = (): void => undefined;
+
+    const held: Promise<IInvitePanel> = new Promise(
+      (_resolve: (panel: IInvitePanel) => void, reject: (failure: unknown) => void): void => {
+        fail = reject;
+      },
+    );
+
+    endpoint.read = (): Promise<IInvitePanel> => held;
+
+    const saving: Promise<void> = control(wrapper, DOWNLOAD)?.trigger('click') ?? Promise.resolve();
+
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+
+    // A role that is gone is gone whichever click found out; it is not a message a newer action gets to swallow
+    fail(createError({ statusCode: 404 }));
+    await saving;
+    await flush();
+
+    expect(wrapper.text()).toContain(INVITE_AUTHORITY_LOST_MESSAGE);
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(saved).toEqual([]);
   });
 
   it('clears an open code the moment a write begins', async (): Promise<void> => {
