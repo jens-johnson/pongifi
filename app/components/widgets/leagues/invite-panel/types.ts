@@ -22,8 +22,14 @@
  * @interface
  */
 export interface ILeaguesInvitePanelProps {
+  /* The league's short mark, which names the downloaded code */
+  abbreviation: string;
+
   /* The league whose link the panel manages */
   leagueId: string;
+
+  /* The league's name, shown beside the code and printed under the downloaded one */
+  leagueName: string;
 }
 
 /**

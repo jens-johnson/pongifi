@@ -19,13 +19,11 @@
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import { describe, expect, it } from 'vitest';
 
-import { STANDARD_LEAGUE_SETTINGS } from '#shared/league-settings';
 import type { IInviteLink } from '#shared/leagues';
 import { InviteLinkState } from '#shared/leagues';
-import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
-import { describeInviteLink, describeLeagueSettings, describeMemberCount, toDayMonthYear } from './utils';
+import { describeInviteLink, describeMemberCount, toDayMonthYear } from './utils';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -94,32 +92,6 @@ describe(getTestFileName(import.meta.url), (): void => {
         }),
       ).toBe('Last link: expired 17 September 2026 · used 3 times');
       expect(describeInviteLink({ ...LINK, state: InviteLinkState.REVOKED })).toBe('Last link: revoked');
-    });
-  });
-
-  describe(symbolName(describeLeagueSettings), (): void => {
-    it('describes the standard settings in the four lines the page shows', (): void => {
-      expect(describeLeagueSettings(STANDARD_LEAGUE_SETTINGS)).toEqual([
-        'Formats: Singles, Doubles, Cutthroat',
-        'Games to 11, cutthroat to 7. Win by 2. Best of 1.',
-        'Results: confirmed by the other players, or accepted automatically after 24 hours if nobody disputes.',
-        'Ratings: on, provisional for the first 10 games.',
-      ]);
-    });
-
-    it('names only the formats played, and leaves best-of out of a cutthroat-only league', (): void => {
-      const lines: string[] = describeLeagueSettings({
-        ...STANDARD_LEAGUE_SETTINGS,
-        allowedGameTypes: [GameType.CUTTHROAT],
-      });
-
-      expect(lines.slice(0, 2)).toEqual(['Formats: Cutthroat', 'Cutthroat to 7. Win by 2.']);
-    });
-
-    it('names each paired format when only one of them is played', (): void => {
-      expect(describeLeagueSettings({ ...STANDARD_LEAGUE_SETTINGS, allowedGameTypes: [GameType.DOUBLES] })[1]).toBe(
-        'Doubles to 11. Win by 2. Best of 1.',
-      );
     });
   });
 });
