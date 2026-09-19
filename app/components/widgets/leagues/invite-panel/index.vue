@@ -316,10 +316,11 @@ function readOptions(): IInviteLinkOptions | null {
 /**
  * Runs one write and settles the panel on its outcome.
  *
- * A definite refusal leaves the old link working and says so. A conflict re-reads and shows the current link, and a
- * link that ran out of time or uses re-reads the same way but says the link is dead rather than replaced. An uncertain
- * outcome re-reads before showing any control, and only alerts if the re-read shows nothing changed, so a replacement
- * whose answer was lost is found by the re-read rather than by a second replacement
+ * A definite refusal leaves the old link working and says so, except the one that says the caller is no longer in the
+ * league at all, which retires the panel rather than offering a retry. A conflict re-reads and shows the current
+ * link, and a link that ran out of time or uses re-reads the same way but says the link is dead rather than replaced.
+ * An uncertain outcome re-reads before showing any control, and only alerts if the re-read shows nothing changed, so
+ * a replacement whose answer was lost is found by the re-read rather than by a second replacement
  * @internal
  * @function
  * @param write - The request to send
@@ -347,6 +348,15 @@ async function runWrite(write: () => Promise<IInvitePanel>): Promise<void> {
     }
 
     if (failure === WriteFailure.FORBIDDEN && (await exit.toWelcomeIfOwed())) {
+      return;
+    }
+
+    // A former member is not shown the league at all, so a write refused as missing means the role is gone rather
+    // than the link. The controls go with it, the way a check's 404 does, and the write already dropped the code;
+    // a retry alert would only invite a second write nothing will ever serve
+    if (failure === WriteFailure.NOT_FOUND) {
+      authority.value = false;
+
       return;
     }
 
