@@ -1,5 +1,91 @@
 # Changelog
 
+## [0.3.0](https://github.com/jens-johnson/pongifi/compare/pongifi-v0.2.0...pongifi-v0.3.0) (2026-09-17)
+
+
+### ✨ Features
+
+* add a mobile navigation menu ([e579f02](https://github.com/jens-johnson/pongifi/commit/e579f02fdb8b1afa41b0068425ca8dee61655bee))
+* add the profile, welcome and dashboard pages ([e58546f](https://github.com/jens-johnson/pongifi/commit/e58546f05b57edcef4ed28242f35f0f6fb4b5851))
+* **api:** add the account and league endpoints the profile pages read ([af14db9](https://github.com/jens-johnson/pongifi/commit/af14db94af7847652d731601904f4eb59279486f))
+* **api:** add the league entry endpoints ([8df131a](https://github.com/jens-johnson/pongifi/commit/8df131a0759cf3b0d1ac4727d51173096c7ce0e1))
+* **api:** close the private-read and write gaps on the profile endpoints ([545c5e1](https://github.com/jens-johnson/pongifi/commit/545c5e13a3db7b457572ac71514089eb6135da12))
+* **api:** save one league settings section against the revision it loaded ([3e94a00](https://github.com/jens-johnson/pongifi/commit/3e94a00479d3986c5aca84ce6fa17f7af38f3333))
+* **app:** add the league entry pages ([02ec6c4](https://github.com/jens-johnson/pongifi/commit/02ec6c457fe5fac0ab17716751467f29aa4ed6b4))
+* **app:** edit a league's settings, one section at a time ([b359908](https://github.com/jens-johnson/pongifi/commit/b3599080f319f2f151d0d7b5e718f87e64968db0))
+* **app:** gate the league entry routes by path shape ([0748468](https://github.com/jens-johnson/pongifi/commit/07484687ea63718c7ddda1f179c2b4e23e325c45))
+* **app:** route every request according to the session behind it ([d99fe7b](https://github.com/jens-johnson/pongifi/commit/d99fe7be7a89ff860c395a6b88ebecd318235ad1))
+* **auth:** add google sign-in flow ([a7d03f6](https://github.com/jens-johnson/pongifi/commit/a7d03f6504af61b3b6dcaf4bfad026df1e993d5b))
+* **auth:** add Google sign-in flow ([09e382f](https://github.com/jens-johnson/pongifi/commit/09e382f2b648fbf0fe30c8edc1f6cab28b8910ce))
+* **auth:** record when a player has completed the welcome step ([383d908](https://github.com/jens-johnson/pongifi/commit/383d90801de7cb4c39740eccbd83271210f4dae2))
+* build the about page ([4a64cc1](https://github.com/jens-johnson/pongifi/commit/4a64cc11d1a36038e7ada832cff92f6514b5a756))
+* build the features page ([8155102](https://github.com/jens-johnson/pongifi/commit/81551022102e97abc3b4c50221d0b7c76dd9dacb))
+* **components:** build the account, leagues and dashboard components ([cb9ec43](https://github.com/jens-johnson/pongifi/commit/cb9ec433faf24376a511c3fa20a42122b1d18ae4))
+* **components:** turn the launch-scope strip into a coming-soon section ([c314e1d](https://github.com/jens-johnson/pongifi/commit/c314e1db6396a54207746ebb6a890401118efe53))
+* **db:** give every league the configuration revision its settings writes carry ([a38ef2c](https://github.com/jens-johnson/pongifi/commit/a38ef2ce12f3681052ee3e5823a9efa63446f855))
+* **db:** hold one live invite link per league and record create submissions ([dc9e98c](https://github.com/jens-johnson/pongifi/commit/dc9e98c6f82790137d76f89d59fc533339448c21))
+* dithered hero backdrop and the design token sync ([c93772b](https://github.com/jens-johnson/pongifi/commit/c93772bbf1426336602795f3b6489a9cba882f6a))
+* give the marketing pages routes and fill the space below the hero ([984d425](https://github.com/jens-johnson/pongifi/commit/984d425693fbccf0cbf389ba9bec9db89e1b9384))
+* league entry (create, invite, join) ([8cd2cd2](https://github.com/jens-johnson/pongifi/commit/8cd2cd2df7d6f3d0cb43cbf57ffb74403fde43b1))
+* league settings (numeric contract, section saves, editor page) ([3ea6de3](https://github.com/jens-johnson/pongifi/commit/3ea6de320ecc767d081e5be42066e453c6751c71))
+* lean the landing page on the accent and rotate the headline ([ac4454f](https://github.com/jens-johnson/pongifi/commit/ac4454fd513db5701b7d13b01487e5247d1ca810))
+* marketing site scaffold, features page, and style-guide alignment ([7d76db6](https://github.com/jens-johnson/pongifi/commit/7d76db6685d91478b5fe6f00810329e19bd0f903))
+* **pages:** add the profile, welcome and leagues pages and the signed-in shell ([e0c426a](https://github.com/jens-johnson/pongifi/commit/e0c426a26ee97b0a3d783c39875e88cff9131253))
+* **pages:** build the faq page ([bd4899b](https://github.com/jens-johnson/pongifi/commit/bd4899b04b812ec78026a48535bbad84f4040374))
+* **pages:** build the faq page ([515202d](https://github.com/jens-johnson/pongifi/commit/515202d4f86242dc4c7699087697fbbb203e8a4f))
+* **shared:** add the numeric league-settings bounds every write is checked against ([5f56996](https://github.com/jens-johnson/pongifi/commit/5f569966e2ee4948fd6a3dc87374aedc6f706356))
+* **shared:** validate one settings-page section save at a time ([afb4955](https://github.com/jens-johnson/pongifi/commit/afb4955bde0ed6efc7af8b23128f569f003679a9))
+
+
+### 🐛 Bug Fixes
+
+* **api:** authorize the settings write inside its own statement ([8fe7626](https://github.com/jens-johnson/pongifi/commit/8fe76263acec63b7a6d66640d411384b3c420619))
+* **api:** close the gaps an independent review found in league entry ([0587867](https://github.com/jens-johnson/pongifi/commit/0587867f41cb02ec3d7a9887af3f6ee15bcda21b))
+* **app:** close the sign-in loop an unauthorized read left open ([e6f60f8](https://github.com/jens-johnson/pongifi/commit/e6f60f8c7cb38bfd1b0d8e27371532fe07ce70ec))
+* **app:** correct seven settings-page defects two reviews found ([1d0d870](https://github.com/jens-johnson/pongifi/commit/1d0d870a8bf194b60ff3872dfa0b805c9e6662ea))
+* **app:** disarm a retry where it is pressed, and pin the page's own copy ([eb39726](https://github.com/jens-johnson/pongifi/commit/eb39726c486a61079d7ccd09a9b5cf24f75c0fa7))
+* **app:** keep an uncertain create uncertain, and never strand the form ([c97f1b9](https://github.com/jens-johnson/pongifi/commit/c97f1b9947206215fb28a7b151ba699b3d5faffa))
+* **app:** make a held body mean one thing, and finish the acceptance sequences ([9c51996](https://github.com/jens-johnson/pongifi/commit/9c51996ef498fa4fd6286538c08f627a31489d9b))
+* **app:** settle a stale adoption and a 409 the stored values already satisfy ([b0b5f4b](https://github.com/jens-johnson/pongifi/commit/b0b5f4b1b33483557c2527dd83f89ddd827a8bcc))
+* **auth:** address sign-in review comments ([812d062](https://github.com/jens-johnson/pongifi/commit/812d06276c7959fee4ab2efffa22ac1c9cc27587))
+* **auth:** keep a player's chosen display name across google sign-ins ([863fb28](https://github.com/jens-johnson/pongifi/commit/863fb2828cd9d8f4b1b321008520a7cf07a9c1cc))
+* **auth:** make the session user type visible to server code ([95abcd1](https://github.com/jens-johnson/pongifi/commit/95abcd1b16c6f9c90f434039780e1d5c8f56c523))
+* **ci:** apply database migrations during the vercel build ([1d27815](https://github.com/jens-johnson/pongifi/commit/1d27815e1a1ddd00e43ebc486cdd2bbd9e059ea0))
+* **ci:** apply database migrations during the vercel build ([e47ad93](https://github.com/jens-johnson/pongifi/commit/e47ad93ff1ca161780ad5d1caa1e3c7a00330b9a))
+* **ci:** guard cleanup state and trusted loader ([dbcede0](https://github.com/jens-johnson/pongifi/commit/dbcede04783217d55a8ad298a8803f9820cebb54))
+* **components:** centre the trust stepper circles above their labels ([31ee83b](https://github.com/jens-johnson/pongifi/commit/31ee83b12840a1b0e4a9caf7334715b887d80905))
+* give the accent tokens enough contrast for use on buttons and links ([f379ee8](https://github.com/jens-johnson/pongifi/commit/f379ee8928d02550e76e1cbf8e5516590fc8eb40))
+* **leagues:** stop telling a commissioner a dead link was replaced ([ab3f1c7](https://github.com/jens-johnson/pongifi/commit/ab3f1c7feab61e23f8917b8a03b3ec1b188ffd19))
+* **pages:** preserve faq navigation state ([583868a](https://github.com/jens-johnson/pongifi/commit/583868adf654f98bd818d6839848a19546029a80))
+* **pages:** refresh the session after a write and draw the failed read ([0ceef54](https://github.com/jens-johnson/pongifi/commit/0ceef5473f4f5ac4a8c1f3a6d9f532365bf843e6))
+* **pages:** remove regulation table question ([2b60e2f](https://github.com/jens-johnson/pongifi/commit/2b60e2fa84dd4780d8692173dde6d36a17dceeca))
+* **pages:** route faq fragments through vue router ([07166a3](https://github.com/jens-johnson/pongifi/commit/07166a39430dcc30df360af261eaec6186353cc7))
+* **pages:** set the dashboard's cache header through the nuxt composable ([7932011](https://github.com/jens-johnson/pongifi/commit/79320115c1afc9d0d7931d670e0a4a031f054f64))
+* **server:** refuse a write the rate limiter did not answer in time ([3ff0271](https://github.com/jens-johnson/pongifi/commit/3ff0271f105e189fcef8037f8d6b10443a2623f6))
+* **shared:** group the thousands in the settings range message ([4b38897](https://github.com/jens-johnson/pongifi/commit/4b38897c8f32ea9e30ba03cedd19dbfe2bf66ec4))
+* **shared:** report the settings field the page actually lists first ([2464fc8](https://github.com/jens-johnson/pongifi/commit/2464fc8253a3fa74fec7ab30646d5d0c39ad0904))
+* **types:** declare the platform flag the invite lookup limiter reads ([25fae98](https://github.com/jens-johnson/pongifi/commit/25fae9865f023300a5fde2953bba9e6f068bba74))
+
+
+### ♻️  Refactors
+
+* **app:** align the remaining scaffold with the style guide ([1203e14](https://github.com/jens-johnson/pongifi/commit/1203e148c22002e4a958c2d0bb4d0525451c7eff))
+* **components:** bring the features components up to the style guide ([c37fa11](https://github.com/jens-johnson/pongifi/commit/c37fa1117b3e50a4d42d8f37fd185540e566c035))
+* **leagues:** put the module's constants in its constants file ([37c894b](https://github.com/jens-johnson/pongifi/commit/37c894b6ea81a6c17c4359518dd18a605919f8ac))
+* move components into atomic-design folders ([e01d0a4](https://github.com/jens-johnson/pongifi/commit/e01d0a4efdaec65bcbfa8a645f8909f908640724))
+* **shared:** report every numeric settings fault, not just the first ([176b2cb](https://github.com/jens-johnson/pongifi/commit/176b2cbd4d1b8314c0bcb8b6a774812ae1b4f130))
+
+
+### 📝 Docs
+
+* **api:** correct what the invite statements claim about racing and expiry ([07bde8e](https://github.com/jens-johnson/pongifi/commit/07bde8e30d78bbb16ee4abfa2eb77e6935d41a40))
+
+
+### 👷 CI
+
+* **db:** retire closed pull request databases ([be6bbf9](https://github.com/jens-johnson/pongifi/commit/be6bbf954933024ca5e8f72370b050a4f8492282))
+* **db:** retire closed pull request databases ([fc73cf7](https://github.com/jens-johnson/pongifi/commit/fc73cf71e0110453abd2c12df6b811d16d844bd3))
+
 ## [0.2.0](https://github.com/jens-johnson/pongifi/compare/pongifi-v0.1.0...pongifi-v0.2.0) (2026-08-28)
 
 
