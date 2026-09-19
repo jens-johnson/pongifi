@@ -17,6 +17,9 @@
  */
 
 import type { LeagueRole } from '#shared/domain';
+import type { GameType } from '#shared/rules-engine';
+
+import type { LeagueMembershipSort } from './enums';
 
 /**
  * The current user's account as `/api/me` returns it.
@@ -87,17 +90,76 @@ export interface ILeagueMembership {
   /* The league's short form, shown where the full name will not fit */
   abbreviation: string;
 
+  /* The formats this league currently permits */
+  allowedGameTypes: GameType[];
+
+  /* The league's optional description */
+  description: string | null;
+
+  /* Accepted games recorded in this league */
+  gameCount: number;
+
   /* The league's identifier */
   id: string;
 
   /* When the player joined, as an ISO string */
   joinedAt: string;
 
+  /* Active members in this league */
+  memberCount: number;
+
   /* The league's name */
   name: string;
 
   /* The player's role in this league */
   role: LeagueRole;
+}
+
+/**
+ * One page of the signed-in player's active league memberships.
+ * @public
+ * @interface
+ */
+export interface ILeagueMembershipPage {
+  /* Active memberships matching the current search and filters */
+  filteredTotal: number;
+
+  /* The effective page after clamping a stale bookmark */
+  page: number;
+
+  /* The maximum rows requested for this consumer */
+  pageSize: number;
+
+  /* The memberships on the effective page */
+  rows: ILeagueMembership[];
+
+  /* Every active membership before search and filters */
+  unfilteredTotal: number;
+}
+
+/**
+ * The normalized server query for a membership page.
+ * @public
+ * @interface
+ */
+export interface ILeagueMembershipQuery {
+  /* A required allowed format, or null for every format */
+  format: GameType | null;
+
+  /* The requested one-based page */
+  page: number;
+
+  /* The bounded number of rows returned */
+  pageSize: number;
+
+  /* A required viewer role, or null for every role */
+  role: LeagueRole | null;
+
+  /* Literal case-insensitive text matched against the name and short mark */
+  search: string;
+
+  /* The allowlisted row ordering */
+  sort: LeagueMembershipSort;
 }
 
 /**

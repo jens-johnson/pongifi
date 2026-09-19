@@ -9,18 +9,13 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████ #components/widgets/leagues/panel/constants.ts ███████████████████████████████████
+ * ██████████████████████████████████████████ #utils/leagues/browse/index.ts ███████████████████████████████████████████
  *
- * How many skeleton rows the loading state draws.
+ * Public entry point for league-browsing utilities.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-/**
- * How many skeleton rows stand in while the request is in flight.
- *
- * Drawn at a real row's height so the panel does not resize when the answer arrives
- * @internal
- * @constant
- */
-export const SKELETON_ROWS: number = 5;
+export * from './constants';
+export * from './types';
+export * from './utils';

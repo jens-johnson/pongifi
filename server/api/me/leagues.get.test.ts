@@ -22,7 +22,9 @@ import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LeagueRole } from '#shared/domain';
-import type { ILeagueMembership } from '#shared/profile';
+import type { ILeagueMembership, ILeagueMembershipPage, ILeagueMembershipQuery } from '#shared/profile';
+import { DEFAULT_LEAGUE_MEMBERSHIP_SORT, LEAGUES_LIST_PAGE_SIZE } from '#shared/profile';
+import { GameType } from '#shared/rules-engine';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -36,7 +38,7 @@ interface IProfileMocks {
   isActiveAccount: Mock<(userId: string) => Promise<boolean>>;
 
   /* Stands in for the membership read, the payload a refused request must never receive */
-  readMemberships: Mock<(userId: string) => Promise<ILeagueMembership[]>>;
+  readMemberships: Mock<(userId: string, query: ILeagueMembershipQuery) => Promise<ILeagueMembershipPage>>;
 }
 
 /**
@@ -81,6 +83,10 @@ vi.stubGlobal(
   vi.fn(async (): Promise<{ user: { id: string } }> => ({ user: { id: USER_ID } })),
 );
 vi.stubGlobal('clearUserSession', clearUserSessionMock);
+vi.stubGlobal(
+  'getQuery',
+  vi.fn((): Record<string, unknown> => ({})),
+);
 vi.stubGlobal('setResponseHeader', setResponseHeaderMock);
 
 /**
@@ -105,12 +111,29 @@ const EVENT: H3Event = {} as H3Event;
 const MEMBERSHIPS: ILeagueMembership[] = [
   {
     abbreviation: 'WW',
+    allowedGameTypes: [GameType.SINGLES],
+    description: 'Wednesday lunch games.',
+    gameCount: 4,
     id: 'a4f1c0de-0000-4000-8000-000000000002',
     joinedAt: '2026-02-11T09:30:00.000Z',
+    memberCount: 8,
     name: 'Warehouse Wednesdays',
     role: LeagueRole.PLAYER,
   },
 ];
+
+/**
+ * The membership page a live account reads back.
+ * @internal
+ * @constant
+ */
+const PAGE: ILeagueMembershipPage = {
+  filteredTotal: 1,
+  page: 1,
+  pageSize: LEAGUES_LIST_PAGE_SIZE,
+  rows: MEMBERSHIPS,
+  unfilteredTotal: 1,
+};
 
 /**
  * Runs the handler and returns the H3 error it threw.
@@ -134,12 +157,19 @@ describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
     vi.clearAllMocks();
     profileMocks.isActiveAccount.mockResolvedValue(true);
-    profileMocks.readMemberships.mockResolvedValue(MEMBERSHIPS);
+    profileMocks.readMemberships.mockResolvedValue(PAGE);
   });
 
   it('returns the memberships of a live account', async (): Promise<void> => {
-    expect(await handler(EVENT)).toEqual(MEMBERSHIPS);
-    expect(profileMocks.readMemberships).toHaveBeenCalledWith(USER_ID);
+    expect(await handler(EVENT)).toEqual(PAGE);
+    expect(profileMocks.readMemberships).toHaveBeenCalledWith(USER_ID, {
+      format: null,
+      page: 1,
+      pageSize: LEAGUES_LIST_PAGE_SIZE,
+      role: null,
+      search: '',
+      sort: DEFAULT_LEAGUE_MEMBERSHIP_SORT,
+    });
   });
 
   it('refuses a retained cookie after the account was soft-deleted', async (): Promise<void> => {

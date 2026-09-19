@@ -9,77 +9,23 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #server/utils/profile/types.ts ███████████████████████████████████████████
+ * ████████████████████████████████████████ #utils/leagues/browse/constants.ts █████████████████████████████████████████
  *
- * Row and payload shapes for the profile queries.
+ * Interaction timings and skeleton counts for the leagues list.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * A user row as the profile queries select it, before timestamps are rendered for the browser.
+ * The quiet period before search writes to the route.
  * @public
- * @interface
+ * @constant
  */
-export interface IProfileRow {
-  /* The provider-owned profile image, or null when Google supplied none */
-  avatarUrl: string | null;
-
-  /* When the account was created */
-  createdAt: Date;
-
-  /* The player's chosen display name */
-  displayName: string;
-
-  /* The verified Google address */
-  email: string;
-
-  /* Pongifi's stable user identifier */
-  id: string;
-
-  /* When the player finished /welcome, or null while the step is outstanding */
-  profileCompletedAt: Date | null;
-}
+export const LEAGUE_LIST_SEARCH_DELAY_MS: number = 250;
 
 /**
- * A membership page row from the single bounded SQL read.
+ * The number of full-list skeleton rows.
  * @public
- * @interface
+ * @constant
  */
-export interface ILeagueMembershipDatabaseRow extends Record<string, unknown> {
-  /* The league's short form, null when the page has no rows */
-  abbreviation: string | null;
-
-  /* The league's allowed formats, null when the page has no rows */
-  allowedGameTypes: unknown;
-
-  /* The league's description */
-  description: string | null;
-
-  /* The effective page after clamping */
-  effectivePage: number;
-
-  /* Active memberships matching the current filters */
-  filteredTotal: number;
-
-  /* Accepted games in the league, null when the page has no rows */
-  gameCount: number | null;
-
-  /* The league identifier, null when the page has no rows */
-  id: string | null;
-
-  /* The viewer's join time, null when the page has no rows */
-  joinedAt: Date | string | null;
-
-  /* Active members in the league, null when the page has no rows */
-  memberCount: number | null;
-
-  /* The league name, null when the page has no rows */
-  name: string | null;
-
-  /* The viewer's role, null when the page has no rows */
-  role: string | null;
-
-  /* Every active membership before filters */
-  unfilteredTotal: number;
-}
+export const LEAGUE_LIST_SKELETON_ROWS: number = 5;

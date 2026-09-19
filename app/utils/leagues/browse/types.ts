@@ -9,77 +9,38 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #server/utils/profile/types.ts ███████████████████████████████████████████
+ * ██████████████████████████████████████████ #utils/leagues/browse/types.ts ███████████████████████████████████████████
  *
- * Row and payload shapes for the profile queries.
+ * Route-state types for the full leagues list.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import type { LeagueRole } from '#shared/domain';
+import type { LeagueListPresentation, LeagueMembershipSort } from '#shared/profile';
+import type { GameType } from '#shared/rules-engine';
+
 /**
- * A user row as the profile queries select it, before timestamps are rendered for the browser.
+ * The full membership-list state persisted in the route query.
  * @public
  * @interface
  */
-export interface IProfileRow {
-  /* The provider-owned profile image, or null when Google supplied none */
-  avatarUrl: string | null;
+export interface ILeagueListRouteState {
+  /* A required format, or null for every format */
+  format: GameType | null;
 
-  /* When the account was created */
-  createdAt: Date;
+  /* The requested one-based page */
+  page: number;
 
-  /* The player's chosen display name */
-  displayName: string;
+  /* The chosen desktop presentation */
+  presentation: LeagueListPresentation;
 
-  /* The verified Google address */
-  email: string;
+  /* A required viewer role, or null for every role */
+  role: LeagueRole | null;
 
-  /* Pongifi's stable user identifier */
-  id: string;
+  /* Literal text matched against league names and short marks */
+  search: string;
 
-  /* When the player finished /welcome, or null while the step is outstanding */
-  profileCompletedAt: Date | null;
-}
-
-/**
- * A membership page row from the single bounded SQL read.
- * @public
- * @interface
- */
-export interface ILeagueMembershipDatabaseRow extends Record<string, unknown> {
-  /* The league's short form, null when the page has no rows */
-  abbreviation: string | null;
-
-  /* The league's allowed formats, null when the page has no rows */
-  allowedGameTypes: unknown;
-
-  /* The league's description */
-  description: string | null;
-
-  /* The effective page after clamping */
-  effectivePage: number;
-
-  /* Active memberships matching the current filters */
-  filteredTotal: number;
-
-  /* Accepted games in the league, null when the page has no rows */
-  gameCount: number | null;
-
-  /* The league identifier, null when the page has no rows */
-  id: string | null;
-
-  /* The viewer's join time, null when the page has no rows */
-  joinedAt: Date | string | null;
-
-  /* Active members in the league, null when the page has no rows */
-  memberCount: number | null;
-
-  /* The league name, null when the page has no rows */
-  name: string | null;
-
-  /* The viewer's role, null when the page has no rows */
-  role: string | null;
-
-  /* Every active membership before filters */
-  unfilteredTotal: number;
+  /* The chosen row ordering */
+  sort: LeagueMembershipSort;
 }

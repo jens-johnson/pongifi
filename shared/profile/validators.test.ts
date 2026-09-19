@@ -19,19 +19,26 @@
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import { describe, expect, it } from 'vitest';
 
+import { LeagueRole } from '#shared/domain';
+import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
 import {
+  DEFAULT_LEAGUE_MEMBERSHIP_SORT,
   DISPLAY_NAME_EMPTY_MESSAGE,
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_REJECTED_STATUS,
   DISPLAY_NAME_TOO_LONG_MESSAGE,
+  LEAGUE_MEMBERSHIP_MAX_PAGE,
+  LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH,
+  LEAGUES_LIST_PAGE_SIZE,
   PROFILE_BODY_REJECTED_STATUS,
   PROFILE_BODY_SHAPE_MESSAGE,
   PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
 } from './constants';
+import { LeagueMembershipSort } from './enums';
 import type { IProfileWriteBodyFailure, TProfileWriteBodyResult } from './types';
-import { validateDisplayName, validateProfileWriteBody } from './validators';
+import { normalizeLeagueMembershipQuery, validateDisplayName, validateProfileWriteBody } from './validators';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -176,6 +183,65 @@ describe(getTestFileName(import.meta.url), (): void => {
         message: DISPLAY_NAME_EMPTY_MESSAGE,
         statusCode: DISPLAY_NAME_REJECTED_STATUS,
       });
+    });
+  });
+
+  describe(symbolName(normalizeLeagueMembershipQuery), (): void => {
+    it('returns the bounded full-list defaults for an empty query', (): void => {
+      expect(normalizeLeagueMembershipQuery({})).toEqual({
+        format: null,
+        page: 1,
+        pageSize: LEAGUES_LIST_PAGE_SIZE,
+        role: null,
+        search: '',
+        sort: DEFAULT_LEAGUE_MEMBERSHIP_SORT,
+      });
+    });
+
+    it('accepts allowlisted filters, ordering and the compact Home page size', (): void => {
+      expect(
+        normalizeLeagueMembershipQuery({
+          format: GameType.CUTTHROAT,
+          page: '2',
+          pageSize: '5',
+          role: LeagueRole.MANAGER,
+          search: '  Lunch  ',
+          sort: LeagueMembershipSort.MEMBERS,
+        }),
+      ).toEqual({
+        format: GameType.CUTTHROAT,
+        page: 2,
+        pageSize: 5,
+        role: LeagueRole.MANAGER,
+        search: 'Lunch',
+        sort: LeagueMembershipSort.MEMBERS,
+      });
+    });
+
+    it('normalizes invalid bookmarks without unbounded arithmetic', (): void => {
+      expect(
+        normalizeLeagueMembershipQuery({
+          format: 'QUADS',
+          page: '999999999999999999999',
+          pageSize: '10000',
+          role: 'OWNER',
+          sort: 'random',
+        }),
+      ).toMatchObject({
+        format: null,
+        page: LEAGUE_MEMBERSHIP_MAX_PAGE,
+        pageSize: LEAGUES_LIST_PAGE_SIZE,
+        role: null,
+        sort: DEFAULT_LEAGUE_MEMBERSHIP_SORT,
+      });
+    });
+
+    it('uses the first repeated value and caps search input', (): void => {
+      const search: string = 'x'.repeat(LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH + 20);
+      const normalized = normalizeLeagueMembershipQuery({ page: ['3', '8'], search });
+
+      expect(normalized.page).toBe(3);
+      expect(normalized.search).toHaveLength(LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH);
     });
   });
 });

@@ -24,7 +24,7 @@
 
 import { and, countDistinct, eq, gte, sql } from 'drizzle-orm';
 
-import { GameStatus } from '#shared/domain';
+import { ConfirmationStatus, GameStatus } from '#shared/domain';
 import { useCache } from '#utils/cache';
 import { useDatabase } from '#utils/db';
 
@@ -46,7 +46,7 @@ export interface IPublicStats {
 }
 
 /** Cache key for the aggregate. */
-const CACHE_KEY: string = 'stats:public:v1';
+const PUBLIC_STATS_CACHE_KEY: string = 'stats:public:v2';
 
 /** How long the aggregate is reused before it is recomputed. */
 const CACHE_TTL_SECONDS: number = 60;
@@ -65,7 +65,7 @@ const ACTIVE_WINDOW_DAYS: number = 7;
  */
 async function readCache(): Promise<IPublicStats | null> {
   try {
-    return (await useCache().get<IPublicStats>(CACHE_KEY)) ?? null;
+    return (await useCache().get<IPublicStats>(PUBLIC_STATS_CACHE_KEY)) ?? null;
   } catch {
     return null;
   }
@@ -79,7 +79,7 @@ async function readCache(): Promise<IPublicStats | null> {
  */
 async function writeCache(stats: IPublicStats): Promise<void> {
   try {
-    await useCache().set(CACHE_KEY, stats, { ex: CACHE_TTL_SECONDS });
+    await useCache().set(PUBLIC_STATS_CACHE_KEY, stats, { ex: CACHE_TTL_SECONDS });
   } catch {
     // a cold cache costs one query, not a broken page
   }
@@ -88,8 +88,8 @@ async function writeCache(stats: IPublicStats): Promise<void> {
 /**
  * Aggregates the public figures from confirmed, completed games.
  *
- * Only COMPLETE games count. Drafts, abandoned matches and games still awaiting confirmation are deliberately excluded:
- * a number on the landing page should be one nobody would dispute.
+ * Only CONFIRMED and COMPLETE games count. Drafts, abandoned matches and games still awaiting confirmation are
+ * deliberately excluded: a number on the landing page should be one nobody would dispute.
  * @internal
  * @function
  * @returns Aggregated public statistics from completed games.
@@ -97,7 +97,10 @@ async function writeCache(stats: IPublicStats): Promise<void> {
 async function readStats(): Promise<IPublicStats> {
   const database = useDatabase();
   const since: Date = new Date(Date.now() - ACTIVE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const completed = eq(games.status, GameStatus.COMPLETE);
+  const completed = and(
+    eq(games.confirmationStatus, ConfirmationStatus.CONFIRMED),
+    eq(games.status, GameStatus.COMPLETE),
+  );
 
   const [totals] = await database
     .select({
