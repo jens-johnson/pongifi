@@ -31,6 +31,7 @@ import {
   INVITE_QR_REGION_ID,
   INVITE_QR_UNREAD_MESSAGE,
   INVITE_STALE_MESSAGE,
+  INVITE_UPDATE_FAILED_MESSAGE,
 } from './constants';
 import InvitePanel from './index.vue';
 
@@ -71,6 +72,13 @@ const REVOKE: string = 'Revoke link';
  * @constant
  */
 const REPLACE: string = 'Replace link';
+
+/**
+ * The control that issues a league's first link
+ * @internal
+ * @constant
+ */
+const CREATE: string = 'Create invite link';
 
 /**
  * The line the panel shows once the last link has been revoked
@@ -125,12 +133,14 @@ const SUCCESSOR: IInviteLink = {
 };
 
 /**
- * What the invitations endpoint answers next, held open so a case decides per request
+ * What the invitations endpoint answers next, held open so a case decides per request. A refusal, once armed, is what
+ * every write answers with, so a case says which refusal it is testing rather than which write reaches it
  * @internal
  * @constant
  */
-const endpoint: { read: () => Promise<IInvitePanel>; writes: string[] } = vi.hoisted(() => ({
+const endpoint: { read: () => Promise<IInvitePanel>; refusal: unknown; writes: string[] } = vi.hoisted(() => ({
   read: (): Promise<IInvitePanel> => Promise.reject(new Error('unstubbed')),
+  refusal: null,
   writes: [],
 }));
 
@@ -159,6 +169,17 @@ function answerWith(link: IInviteLink | null): void {
 }
 
 /**
+ * Answers a write with its panel, or with the refusal the case armed
+ * @internal
+ * @function
+ * @param panel - What the write answers when no refusal is armed
+ * @returns The answer
+ */
+function answerWrite(panel: IInvitePanel): Promise<IInvitePanel> {
+  return endpoint.refusal === null ? Promise.resolve(panel) : Promise.reject(endpoint.refusal);
+}
+
+/**
  * Lets every answered request and the render it causes settle
  * @internal
  * @function
@@ -184,11 +205,21 @@ async function mountPanel(link: IInviteLink | null): Promise<VueWrapper> {
 
   answerWith(link);
   registerEndpoint(`/api/leagues/${leagueId}/invitations`, (): Promise<IInvitePanel> => endpoint.read());
+
+  // Registered after the read on the same path, so a create is answered by this rather than by the panel's read
+  registerEndpoint(`/api/leagues/${leagueId}/invitations`, {
+    handler: (): Promise<IInvitePanel> => {
+      endpoint.writes.push('create');
+
+      return answerWrite({ link: USABLE });
+    },
+    method: 'POST',
+  });
   registerEndpoint(`/api/leagues/${leagueId}/invitations/${USABLE.id}/revoke`, {
     handler: (): Promise<IInvitePanel> => {
       endpoint.writes.push('revoke');
 
-      return Promise.resolve({ link: REVOKED });
+      return answerWrite({ link: REVOKED });
     },
     method: 'POST',
   });
@@ -196,7 +227,7 @@ async function mountPanel(link: IInviteLink | null): Promise<VueWrapper> {
     handler: (): Promise<IInvitePanel> => {
       endpoint.writes.push('replace');
 
-      return Promise.resolve({ link: SUCCESSOR });
+      return answerWrite({ link: SUCCESSOR });
     },
     method: 'POST',
   });
@@ -230,6 +261,7 @@ function control(wrapper: VueWrapper, label: string): DOMWrapper<Element> | unde
 
 describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
+    endpoint.refusal = null;
     endpoint.writes.length = 0;
     saved.length = 0;
     minted.count = 0;
@@ -574,6 +606,57 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.text()).toContain(INVITE_AUTHORITY_LOST_MESSAGE);
     expect(wrapper.find('img').exists()).toBe(false);
     expect(saved).toEqual([]);
+  });
+
+  it('retires the panel when a create is refused as a removed membership', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(null);
+
+    endpoint.refusal = createError({ statusCode: 404 });
+    await control(wrapper, CREATE)?.trigger('click');
+    await flush();
+
+    expect(endpoint.writes).toEqual(['create']);
+    expect(wrapper.text()).toContain(INVITE_AUTHORITY_LOST_MESSAGE);
+    expect(wrapper.text()).not.toContain(INVITE_UPDATE_FAILED_MESSAGE);
+    expect(control(wrapper, CREATE)).toBeUndefined();
+  });
+
+  it('retires the panel when a replace is refused as a removed membership', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    endpoint.refusal = createError({ statusCode: 404 });
+    await control(wrapper, REPLACE)?.trigger('click');
+    await flush();
+    await control(wrapper, REPLACE)?.trigger('click');
+    await flush();
+
+    expect(endpoint.writes).toEqual(['replace']);
+    expect(wrapper.text()).toContain(INVITE_AUTHORITY_LOST_MESSAGE);
+    expect(wrapper.text()).not.toContain(INVITE_UPDATE_FAILED_MESSAGE);
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(wrapper.find(LINK_FIELD).exists()).toBe(false);
+  });
+
+  it('retires the panel when a revoke is refused as a removed membership', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountPanel(USABLE);
+
+    await control(wrapper, SHOW)?.trigger('click');
+    await flush();
+
+    endpoint.refusal = createError({ statusCode: 404 });
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+    await control(wrapper, REVOKE)?.trigger('click');
+    await flush();
+
+    expect(endpoint.writes).toEqual(['revoke']);
+    expect(wrapper.text()).toContain(INVITE_AUTHORITY_LOST_MESSAGE);
+    expect(wrapper.text()).not.toContain(INVITE_UPDATE_FAILED_MESSAGE);
+    expect(wrapper.find('img').exists()).toBe(false);
+    expect(control(wrapper, DOWNLOAD)).toBeUndefined();
   });
 
   it('clears an open code the moment a write begins', async (): Promise<void> => {
