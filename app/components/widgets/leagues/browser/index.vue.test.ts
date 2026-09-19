@@ -70,10 +70,10 @@ const PAGE: ILeagueMembershipPage = {
       abbreviation: 'CT',
       allowedGameTypes: [GameType.CUTTHROAT],
       description: null,
-      gameCount: 0,
+      gameCount: 1,
       id: 'league-2',
       joinedAt: '2026-01-10T09:30:00.000Z',
-      memberCount: 3,
+      memberCount: 1,
       name: 'Cutthroat Club',
       role: LeagueRole.COMMISSIONER,
     },
@@ -143,9 +143,22 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.text()).toContain('Warehouse Wednesdays');
     expect(wrapper.text()).toContain('Wednesday lunch games for the warehouse crew.');
     expect(wrapper.text()).toContain('8 members');
+    expect(wrapper.text()).toContain('1 member');
     expect(wrapper.text()).toContain('Singles, Doubles');
     expect(wrapper.text()).toContain('12 games');
+    expect(wrapper.text()).toContain('1 game');
     expect(button(wrapper, 'Cards').attributes('aria-pressed')).toBe('true');
+  });
+
+  it('keeps cards through tablet widths and starts table controls at the desktop breakpoint', async (): Promise<void> => {
+    const { wrapper }: { wrapper: VueWrapper } = await mountBrowser();
+    const presentation: HTMLFieldSetElement = wrapper.get('fieldset').element as HTMLFieldSetElement;
+    const tableContainer: HTMLElement = wrapper.get('table').element.parentElement!;
+
+    expect(presentation.classList).toContain('lg:block');
+    expect(presentation.classList).not.toContain('md:block');
+    expect(tableContainer.classList).toContain('lg:block');
+    expect(tableContainer.classList).not.toContain('md:block');
   });
 
   it('resets page one on a filter change and preserves the chosen sort and presentation', async (): Promise<void> => {

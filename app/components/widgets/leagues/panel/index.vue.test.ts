@@ -83,4 +83,22 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.text()).toContain('See all 6 leagues');
     expect(wrapper.findAll('a[href^="/leagues/"]')).toHaveLength(5);
   });
+
+  it('uses singular member copy for a one-person league', async (): Promise<void> => {
+    registerEndpoint('/api/me/leagues', (): Promise<ILeagueMembershipPage> =>
+      Promise.resolve({
+        ...PAGE,
+        filteredTotal: 1,
+        rows: [{ ...membership(0), memberCount: 1 }],
+        unfilteredTotal: 1,
+      }),
+    );
+
+    const wrapper: VueWrapper = await mountSuspended(Panel);
+
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Player · 1 member · Singles · Joined February 2026');
+    expect(wrapper.text()).not.toContain('1 members');
+  });
 });

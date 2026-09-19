@@ -32,6 +32,7 @@ import { LeagueMembershipSort, LEAGUES_LIST_PAGE_SIZE } from '#shared/profile';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
+import { readLeagueMembers } from '../leagues/queries';
 import { completeProfile, isActiveAccount, readMemberships, readProfile, updateDisplayName } from './queries';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -449,6 +450,42 @@ describe(getTestFileName(import.meta.url), (): void => {
       const page: ILeagueMembershipPage = await readMemberships(mine, DEFAULT_QUERY);
 
       expect(page.rows[0]).toMatchObject({ gameCount: 2, memberCount: 2 });
+    });
+
+    it('matches live rosters and keeps deleted members from changing the member sort', async (): Promise<void> => {
+      const mine: string = await insertUser(PLAYER_EMAIL, 'Maya');
+      const liveMember: string = await insertUser(OTHER_EMAIL, 'Sam');
+      const deletedMember: string = await insertUser('deleted@example.com', 'Deleted Player');
+      const deletedLeagueId: string = await insertLeague(mine, mine, 'Deleted Membership', 'DM');
+      const liveLeagueId: string = await insertLeague(mine, mine, 'Live Roster', 'LR');
+
+      await insertMembership(deletedLeagueId, deletedMember);
+      await insertMembership(liveLeagueId, liveMember);
+      await insertGame(deletedLeagueId, deletedMember, GameStatus.COMPLETE);
+      await database.execute(sql`UPDATE "users" SET "deleted_at" = NOW() WHERE "id" = ${deletedMember}`);
+
+      const page: ILeagueMembershipPage = await readMemberships(mine, {
+        ...DEFAULT_QUERY,
+        sort: LeagueMembershipSort.MEMBERS,
+      });
+      const deletedLeagueRoster = await readLeagueMembers(deletedLeagueId);
+      const liveLeagueRoster = await readLeagueMembers(liveLeagueId);
+
+      expect(page.rows.map((row): string => row.name)).toEqual(['Live Roster', 'Deleted Membership']);
+      expect(page.rows).toEqual([
+        expect.objectContaining({
+          gameCount: 0,
+          memberCount: liveLeagueRoster.length,
+          name: 'Live Roster',
+        }),
+        expect.objectContaining({
+          gameCount: 1,
+          memberCount: deletedLeagueRoster.length,
+          name: 'Deleted Membership',
+        }),
+      ]);
+      expect(deletedLeagueRoster).toHaveLength(1);
+      expect(liveLeagueRoster).toHaveLength(2);
     });
 
     it('counts only confirmed complete, retired and walkover games, including guest games', async (): Promise<void> => {

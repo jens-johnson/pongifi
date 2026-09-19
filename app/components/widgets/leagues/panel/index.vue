@@ -199,7 +199,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (page.value?.unfilte
             <span class="text-ink text-body block truncate font-medium">{{ league.name }}</span>
 
             <span class="text-ink-subtle text-caption block">
-              {{ toRoleLabel(league.role) }} · {{ league.memberCount }} members ·
+              {{ toRoleLabel(league.role) }} · {{ describeLeagueMemberCount(league.memberCount) }} ·
               {{ toGameTypeListLabel(league.allowedGameTypes) }} · Joined {{ toMonthYear(league.joinedAt) }}
             </span>
           </span>

@@ -261,6 +261,9 @@ export async function readMemberships(userId: string, query: ILeagueMembershipQu
     WITH "activeMemberCounts" AS (
       SELECT "league_id" AS "leagueId", count(*)::int AS "memberCount"
       FROM ${memberships}
+      INNER JOIN ${users} live_member
+        ON live_member."id" = ${memberships}."user_id"
+        AND live_member."deleted_at" IS NULL
       WHERE "status" = ${MembershipStatus.ACTIVE}
       GROUP BY "league_id"
     ),

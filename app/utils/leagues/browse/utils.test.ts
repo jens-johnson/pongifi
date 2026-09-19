@@ -25,7 +25,13 @@ import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
 import type { ILeagueListRouteState } from './types';
-import { normalizeLeagueListRouteState, toGameTypeListLabel, toLeagueListRouteQuery } from './utils';
+import {
+  describeLeagueGameCount,
+  describeLeagueMemberCount,
+  normalizeLeagueListRouteState,
+  toGameTypeListLabel,
+  toLeagueListRouteQuery,
+} from './utils';
 
 describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(normalizeLeagueListRouteState), (): void => {
@@ -83,6 +89,26 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(toGameTypeListLabel), (): void => {
     it('renders the selected formats as short display labels', (): void => {
       expect(toGameTypeListLabel([GameType.SINGLES, GameType.CUTTHROAT])).toBe('Singles, Cutthroat');
+    });
+  });
+
+  describe(symbolName(describeLeagueGameCount), (): void => {
+    it('uses the singular label only for one accepted game', (): void => {
+      expect([0, 1, 2].map((count: number): string => describeLeagueGameCount(count))).toEqual([
+        '0 games',
+        '1 game',
+        '2 games',
+      ]);
+    });
+  });
+
+  describe(symbolName(describeLeagueMemberCount), (): void => {
+    it('uses the singular label only for one live member', (): void => {
+      expect([0, 1, 2].map((count: number): string => describeLeagueMemberCount(count))).toEqual([
+        '0 members',
+        '1 member',
+        '2 members',
+      ]);
     });
   });
 });

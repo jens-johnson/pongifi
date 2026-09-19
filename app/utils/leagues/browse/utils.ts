@@ -25,6 +25,19 @@ import { GAME_TYPE_LABELS } from '../display';
 import type { ILeagueListRouteState } from './types';
 
 /**
+ * Renders a count with the singular or plural label it requires.
+ * @internal
+ * @function
+ * @param count - The nonnegative count to render
+ * @param singular - The label for exactly one item
+ * @param plural - The label for every other count
+ * @returns The count and its number-aware label
+ */
+function describeCount(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+/**
  * Normalizes the leagues route query into a bounded list state.
  * @public
  * @function
@@ -93,6 +106,28 @@ export function toGameTypeListLabel(gameTypes: readonly GameType[]): string {
   return gameTypes.map((gameType: GameType): string => GAME_TYPE_LABELS[gameType]).join(', ');
 }
 
+/**
+ * Renders a league's accepted-game count with number-aware copy.
+ * @public
+ * @function
+ * @param count - The accepted-game count
+ * @returns The count followed by `game` or `games`
+ */
+export function describeLeagueGameCount(count: number): string {
+  return describeCount(count, 'game', 'games');
+}
+
+/**
+ * Renders a league's live-member count with number-aware copy.
+ * @public
+ * @function
+ * @param count - The live-member count
+ * @returns The count followed by `member` or `members`
+ */
+export function describeLeagueMemberCount(count: number): string {
+  return describeCount(count, 'member', 'members');
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 defineSymbol(normalizeLeagueListRouteState, {
@@ -108,4 +143,14 @@ defineSymbol(toLeagueListRouteQuery, {
 defineSymbol(toGameTypeListLabel, {
   name: 'To Game Type List Label',
   description: 'Names a league format list in display order.',
+});
+
+defineSymbol(describeLeagueGameCount, {
+  name: 'Describe League Game Count',
+  description: "Renders a league's accepted-game count with number-aware copy.",
+});
+
+defineSymbol(describeLeagueMemberCount, {
+  name: 'Describe League Member Count',
+  description: "Renders a league's live-member count with number-aware copy.",
 });

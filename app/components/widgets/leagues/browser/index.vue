@@ -34,6 +34,8 @@ import type { IAccountReadStateInput } from '~/utils/account/read-state';
 import { AccountReadState } from '~/utils/account/read-state';
 import type { ILeagueListRouteState } from '~/utils/leagues/browse';
 import {
+  describeLeagueGameCount,
+  describeLeagueMemberCount,
   LEAGUE_LIST_SEARCH_DELAY_MS,
   LEAGUE_LIST_SKELETON_ROWS,
   normalizeLeagueListRouteState,
@@ -385,7 +387,7 @@ onScopeDispose((): void => {
       </label>
 
       <fieldset
-        class="hidden self-end md:block"
+        class="hidden self-end lg:block"
         :disabled="readState === AccountReadState.FAILED"
       >
         <legend class="sr-only">Presentation</legend>
@@ -486,7 +488,7 @@ onScopeDispose((): void => {
       <!-- Cards are always the narrow-screen presentation and remain the desktop preference when selected -->
       <ul
         class="mt-6 grid gap-4 md:grid-cols-2"
-        :class="listState.presentation === LeagueListPresentation.TABLE ? 'md:hidden' : ''"
+        :class="listState.presentation === LeagueListPresentation.TABLE ? 'lg:hidden' : ''"
       >
         <li
           v-for="league in page?.rows"
@@ -517,8 +519,9 @@ onScopeDispose((): void => {
             </span>
 
             <span class="text-ink-subtle text-caption mt-5 block">
-              {{ toRoleLabel(league.role) }} · {{ league.memberCount }} members ·
-              {{ toGameTypeListLabel(league.allowedGameTypes) }} · {{ league.gameCount }} games · Joined
+              {{ toRoleLabel(league.role) }} · {{ describeLeagueMemberCount(league.memberCount) }} ·
+              {{ toGameTypeListLabel(league.allowedGameTypes) }} · {{ describeLeagueGameCount(league.gameCount) }} ·
+              Joined
               {{ toMonthYear(league.joinedAt) }}
             </span>
           </NuxtLink>
@@ -527,7 +530,7 @@ onScopeDispose((): void => {
 
       <div
         v-if="listState.presentation === LeagueListPresentation.TABLE"
-        class="border-border bg-surface mt-6 hidden overflow-x-auto rounded-md border md:block"
+        class="border-border bg-surface mt-6 hidden overflow-x-auto rounded-md border lg:block"
       >
         <table class="w-full min-w-[880px] border-collapse text-left">
           <thead class="bg-surface-raised text-ink-muted text-caption">
