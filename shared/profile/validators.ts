@@ -11,24 +11,32 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ███████████████████████████████████████████ #shared/profile/validators.ts ███████████████████████████████████████████
  *
- * Validation for the one profile field a player owns.
+ * Validation for profile writes and membership-list query parameters.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+import { LeagueRole } from '#shared/domain';
+import { GameType } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import {
+  DEFAULT_LEAGUE_MEMBERSHIP_SORT,
   DISPLAY_NAME_EMPTY_MESSAGE,
   DISPLAY_NAME_MAX_LENGTH,
   DISPLAY_NAME_REJECTED_STATUS,
   DISPLAY_NAME_TOO_LONG_MESSAGE,
+  HOME_LEAGUES_PAGE_SIZE,
+  LEAGUE_MEMBERSHIP_MAX_PAGE,
+  LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH,
+  LEAGUES_LIST_PAGE_SIZE,
   PROFILE_BODY_REJECTED_STATUS,
   PROFILE_BODY_SHAPE_MESSAGE,
   PROFILE_BODY_UNKNOWN_FIELD_MESSAGE,
   PROFILE_WRITE_BODY_FIELDS,
 } from './constants';
-import type { TDisplayNameValidationResult, TProfileWriteBodyResult } from './types';
+import { LeagueMembershipSort } from './enums';
+import type { ILeagueMembershipQuery, TDisplayNameValidationResult, TProfileWriteBodyResult } from './types';
 
 /**
  * Validates an untrusted display name and returns the trimmed value to store.
@@ -106,6 +114,74 @@ export function validateProfileWriteBody(body: unknown): TProfileWriteBodyResult
   return { ok: true, value: result.value };
 }
 
+/**
+ * Reads the first scalar from a query-string value.
+ * @internal
+ * @function
+ * @param input - An untrusted query-string value
+ * @returns The first string value, or an empty string
+ */
+function readQueryValue(input: unknown): string {
+  const value: unknown = Array.isArray(input) ? input[0] : input;
+
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Normalizes a one-based page into the bounded arithmetic range.
+ * @internal
+ * @function
+ * @param input - An untrusted query-string value
+ * @returns A bounded one-based page
+ */
+function readPage(input: unknown): number {
+  const value: string = readQueryValue(input);
+
+  if (!/^\d+$/.test(value)) {
+    return 1;
+  }
+
+  return Math.min(Math.max(Number(value), 1), LEAGUE_MEMBERSHIP_MAX_PAGE);
+}
+
+/**
+ * Selects one of the two consumer page sizes.
+ * @internal
+ * @function
+ * @param input - An untrusted query-string value
+ * @returns The Home or full-list page size
+ */
+function readPageSize(input: unknown): number {
+  const value: number = Number(readQueryValue(input));
+
+  return value === HOME_LEAGUES_PAGE_SIZE || value === LEAGUES_LIST_PAGE_SIZE ? value : LEAGUES_LIST_PAGE_SIZE;
+}
+
+/**
+ * Normalizes an untrusted membership query into the server's bounded allowlisted contract.
+ * @public
+ * @function
+ * @param input - The request query or a route-query projection
+ * @returns The normalized membership query
+ */
+export function normalizeLeagueMembershipQuery(input: Readonly<Record<string, unknown>>): ILeagueMembershipQuery {
+  const formatValue: string = readQueryValue(input.format);
+  const roleValue: string = readQueryValue(input.role);
+  const sortValue: string = readQueryValue(input.sort);
+  const search: string = readQueryValue(input.search).trim().slice(0, LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH);
+
+  return {
+    format: Object.values(GameType).includes(formatValue as GameType) ? (formatValue as GameType) : null,
+    page: readPage(input.page),
+    pageSize: readPageSize(input.pageSize),
+    role: Object.values(LeagueRole).includes(roleValue as LeagueRole) ? (roleValue as LeagueRole) : null,
+    search,
+    sort: Object.values(LeagueMembershipSort).includes(sortValue as LeagueMembershipSort)
+      ? (sortValue as LeagueMembershipSort)
+      : DEFAULT_LEAGUE_MEMBERSHIP_SORT,
+  };
+}
+
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 // Register a readable name/description so the unit suite can title its describe block from the source symbol
@@ -117,4 +193,9 @@ defineSymbol(validateDisplayName, {
 defineSymbol(validateProfileWriteBody, {
   name: 'Validate Profile Write Body',
   description: "Validates an untrusted profile write body against the endpoints' published allowlist.",
+});
+
+defineSymbol(normalizeLeagueMembershipQuery, {
+  name: 'Normalize League Membership Query',
+  description: 'Normalizes an untrusted membership query into bounded allowlisted values.',
 });

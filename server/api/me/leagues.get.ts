@@ -22,12 +22,14 @@
 
 import { createError, type H3Event } from 'h3';
 
-import type { ILeagueMembership } from '#shared/profile';
+import type { ILeagueMembershipPage, ILeagueMembershipQuery } from '#shared/profile';
+import { normalizeLeagueMembershipQuery } from '#shared/profile';
 import { runUpstream } from '#utils/http';
 import { isActiveAccount, readMemberships } from '#utils/profile';
 
-export default defineEventHandler(async (event: H3Event): Promise<ILeagueMembership[]> => {
+export default defineEventHandler(async (event: H3Event): Promise<ILeagueMembershipPage> => {
   const { user } = await requireUserSession(event);
+  const query: ILeagueMembershipQuery = normalizeLeagueMembershipQuery(getQuery(event));
 
   // Private data: this response must never be reused for another visitor
   setResponseHeader(event, 'Cache-Control', 'private, no-store');
@@ -43,5 +45,5 @@ export default defineEventHandler(async (event: H3Event): Promise<ILeagueMembers
     throw createError({ statusCode: 401, statusMessage: 'This account is no longer available.' });
   }
 
-  return runUpstream(readMemberships(user.id), 'Pongifi could not read your leagues.');
+  return runUpstream(readMemberships(user.id, query), 'Pongifi could not read your leagues.');
 });

@@ -11,10 +11,12 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ███████████████████████████████████████████ #shared/profile/constants.ts ████████████████████████████████████████████
  *
- * Shared display name limits and the messages the profile and welcome forms show.
+ * Shared profile limits, messages, and membership-list bounds.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
+
+import { LeagueMembershipSort } from './enums';
 
 /**
  * The longest display name Pongifi stores. Standings put names beside scores, so a name long enough to break that
@@ -90,3 +92,38 @@ export const PROFILE_BODY_REJECTED_STATUS: number = 400;
  * @constant
  */
 export const DISPLAY_NAME_REJECTED_STATUS: number = 422;
+
+/**
+ * The maximum leagues shown in the compact Home panel.
+ * @public
+ * @constant
+ */
+export const HOME_LEAGUES_PAGE_SIZE: number = 5;
+
+/**
+ * The number of memberships shown on a full list page.
+ * @public
+ * @constant
+ */
+export const LEAGUES_LIST_PAGE_SIZE: number = 20;
+
+/**
+ * The longest search accepted by the membership read.
+ * @public
+ * @constant
+ */
+export const LEAGUE_MEMBERSHIP_SEARCH_MAX_LENGTH: number = 80;
+
+/**
+ * The largest bookmark page normalized before arithmetic.
+ * @public
+ * @constant
+ */
+export const LEAGUE_MEMBERSHIP_MAX_PAGE: number = 1_000_000;
+
+/**
+ * The initial and Home-panel membership order.
+ * @public
+ * @constant
+ */
+export const DEFAULT_LEAGUE_MEMBERSHIP_SORT: LeagueMembershipSort = LeagueMembershipSort.JOINED;

@@ -44,7 +44,8 @@
 import type { TPropsWithDefaults } from '@jens-johnson/style-guide/types/vue';
 import type { ComputedRef } from 'vue';
 
-import type { ILeagueMembership } from '#shared/profile';
+import type { ILeagueMembershipPage } from '#shared/profile';
+import { HOME_LEAGUES_PAGE_SIZE } from '#shared/profile';
 import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
 import { LEAGUES_ROUTE } from '~/utils/marketing/routes';
 
@@ -68,16 +69,19 @@ const props: TPropsWithDefaults<ILeaguesPanelProps, 'showEntryActions' | 'showHe
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
- * The player's leagues, with the request status the four states are drawn from.
+ * The first five memberships and the unfiltered total, shared with the dashboard greeting.
  * @internal
  * @constant
  */
 const {
-  data: leagues,
+  data: page,
   error,
   refresh,
   status,
-}: ReturnType<typeof useFetch<ILeagueMembership[]>> = useFetch<ILeagueMembership[]>('/api/me/leagues');
+}: ReturnType<typeof useFetch<ILeagueMembershipPage>> = useFetch<ILeagueMembershipPage>('/api/me/leagues', {
+  key: 'home-leagues',
+  query: { pageSize: HOME_LEAGUES_PAGE_SIZE },
+});
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -92,7 +96,7 @@ const {
  */
 const readState: ComputedRef<AccountReadState> = useAccountReadState((): IAccountReadStateInput => ({
   errorStatusCode: error.value?.statusCode ?? null,
-  hasData: Boolean(leagues.value),
+  hasData: Boolean(page.value),
   status: status.value,
 }));
 
@@ -103,7 +107,7 @@ const readState: ComputedRef<AccountReadState> = useAccountReadState((): IAccoun
  * @internal
  * @constant
  */
-const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.length ?? 0) === 0);
+const empty: ComputedRef<boolean> = computed((): boolean => (page.value?.unfilteredTotal ?? 0) === 0);
 </script>
 
 <template>
@@ -115,10 +119,10 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
       <h2 class="font-display text-h3 font-medium tracking-tight">Your leagues</h2>
 
       <span
-        v-if="readState === AccountReadState.READY && (leagues?.length ?? 0) > 1"
+        v-if="readState === AccountReadState.READY && (page?.unfilteredTotal ?? 0) > 1"
         class="text-ink-subtle text-caption"
       >
-        {{ leagues?.length }} leagues
+        {{ page?.unfilteredTotal }} leagues
       </span>
     </div>
 
@@ -176,7 +180,7 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
       class="mt-6 space-y-3"
     >
       <li
-        v-for="league in leagues"
+        v-for="league in page?.rows"
         :key="league.id"
       >
         <!-- The whole row is the link; nothing else in it changes -->
@@ -195,11 +199,25 @@ const empty: ComputedRef<boolean> = computed((): boolean => (leagues.value?.leng
             <span class="text-ink text-body block truncate font-medium">{{ league.name }}</span>
 
             <span class="text-ink-subtle text-caption block">
-              {{ toRoleLabel(league.role) }} · Joined {{ toMonthYear(league.joinedAt) }}
+              {{ toRoleLabel(league.role) }} · {{ league.memberCount }} members ·
+              {{ toGameTypeListLabel(league.allowedGameTypes) }} · Joined {{ toMonthYear(league.joinedAt) }}
             </span>
           </span>
         </NuxtLink>
       </li>
     </ul>
+
+    <NuxtLink
+      v-if="readState === AccountReadState.READY && (page?.unfilteredTotal ?? 0) > HOME_LEAGUES_PAGE_SIZE"
+      class="text-accent-strong hover:text-accent text-body-sm mt-5 inline-flex items-center gap-1.5 font-medium"
+      :to="LEAGUES_ROUTE"
+    >
+      See all {{ page?.unfilteredTotal }} leagues
+      <Icon
+        aria-hidden="true"
+        class="size-4"
+        name="lucide:arrow-right"
+      />
+    </NuxtLink>
   </section>
 </template>

@@ -24,7 +24,8 @@
 
 import type { ComputedRef } from 'vue';
 
-import type { ILeagueMembership } from '#shared/profile';
+import type { ILeagueMembershipPage } from '#shared/profile';
+import { HOME_LEAGUES_PAGE_SIZE } from '#shared/profile';
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -42,8 +43,13 @@ const { user }: ReturnType<typeof useUserSession> = useUserSession();
  * @internal
  * @constant
  */
-const { data: leagues, error }: ReturnType<typeof useFetch<ILeagueMembership[]>> =
-  useFetch<ILeagueMembership[]>('/api/me/leagues');
+const { data: page, error }: ReturnType<typeof useFetch<ILeagueMembershipPage>> = useFetch<ILeagueMembershipPage>(
+  '/api/me/leagues',
+  {
+    key: 'home-leagues',
+    query: { pageSize: HOME_LEAGUES_PAGE_SIZE },
+  },
+);
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -52,7 +58,9 @@ const { data: leagues, error }: ReturnType<typeof useFetch<ILeagueMembership[]>>
  * @internal
  * @constant
  */
-const hasLeagues: ComputedRef<boolean> = computed((): boolean => !error.value && (leagues.value?.length ?? 0) > 0);
+const hasLeagues: ComputedRef<boolean> = computed(
+  (): boolean => !error.value && (page.value?.unfilteredTotal ?? 0) > 0,
+);
 
 /**
  * The line under the greeting, which differs between a player with leagues and one without.
@@ -63,7 +71,7 @@ const hasLeagues: ComputedRef<boolean> = computed((): boolean => !error.value &&
  * @constant
  */
 const lede: ComputedRef<string> = computed((): string =>
-  !error.value && (leagues.value?.length ?? 0) === 0
+  !error.value && (page.value?.unfilteredTotal ?? 0) === 0
     ? 'A league is the container. Games happen inside it, and ratings come from those games.'
     : 'Your leagues, and everything that happens inside them.',
 );

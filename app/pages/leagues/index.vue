@@ -12,7 +12,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * █████████████████████████████████████████████ #pages/leagues/index.vue ██████████████████████████████████████████████
  *
- * The leagues the signed-in player belongs to, with the create and join actions.
+ * The signed-in player's searchable, filterable and paginated league memberships.
  *
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
@@ -26,17 +26,14 @@ useHead({ title: 'Your leagues · Pongifi' });
 
 <template>
   <main class="px-6 pt-12 pb-16 md:px-16 md:pt-22 md:pb-26">
-    <div class="max-w-[720px]">
+    <div class="max-w-[1180px]">
       <h1 class="font-display text-display font-medium tracking-tight">Your leagues</h1>
 
-      <!-- The page grows exactly the actions row; the panel below it is the dashboard's, without its own copy of them -->
+      <!-- Entry stays above browsing so the actions remain available in every list state -->
       <WidgetsLeaguesEntryActions class="mt-8" />
 
       <div class="mt-10">
-        <WidgetsLeaguesPanel
-          :show-entry-actions="false"
-          :show-heading="false"
-        />
+        <WidgetsLeaguesBrowser />
       </div>
     </div>
   </main>

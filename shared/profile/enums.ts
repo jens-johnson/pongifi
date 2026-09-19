@@ -9,77 +9,38 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ██████████████████████████████████████████ #server/utils/profile/types.ts ███████████████████████████████████████████
+ * █████████████████████████████████████████████ #shared/profile/enums.ts ██████████████████████████████████████████████
  *
- * Row and payload shapes for the profile queries.
+ * Membership-list presentation and ordering enums.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
 /**
- * A user row as the profile queries select it, before timestamps are rendered for the browser.
+ * The two desktop presentations for the full membership list.
  * @public
- * @interface
+ * @enum
  */
-export interface IProfileRow {
-  /* The provider-owned profile image, or null when Google supplied none */
-  avatarUrl: string | null;
+export enum LeagueListPresentation {
+  /* Rich linked cards */
+  CARDS = 'cards',
 
-  /* When the account was created */
-  createdAt: Date;
-
-  /* The player's chosen display name */
-  displayName: string;
-
-  /* The verified Google address */
-  email: string;
-
-  /* Pongifi's stable user identifier */
-  id: string;
-
-  /* When the player finished /welcome, or null while the step is outstanding */
-  profileCompletedAt: Date | null;
+  /* Compact comparison rows */
+  TABLE = 'table',
 }
 
 /**
- * A membership page row from the single bounded SQL read.
+ * The allowlisted membership page orderings.
  * @public
- * @interface
+ * @enum
  */
-export interface ILeagueMembershipDatabaseRow extends Record<string, unknown> {
-  /* The league's short form, null when the page has no rows */
-  abbreviation: string | null;
+export enum LeagueMembershipSort {
+  /* Newest viewer membership first */
+  JOINED = 'joined',
 
-  /* The league's allowed formats, null when the page has no rows */
-  allowedGameTypes: unknown;
+  /* Largest active roster first */
+  MEMBERS = 'members',
 
-  /* The league's description */
-  description: string | null;
-
-  /* The effective page after clamping */
-  effectivePage: number;
-
-  /* Active memberships matching the current filters */
-  filteredTotal: number;
-
-  /* Accepted games in the league, null when the page has no rows */
-  gameCount: number | null;
-
-  /* The league identifier, null when the page has no rows */
-  id: string | null;
-
-  /* The viewer's join time, null when the page has no rows */
-  joinedAt: Date | string | null;
-
-  /* Active members in the league, null when the page has no rows */
-  memberCount: number | null;
-
-  /* The league name, null when the page has no rows */
-  name: string | null;
-
-  /* The viewer's role, null when the page has no rows */
-  role: string | null;
-
-  /* Every active membership before filters */
-  unfilteredTotal: number;
+  /* League name alphabetically */
+  NAME = 'name',
 }
