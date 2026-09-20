@@ -40,6 +40,9 @@ interface IFakeTransport {
   /* Whether closing the pool never answers */
   endHangs: boolean;
 
+  /* What the helper asked to hear about from the pool itself, by event name */
+  listening: Record<string, (error: Error) => void>;
+
   /* Whether the pool was closed */
   ended: boolean;
 
@@ -152,6 +155,18 @@ vi.mock('@neondatabase/serverless', async (importActual): Promise<Record<string,
       await pause(this.owner.connectMs);
 
       return new FakeClient(this.owner);
+    }
+
+    /**
+     * Records what the helper asked to hear about, the way a pool's own emitter would
+     * @param event - The event name
+     * @param listener - What to call with it
+     * @returns The pool, as the emitter contract says
+     */
+    public on(event: string, listener: (error: Error) => void): this {
+      this.owner.listening[event] = listener;
+
+      return this;
     }
 
     /**
@@ -305,6 +320,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       connectMs: 0,
       delays: {},
       endHangs: false,
+      listening: {},
       ended: false,
       failures: {},
       released: [],
@@ -390,6 +406,16 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(outcome).toBe('recorded');
       expect(transport.sent).toContain('COMMIT');
+    });
+
+    it('listens for a failure the pool reports when nobody is waiting for it any more', async (): Promise<void> => {
+      const { outcome } = await run(async (): Promise<string> => 'recorded');
+
+      // A socket that dies after the operation is over reaches the pool, and an `error` nobody listens for is an
+      // uncaught exception that takes the whole process with it. Observed against hosted Neon after a refusal
+      expect(transport.listening.error).toBeTypeOf('function');
+      expect((): void => transport.listening.error!(new Error('the socket gave up'))).not.toThrow();
+      expect(outcome).toBe('recorded');
     });
 
     it('refuses an operation that spends its whole budget dialling the database', async (): Promise<void> => {

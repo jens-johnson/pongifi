@@ -339,6 +339,12 @@ export async function withInteractiveTransaction<TResult>(
   const pool: Pool = new Pool({ connectionString: options.connectionString });
   let committed: boolean = false;
 
+  // A pool holds sockets this operation may already have stopped waiting for: a connection a refusal destroyed, or one
+  // still closing while the pool shuts down, can report its failure with nobody left to hand it to. The pool re-emits
+  // that as `error`, and an `error` event with no listener is an uncaught exception — in a function, the whole
+  // instance rather than this one request. Observed against hosted Neon after a budget refusal
+  pool.on('error', (): void => undefined);
+
   try {
     // Inside the budget, because dialling the database is a network round trip and a request that spent its whole
     // allowance here spent it
