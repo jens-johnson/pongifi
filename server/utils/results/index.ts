@@ -13,6 +13,9 @@
  *
  * Public entry point for the server-side result operations.
  *
+ * Deliberately without `queries.ts`: the reads there run on Nuxt's auto-imported database handle, and the spike
+ * harness imports this barrel from a plain tsx process that has no Nuxt in it. Routes import that module by path.
+ *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
