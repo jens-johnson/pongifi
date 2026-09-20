@@ -649,8 +649,12 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     it('conflicts rather than replaying when a retry lengthens a guest label past the bound', async (): Promise<void> => {
       const operation: string = randomUUID();
+      // One play time for both bodies: the label has to be the only thing that differs, or a conflict
+      // would prove nothing about the label
+      const playedAt: string = new Date(Date.now() - HOUR_MS).toISOString();
       const guest = (length: number): IResultSubmission =>
         singles([[11, 4]], [ids.Ada!, ids.Ben!], {
+          playedAt,
           seats: [
             {
               guestName: null,
@@ -1037,8 +1041,10 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('conflicts when a retried correction lengthens a guest label past the bound', async (): Promise<void> => {
       const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
       const operation: string = randomUUID();
+      const playedAt: string = new Date(Date.now() - HOUR_MS).toISOString();
       const guest = (length: number): IResultSubmission =>
         singles([[11, 9]], [ids.Ada!, ids.Ben!], {
+          playedAt,
           seats: [
             {
               guestName: null,
