@@ -371,6 +371,7 @@ export async function readMatchView(
       editedBy: resultRevisions.editedBy,
       gameType: resultRevisions.gameType,
       id: resultRevisions.id,
+      originalPlayedAt: resultRevisions.originalPlayedAt,
       isCurrent: resultRevisions.isCurrent,
       playedAt: resultRevisions.playedAt,
       policySnapshot: resultRevisions.policySnapshot,
@@ -508,6 +509,7 @@ interface IMatchViewSource {
   current: {
     confirmationDeadline: Date | null;
     id: string;
+    originalPlayedAt: Date;
     playedAt: Date;
     recordedBy: string;
     revision: number;
@@ -527,6 +529,7 @@ interface IMatchViewSource {
     recordedBy: string;
     revision: number;
     submission: IResultSubmission;
+    submittedAt: Date;
   }[];
   role: LeagueRole;
   settings: IMatchSettings;
@@ -553,14 +556,29 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
     .map((seat): string | null => seat.userId)
     .filter((id): id is string => id !== null);
   const rated: boolean = source.policy.ratingEnabled && submission.seats.every((seat): boolean => seat.userId !== null);
-  const sides: IMatchViewSide[] = source.sideRows.map((row): IMatchViewSide => ({
-    confirmedBy: row.confirmedByUserId ? identityOf(identities.get(row.confirmedByUserId)) : null,
-    confirmers: source.confirmerRows
+  // Seat order, so the status line names a side's confirmers the way the participants table lists them rather than
+  // in whatever order the rows came back
+  const seatOrder: string[] = submission.seats
+    .map((seat): string | null => seat.userId)
+    .filter((id): id is string => id !== null);
+  const sides: IMatchViewSide[] = source.sideRows.map((row): IMatchViewSide => {
+    const eligible: string[] = source.confirmerRows
       .filter((confirmer): boolean => confirmer.side === row.side)
-      .map((confirmer): IResultIdentity => identityOf(identities.get(confirmer.userId))),
-    satisfiedBy: row.satisfiedBy as SideSatisfaction,
-    side: row.side as Side,
-  }));
+      .map((confirmer): string => confirmer.userId)
+      .sort((left: string, right: string): number => seatOrder.indexOf(left) - seatOrder.indexOf(right));
+    const pending: boolean = row.satisfiedBy === SideSatisfaction.PENDING;
+    const teammate: string | undefined = eligible.find((id: string): boolean => id !== source.userId);
+
+    return {
+      awaitsViewer: pending && eligible.includes(source.userId),
+      confirmedBy: row.confirmedByUserId ? identityOf(identities.get(row.confirmedByUserId)) : null,
+      confirmers: eligible.map((id: string): IResultIdentity => identityOf(identities.get(id))),
+      satisfiedBy: row.satisfiedBy as SideSatisfaction,
+      side: row.side as Side,
+      viewerTeammate:
+        pending && eligible.includes(source.userId) && teammate ? identityOf(identities.get(teammate)) : null,
+    };
+  });
   const confirmedByAccount: Set<string> = new Set(
     source.sideRows.map((row): string | null => row.confirmedByUserId).filter((id): id is string => id !== null),
   );
@@ -593,8 +611,9 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
   };
   const seated: boolean = seatedIds.includes(source.userId);
   const administrator: boolean = source.role === LeagueRole.COMMISSIONER || source.role === LeagueRole.MANAGER;
-  const amendmentBound: number =
-    new Date(submission.playedAt).getTime() + source.policy.resultAmendmentWindow * HOUR_MS;
+  // Revision one's stated play time, which the revision row keeps for exactly this: a correction that moved the play
+  // time must not be able to revive an amendment right that had run out
+  const amendmentBound: number = current.originalPlayedAt.getTime() + source.policy.resultAmendmentWindow * HOUR_MS;
   const waiting: boolean = state === ResultState.UNCONFIRMED;
   const mayConfirm: boolean =
     waiting &&
@@ -604,7 +623,10 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
         side.confirmers.some((confirmer): boolean => confirmer.id === source.userId && confirmer.member),
     );
 
+  const amendmentOpen: boolean = Date.now() < amendmentBound;
+
   return {
+    amendmentOpen,
     canonicalMatchId: source.canonicalMatchId,
     confirmationDeadline: current.confirmationDeadline?.toISOString() ?? null,
     dispute:
@@ -628,10 +650,13 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
       );
 
       return {
-        at: current.submittedAt.toISOString(),
+        // This revision's own instant: a history in which every line carried the current revision's time would say
+        // that a correction and the entry it corrected happened together
+        at: row.submittedAt.toISOString(),
         by: identityOf(identities.get(row.editedBy ?? row.recordedBy)),
         disputedAt: disputed?.createdAt.toISOString() ?? null,
         disputedBy: disputed ? identityOf(identities.get(disputed.actorUserId)) : null,
+        kind: row.editedBy === null ? 'RECORDED' : 'AMENDED',
         revision: row.revision,
         scores: row.submission.games.map((game: IGameScoreRow): string => `${game.a}-${game.b}`).join(', '),
       };
@@ -655,8 +680,9 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
     state,
     submittedAt: current.submittedAt.toISOString(),
     viewer: {
+      administrator,
       // An amendment resolves a dispute, and only while the window measured from the original play time is open
-      mayAmend: administrator && state === ResultState.DISPUTED && Date.now() < amendmentBound,
+      mayAmend: administrator && state === ResultState.DISPUTED && amendmentOpen,
       mayConfirm,
       // Wider than confirming by design: anybody seated may dispute while the result is still pending, the recorder
       // and the recorder's partner included (VII.VI)

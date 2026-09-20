@@ -206,11 +206,17 @@ export interface IResultIdentity {
  * @public
  */
 export interface IMatchViewSide {
+  /* Whether this side is one the viewer could answer for, which is what turns the status line personal */
+  awaitsViewer: boolean;
+
   /* Who confirmed for this side, when somebody did */
   confirmedBy: IResultIdentity | null;
 
-  /* The accounts frozen as able to answer for it, whether or not they still can */
+  /* The accounts frozen as able to answer for it, in seat order, whether or not they still can */
   confirmers: IResultIdentity[];
+
+  /* The other eligible account on this side, when the viewer is one of two, for the "(or …'s)" suffix */
+  viewerTeammate: IResultIdentity | null;
 
   /* How it came to be satisfied, or that it is still waiting */
   satisfiedBy: SideSatisfaction;
@@ -269,6 +275,9 @@ export interface IMatchViewRevision {
   /* Who recorded or amended it */
   by: IResultIdentity;
 
+  /* Whether this revision was the original entry or a correction of the one before it */
+  kind: 'AMENDED' | 'RECORDED';
+
   /* Who disputed that revision, when somebody did */
   disputedBy: IResultIdentity | null;
 
@@ -290,6 +299,14 @@ export interface IMatchViewRevision {
  * @public
  */
 export interface IMatchView {
+  /**
+   * Whether an amendment is still possible at all, measured from the play time the first revision stated.
+   *
+   * Separate from what this viewer may do: the disputed sentence changes on it for an administrator, who is told to
+   * resolve it by amending or voiding while it is open and that amending is no longer possible once it is not
+   */
+  amendmentOpen: boolean;
+
   /* The match, which is the page it lives at */
   canonicalMatchId: string;
 
@@ -348,7 +365,15 @@ export interface IMatchView {
   submittedAt: string;
 
   /* What this viewer may do, decided against their role and membership now */
-  viewer: { mayAmend: boolean; mayConfirm: boolean; mayDispute: boolean; mayVoid: boolean; seated: boolean };
+  viewer: {
+    /* Whether this account holds a role that resolves disputes, which the disputed sentence turns on */
+    administrator: boolean;
+    mayAmend: boolean;
+    mayConfirm: boolean;
+    mayDispute: boolean;
+    mayVoid: boolean;
+    seated: boolean;
+  };
 
   /* Who voided it, when somebody did */
   voided: { at: string; by: IResultIdentity } | null;

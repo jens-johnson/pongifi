@@ -49,7 +49,7 @@ const databaseRef = vi.hoisted((): { current: unknown } => ({ current: undefined
 vi.mock('#utils/db', (): Record<string, unknown> => ({ useDatabase: (): unknown => databaseRef.current }));
 
 const { readMatchView } = await import('./queries');
-const { answerResult, recordResult } = await import('./utils');
+const { amendResult, answerResult, recordResult } = await import('./utils');
 
 /**
  * Where the checked-in migrations live
@@ -64,6 +64,13 @@ const MIGRATIONS_FOLDER: string = fileURLToPath(new URL('../../db/migrations', i
  * @constant
  */
 const LEAGUE_ID: string = '11111111-1111-1111-1111-111111111111';
+
+/**
+ * What every case starts from: the tables a case writes, emptied rather than rebuilt
+ * @internal
+ * @constant
+ */
+const EMPTIED: string = `TRUNCATE "result_revisions", "games", "rating_generations", "memberships", "leagues", "users" CASCADE`;
 
 /**
  * The database under test
@@ -407,6 +414,123 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(opponent?.identity.removed).toBe(true);
       // The side still owes its answer, and still names who owed it
       expect(waiting?.confirmers[0]?.displayName).toBe(DELETED_ACCOUNT_NAME);
+    });
+
+    it('names a side’s confirmers in seat order, and the viewer’s teammate beside them', async (): Promise<void> => {
+      await read(EMPTIED);
+      await seedLeague(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = await record(
+        ids.Ada!,
+        singles([ids.Ada!, ids.Cara!], {
+          gameType: GameType.DOUBLES,
+          seats: [
+            {
+              guestName: null,
+              seat: Seat.A1,
+              userId: ids.Ada!,
+            },
+            {
+              guestName: null,
+              seat: Seat.A2,
+              userId: ids.Ben!,
+            },
+            {
+              guestName: null,
+              seat: Seat.B1,
+              userId: ids.Cara!,
+            },
+            {
+              guestName: null,
+              seat: Seat.B2,
+              userId: ids.Dan!,
+            },
+          ],
+        }),
+      );
+      const page: IMatchView = await view(match, ids.Dan!);
+      const waiting = page.sides.find((side): boolean => side.satisfiedBy === SideSatisfaction.PENDING);
+
+      // Seat order rather than whichever order the rows came back in: the status line reads the way the table does
+      expect(waiting?.confirmers.map((confirmer): string => confirmer.displayName)).toEqual(['Cara', 'Dan']);
+      expect(waiting?.awaitsViewer).toBe(true);
+      expect(waiting?.viewerTeammate?.displayName).toBe('Cara');
+    });
+
+    it('leaves the teammate unnamed for a viewer who is not being asked', async (): Promise<void> => {
+      const match: string = await record(ids.Ada!, singles([ids.Ada!, ids.Ben!]));
+      const page: IMatchView = await view(match, ids.Ada!);
+      const waiting = page.sides.find((side): boolean => side.satisfiedBy === SideSatisfaction.PENDING);
+
+      expect(waiting?.awaitsViewer).toBe(false);
+      expect(waiting?.viewerTeammate).toBeNull();
+    });
+
+    it('gives each revision its own instant and says which kind it was', async (): Promise<void> => {
+      const match: string = await record(ids.Ada!, singles([ids.Ada!, ids.Ben!]));
+
+      await inTransaction((transaction) =>
+        answerResult(transaction, ids.Ben!, {
+          action: ResultAction.DISPUTE,
+          canonicalMatchId: match,
+          clientOperationId: randomUUID(),
+          expectedRevision: 1,
+          note: 'that was not the score',
+        }),
+      );
+      await read(`UPDATE "result_revisions" SET "submitted_at" = now() - interval '2 hours' WHERE "revision" = 1`);
+      await inTransaction((transaction) =>
+        amendResult(transaction, ids.Ada!, {
+          canonicalMatchId: match,
+          clientOperationId: randomUUID(),
+          expectedRevision: 1,
+          submission: singles([ids.Ada!, ids.Ben!], {
+            games: [
+              {
+                a: 11,
+                b: 9,
+                gameNumber: 1,
+              },
+            ],
+          }),
+        }),
+      );
+
+      const page: IMatchView = await view(match, ids.Ben!);
+      const [first, second] = page.history;
+
+      // A history in which every line carried the current revision's time would say that a correction and the entry
+      // it corrected happened together
+      expect(page.history).toHaveLength(2);
+      expect([first!.kind, second!.kind]).toEqual(['RECORDED', 'AMENDED']);
+      expect(Date.parse(first!.at)).toBeLessThan(Date.parse(second!.at));
+      expect(first!.scores).toBe('11-4');
+      expect(second!.scores).toBe('11-9');
+      expect(first!.disputedBy?.displayName).toBe('Ben');
+    });
+
+    it('says whether amending is still possible, apart from who may do it', async (): Promise<void> => {
+      const match: string = await record(ids.Ada!, singles([ids.Ada!, ids.Ben!]));
+
+      await inTransaction((transaction) =>
+        answerResult(transaction, ids.Ben!, {
+          action: ResultAction.DISPUTE,
+          canonicalMatchId: match,
+          clientOperationId: randomUUID(),
+          expectedRevision: 1,
+          note: null,
+        }),
+      );
+
+      const open: IMatchView = await view(match, ids.Cara!, LeagueRole.COMMISSIONER);
+
+      // Past the window the sentence changes for an administrator, who can still void but can no longer amend
+      await read(`UPDATE "result_revisions" SET "original_played_at" = now() - interval '96 hours'`);
+
+      const passed: IMatchView = await view(match, ids.Cara!, LeagueRole.COMMISSIONER);
+
+      expect([open.amendmentOpen, open.viewer.mayAmend, open.viewer.administrator]).toEqual([true, true, true]);
+      expect([passed.amendmentOpen, passed.viewer.mayAmend, passed.viewer.mayVoid]).toEqual([false, false, true]);
     });
 
     it('answers nothing for a match that belongs to another league', async (): Promise<void> => {
