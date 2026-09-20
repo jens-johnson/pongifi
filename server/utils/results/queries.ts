@@ -16,14 +16,49 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { LeagueRole, MembershipStatus, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IResultFormContext, ResultOperation } from '#shared/results';
-import { GameType } from '#shared/rules-engine';
+import type {
+  IGameScoreRow,
+  IMatchView,
+  IMatchViewGame,
+  IMatchViewParticipant,
+  IMatchViewRevision,
+  IMatchViewSide,
+  IResultFormContext,
+  IResultIdentity,
+  IResultPolicySnapshot,
+  IResultSubmission,
+  ResultOperation,
+  ResultSettleReason,
+} from '#shared/results';
+import {
+  DELETED_ACCOUNT_NAME,
+  ResultAction,
+  ResultEnding,
+  ResultState,
+  sideOfSeat,
+  SideSatisfaction,
+} from '#shared/results';
+import type { IMatchSettings, Side } from '#shared/rules-engine';
+import { GameType, Side as MatchSide } from '#shared/rules-engine';
 
-import { leagues, memberships, resultOperations, users } from '../../db/schema';
+import {
+  activeRatingGenerations,
+  leagues,
+  memberships,
+  ratingSnapshots,
+  resultActions,
+  resultDisputeNotes,
+  resultOperations,
+  resultRevisionGames,
+  resultRevisions,
+  resultRevisionSides,
+  resultSideConfirmers,
+  users,
+} from '../../db/schema';
 import { useDatabase } from '../db';
 import { HOUR_MS } from './constants';
 
@@ -192,4 +227,446 @@ export async function readOperationReceipt(
     .limit(1);
 
   return rows[0] ?? null;
+}
+
+/**
+ * How a person is named, resolved now rather than copied when the match was recorded
+ * @internal
+ * @function
+ * @param row - What the join found for that account, if anything
+ * @param guestName - The label a guest seat was entered under
+ * @returns The identity a page renders
+ */
+function identityOf(
+  row: { deletedAt: Date | null; displayName: string; id: string; member: boolean } | undefined,
+  guestName: string | null = null,
+): IResultIdentity {
+  if (guestName !== null) {
+    return {
+      displayName: guestName,
+      guest: true,
+      id: null,
+      member: false,
+      removed: false,
+    };
+  }
+
+  if (!row || row.deletedAt !== null) {
+    return {
+      displayName: DELETED_ACCOUNT_NAME,
+      guest: false,
+      id: row?.id ?? null,
+      member: false,
+      removed: true,
+    };
+  }
+
+  return {
+    displayName: row.displayName,
+    guest: false,
+    id: row.id,
+    member: row.member,
+    removed: false,
+  };
+}
+
+/**
+ * Reads every account a match names, with the state each one is in now.
+ *
+ * One read for the whole page: the heading, the participants table, the history and the dispute line all name people,
+ * and all of them have to agree about who is deleted and who is still a member
+ * @internal
+ * @async
+ * @function
+ * @param leagueId - The league the match belongs to
+ * @param userIds - Every account the page could name
+ * @returns What to render for each, by account id
+ */
+async function readIdentities(
+  leagueId: string,
+  userIds: string[],
+): Promise<Map<string, { deletedAt: Date | null; displayName: string; id: string; member: boolean }>> {
+  const wanted: string[] = [...new Set(userIds)];
+
+  if (wanted.length === 0) {
+    return new Map();
+  }
+
+  const rows = await useDatabase()
+    .select({
+      deletedAt: users.deletedAt,
+      displayName: users.displayName,
+      id: users.id,
+      membership: memberships.status,
+    })
+    .from(users)
+    .leftJoin(memberships, and(eq(memberships.userId, users.id), eq(memberships.leagueId, leagueId)))
+    .where(inArray(users.id, wanted));
+
+  return new Map(
+    rows.map((row: (typeof rows)[number]) => [
+      row.id,
+      {
+        deletedAt: row.deletedAt,
+        displayName: row.displayName,
+        id: row.id,
+        member: row.membership === MembershipStatus.ACTIVE,
+      },
+    ]),
+  );
+}
+
+/**
+ * Which side won a game, by the scoreboard or by the withdrawal that ended it.
+ *
+ * A retired game is won by the side that did not withdraw whatever the scoreboard says (III.II.X.II), and every game
+ * played out before it keeps its own winner
+ * @internal
+ * @function
+ * @param game - The entered scores
+ * @param retiredSide - The side that withdrew, on the game it withdrew in
+ * @returns The winning side, or null when nobody won it
+ */
+function winnerOf(game: IGameScoreRow, retiredSide: Side | null): Side | null {
+  if (retiredSide !== null) {
+    return retiredSide === MatchSide.A ? MatchSide.B : MatchSide.A;
+  }
+
+  if (game.a === game.b) {
+    return null;
+  }
+
+  return game.a > game.b ? MatchSide.A : MatchSide.B;
+}
+
+/**
+ * Reads a match as its page shows it.
+ *
+ * The current revision alone decides what is on the page: its submission states the scores and the seats, its
+ * snapshots state the rules the match was judged by, and its sides state who still owes an answer. Earlier revisions
+ * appear only in the history.
+ *
+ * Every rating figure comes from the league's **active generation**, never from the newest rows written: a
+ * recomputation publishes a whole ladder and moves one pointer, so a page that read the newest snapshot per game
+ * could show one member's number from the new ladder beside another's from the old one
+ * @public
+ * @async
+ * @function
+ * @param leagueId - The league, already authorized for this caller
+ * @param canonicalMatchId - The match, which is its page
+ * @param userId - The account from the verified session
+ * @param role - The role that account holds now
+ * @returns The view, or null when there is no such match in this league
+ */
+export async function readMatchView(
+  leagueId: string,
+  canonicalMatchId: string,
+  userId: string,
+  role: LeagueRole,
+): Promise<IMatchView | null> {
+  const database = useDatabase();
+  const revisions = await database
+    .select({
+      confirmationDeadline: resultRevisions.confirmationDeadline,
+      editedBy: resultRevisions.editedBy,
+      gameType: resultRevisions.gameType,
+      id: resultRevisions.id,
+      isCurrent: resultRevisions.isCurrent,
+      playedAt: resultRevisions.playedAt,
+      policySnapshot: resultRevisions.policySnapshot,
+      recordedBy: resultRevisions.recordedBy,
+      revision: resultRevisions.revision,
+      settingsSnapshot: resultRevisions.settingsSnapshot,
+      settledAt: resultRevisions.settledAt,
+      settledReason: resultRevisions.settledReason,
+      state: resultRevisions.state,
+      submission: resultRevisions.submission,
+      submittedAt: resultRevisions.submittedAt,
+    })
+    .from(resultRevisions)
+    .where(and(eq(resultRevisions.leagueId, leagueId), eq(resultRevisions.canonicalMatchId, canonicalMatchId)))
+    .orderBy(asc(resultRevisions.revision));
+  const current = revisions.find((row: (typeof revisions)[number]): boolean => row.isCurrent === true);
+
+  if (!current) {
+    return null;
+  }
+
+  const submission: IResultSubmission = current.submission;
+  const settings: IMatchSettings = current.settingsSnapshot;
+  const policy: IResultPolicySnapshot = current.policySnapshot;
+  const retiredSide: Side | null =
+    submission.ending === ResultEnding.RETIRED && submission.retiredSeat ? sideOfSeat(submission.retiredSeat) : null;
+  const lastGame: number = Math.max(...submission.games.map((game: IGameScoreRow): number => game.gameNumber));
+  const games: IMatchViewGame[] = [...submission.games]
+    .sort((left: IGameScoreRow, right: IGameScoreRow): number => left.gameNumber - right.gameNumber)
+    .map((game: IGameScoreRow): IMatchViewGame => {
+      const retired: boolean = retiredSide !== null && game.gameNumber === lastGame;
+
+      return {
+        a: game.a,
+        b: game.b,
+        gameNumber: game.gameNumber,
+        retired,
+        winner: winnerOf(game, retired ? retiredSide : null),
+      };
+    });
+  const sideRows = await database
+    .select({
+      confirmedAt: resultRevisionSides.confirmedAt,
+      confirmedByUserId: resultRevisionSides.confirmedByUserId,
+      satisfiedBy: resultRevisionSides.satisfiedBy,
+      side: resultRevisionSides.side,
+    })
+    .from(resultRevisionSides)
+    .where(eq(resultRevisionSides.resultRevisionId, current.id));
+  const confirmerRows = await database
+    .select({ side: resultSideConfirmers.side, userId: resultSideConfirmers.userId })
+    .from(resultSideConfirmers)
+    .where(eq(resultSideConfirmers.resultRevisionId, current.id));
+  const actions = await database
+    .select({
+      actorUserId: resultActions.actorUserId,
+      createdAt: resultActions.createdAt,
+      id: resultActions.id,
+      revisionId: resultActions.resultRevisionId,
+      type: resultActions.type,
+    })
+    .from(resultActions)
+    .where(
+      inArray(
+        resultActions.resultRevisionId,
+        revisions.map((row: (typeof revisions)[number]): string => row.id),
+      ),
+    );
+  const notes = await database
+    .select({
+      actionId: resultDisputeNotes.resultActionId,
+      body: resultDisputeNotes.body,
+      redactedAt: resultDisputeNotes.redactedAt,
+    })
+    .from(resultDisputeNotes)
+    .where(
+      inArray(
+        resultDisputeNotes.resultActionId,
+        actions.map((action: (typeof actions)[number]): string => action.id),
+      ),
+    );
+  const ratings = await database
+    .select({
+      after: sql<number>`max(${ratingSnapshots.rating})`,
+      before: sql<number>`min(${ratingSnapshots.ratingBefore})`,
+      delta: sql<number>`sum(${ratingSnapshots.delta})`,
+      provisional: sql<boolean>`bool_or(${ratingSnapshots.isProvisional})`,
+      userId: ratingSnapshots.userId,
+    })
+    .from(ratingSnapshots)
+    .innerJoin(
+      activeRatingGenerations,
+      eq(activeRatingGenerations.ratingGenerationId, ratingSnapshots.ratingGenerationId),
+    )
+    .innerJoin(resultRevisionGames, eq(resultRevisionGames.gameId, ratingSnapshots.gameId))
+    .where(and(eq(activeRatingGenerations.leagueId, leagueId), eq(resultRevisionGames.resultRevisionId, current.id)))
+    .groupBy(ratingSnapshots.userId);
+  const identities = await readIdentities(leagueId, [
+    ...submission.seats.map((seat): string | null => seat.userId).filter((id): id is string => id !== null),
+    ...revisions.flatMap((row: (typeof revisions)[number]): string[] => [
+      row.recordedBy,
+      row.editedBy ?? row.recordedBy,
+    ]),
+    ...actions.map((action: (typeof actions)[number]): string => action.actorUserId),
+    ...confirmerRows.map((row: (typeof confirmerRows)[number]): string => row.userId),
+  ]);
+
+  return shapeMatchView({
+    actions,
+    canonicalMatchId,
+    confirmerRows,
+    current,
+    games,
+    identities,
+    notes,
+    policy,
+    ratings,
+    revisions,
+    settings,
+    sideRows,
+    submission,
+    userId,
+    role,
+  });
+}
+
+/**
+ * What the gathering half read, handed to the shaping half
+ * @internal
+ */
+interface IMatchViewSource {
+  actions: { actorUserId: string; createdAt: Date; id: string; revisionId: string; type: string }[];
+  canonicalMatchId: string;
+  confirmerRows: { side: string; userId: string }[];
+  current: {
+    confirmationDeadline: Date | null;
+    id: string;
+    playedAt: Date;
+    recordedBy: string;
+    revision: number;
+    settledAt: Date | null;
+    settledReason: string | null;
+    state: string;
+    submittedAt: Date;
+  };
+  games: IMatchViewGame[];
+  identities: Map<string, { deletedAt: Date | null; displayName: string; id: string; member: boolean }>;
+  notes: { actionId: string; body: string | null; redactedAt: Date | null }[];
+  policy: IResultPolicySnapshot;
+  ratings: { after: number; before: number; delta: number; provisional: boolean; userId: string }[];
+  revisions: {
+    editedBy: string | null;
+    id: string;
+    recordedBy: string;
+    revision: number;
+    submission: IResultSubmission;
+  }[];
+  role: LeagueRole;
+  settings: IMatchSettings;
+  sideRows: { confirmedByUserId: string | null; satisfiedBy: string; side: string }[];
+  submission: IResultSubmission;
+  userId: string;
+}
+
+/**
+ * Turns what was read into what the page shows.
+ *
+ * Pure, and separate from the reads above, because every rule the page states is here: who may act, what the status
+ * line is waiting for, whether the match rated and why not. A rule that lives inside a query is a rule nobody can
+ * test without a database
+ * @internal
+ * @function
+ * @param source - Everything the reads found
+ * @returns The view
+ */
+function shapeMatchView(source: IMatchViewSource): IMatchView {
+  const { current, identities, submission } = source;
+  const state: ResultState = current.state as ResultState;
+  const seatedIds: string[] = submission.seats
+    .map((seat): string | null => seat.userId)
+    .filter((id): id is string => id !== null);
+  const rated: boolean = source.policy.ratingEnabled && submission.seats.every((seat): boolean => seat.userId !== null);
+  const sides: IMatchViewSide[] = source.sideRows.map((row): IMatchViewSide => ({
+    confirmedBy: row.confirmedByUserId ? identityOf(identities.get(row.confirmedByUserId)) : null,
+    confirmers: source.confirmerRows
+      .filter((confirmer): boolean => confirmer.side === row.side)
+      .map((confirmer): IResultIdentity => identityOf(identities.get(confirmer.userId))),
+    satisfiedBy: row.satisfiedBy as SideSatisfaction,
+    side: row.side as Side,
+  }));
+  const confirmedByAccount: Set<string> = new Set(
+    source.sideRows.map((row): string | null => row.confirmedByUserId).filter((id): id is string => id !== null),
+  );
+  const ratingOf = (userId: string | null): IMatchViewParticipant['rating'] => {
+    const row = userId === null ? undefined : source.ratings.find((rating): boolean => rating.userId === userId);
+
+    return row
+      ? {
+          after: row.after,
+          before: row.before,
+          delta: row.delta,
+          provisional: row.provisional,
+        }
+      : null;
+  };
+  const participants: IMatchViewParticipant[] = submission.seats.map((seat): IMatchViewParticipant => ({
+    confirmed: seat.userId !== null && confirmedByAccount.has(seat.userId),
+    identity: identityOf(seat.userId === null ? undefined : identities.get(seat.userId), seat.guestName),
+    rating: ratingOf(seat.userId),
+    seat: seat.seat,
+    side: sideOfSeat(seat.seat),
+  }));
+  const currentActions = source.actions.filter((action): boolean => action.revisionId === current.id);
+  const disputeAction = currentActions.find((action): boolean => action.type === ResultAction.DISPUTE);
+  const voidAction = currentActions.find((action): boolean => action.type === ResultAction.VOID);
+  const noteOf = (actionId: string | undefined): { note: string | null; redacted: boolean } => {
+    const row = actionId === undefined ? undefined : source.notes.find((note): boolean => note.actionId === actionId);
+
+    return { note: row?.body ?? null, redacted: row !== undefined && row.redactedAt !== null };
+  };
+  const seated: boolean = seatedIds.includes(source.userId);
+  const administrator: boolean = source.role === LeagueRole.COMMISSIONER || source.role === LeagueRole.MANAGER;
+  const amendmentBound: number =
+    new Date(submission.playedAt).getTime() + source.policy.resultAmendmentWindow * HOUR_MS;
+  const waiting: boolean = state === ResultState.UNCONFIRMED;
+  const mayConfirm: boolean =
+    waiting &&
+    sides.some(
+      (side): boolean =>
+        side.satisfiedBy === SideSatisfaction.PENDING &&
+        side.confirmers.some((confirmer): boolean => confirmer.id === source.userId && confirmer.member),
+    );
+
+  return {
+    canonicalMatchId: source.canonicalMatchId,
+    confirmationDeadline: current.confirmationDeadline?.toISOString() ?? null,
+    dispute:
+      state === ResultState.DISPUTED && disputeAction
+        ? {
+            at: disputeAction.createdAt.toISOString(),
+            by: identityOf(identities.get(disputeAction.actorUserId)),
+            ...noteOf(disputeAction.id),
+          }
+        : null,
+    ending: submission.ending,
+    games: source.games,
+    gamesWon: {
+      a: source.games.filter((game): boolean => game.winner === MatchSide.A).length,
+      b: source.games.filter((game): boolean => game.winner === MatchSide.B).length,
+    },
+    gameType: submission.gameType,
+    history: source.revisions.map((row): IMatchViewRevision => {
+      const disputed = source.actions.find(
+        (action): boolean => action.revisionId === row.id && action.type === ResultAction.DISPUTE,
+      );
+
+      return {
+        at: current.submittedAt.toISOString(),
+        by: identityOf(identities.get(row.editedBy ?? row.recordedBy)),
+        disputedAt: disputed?.createdAt.toISOString() ?? null,
+        disputedBy: disputed ? identityOf(identities.get(disputed.actorUserId)) : null,
+        revision: row.revision,
+        scores: row.submission.games.map((game: IGameScoreRow): string => `${game.a}-${game.b}`).join(', '),
+      };
+    }),
+    participants,
+    playedAt: current.playedAt.toISOString(),
+    rating: {
+      rated,
+      unratedReason: rated ? null : source.policy.ratingEnabled ? 'GUEST' : 'RATINGS_OFF',
+    },
+    recordedBy: identityOf(identities.get(current.recordedBy)),
+    revision: current.revision,
+    rules: {
+      matchFormat: source.settings.matchFormat,
+      targetScore: source.settings.targetScore,
+      winningMargin: source.settings.winningMargin,
+    },
+    settledAt: current.settledAt?.toISOString() ?? null,
+    settledReason: (current.settledReason as ResultSettleReason | null) ?? null,
+    sides,
+    state,
+    submittedAt: current.submittedAt.toISOString(),
+    viewer: {
+      // An amendment resolves a dispute, and only while the window measured from the original play time is open
+      mayAmend: administrator && state === ResultState.DISPUTED && Date.now() < amendmentBound,
+      mayConfirm,
+      // Wider than confirming by design: anybody seated may dispute while the result is still pending, the recorder
+      // and the recorder's partner included (VII.VI)
+      mayDispute: waiting && seated,
+      mayVoid: administrator && state !== ResultState.VOID,
+      seated,
+    },
+    voided:
+      state === ResultState.VOID && voidAction
+        ? { at: voidAction.createdAt.toISOString(), by: identityOf(identities.get(voidAction.actorUserId)) }
+        : null,
+  };
 }

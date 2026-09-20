@@ -118,3 +118,14 @@ export const DOUBLES_SEATS: readonly Seat[] = [Seat.A1, Seat.B1, Seat.A2, Seat.B
  * @constant
  */
 export const REDACTED_NOTE_TEXT: string = 'Note removed';
+
+/**
+ * What a page shows in place of somebody whose account has been deleted.
+ *
+ * One string, used by every surface that would have named them — the heading, the participants table, the history
+ * and the dispute line — because a deletion that reached some of them and not others would be a worse promise than
+ * none at all (VI.IV)
+ * @public
+ * @constant
+ */
+export const DELETED_ACCOUNT_NAME: string = 'Deleted account';

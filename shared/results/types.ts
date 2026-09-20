@@ -19,7 +19,7 @@
 import type { ResultRecorder } from '#shared/domain';
 import type { GameType, Side, TMatchEvent } from '#shared/rules-engine';
 
-import type { ResultEnding, Seat } from './enums';
+import type { ResultEnding, ResultSettleReason, ResultState, Seat, SideSatisfaction } from './enums';
 
 /**
  * One seat as the recorder filled it: a member, or a guest label that belongs to this result alone
@@ -175,4 +175,181 @@ export interface IResultFormContext {
 
   /* The ACTIVE members a seat may hold, as the members panel names them */
   roster: { displayName: string; id: string }[];
+}
+
+/**
+ * How a person is named on a result page.
+ *
+ * Resolved when the page is drawn rather than copied when the match was recorded, so a deleted account reads as
+ * deleted everywhere at once and no row has to be rewritten to make that true (VI.IV)
+ * @public
+ */
+export interface IResultIdentity {
+  /* What to show: their display name, the guest's label, or the words for an account that is gone */
+  displayName: string;
+
+  /* Whether this seat was a guest rather than an account */
+  guest: boolean;
+
+  /* The account, when there is one and it still exists */
+  id: string | null;
+
+  /* Whether that account is an active member of this league now */
+  member: boolean;
+
+  /* Whether the account has been deleted, which is why it is not named */
+  removed: boolean;
+}
+
+/**
+ * One side of a match as the game page reads it
+ * @public
+ */
+export interface IMatchViewSide {
+  /* Who confirmed for this side, when somebody did */
+  confirmedBy: IResultIdentity | null;
+
+  /* The accounts frozen as able to answer for it, whether or not they still can */
+  confirmers: IResultIdentity[];
+
+  /* How it came to be satisfied, or that it is still waiting */
+  satisfiedBy: SideSatisfaction;
+
+  /* Which side of the table */
+  side: Side;
+}
+
+/**
+ * One seat, as the participants table shows it
+ * @public
+ */
+export interface IMatchViewParticipant {
+  /* Whether this account's confirmation is what answered their side */
+  confirmed: boolean;
+
+  /* Who is in the seat */
+  identity: IResultIdentity;
+
+  /* The rating this match moved, read from the league's active generation; null until it is accepted or when unrated */
+  rating: { after: number; before: number; delta: number; provisional: boolean } | null;
+
+  /* The seat */
+  seat: Seat;
+
+  /* Which side it plays on */
+  side: Side;
+}
+
+/**
+ * One game of the match, as the score table shows it
+ * @public
+ */
+export interface IMatchViewGame {
+  /* Side A's final score */
+  a: number;
+
+  /* Side B's final score */
+  b: number;
+
+  /* Which game of the match */
+  gameNumber: number;
+
+  /* Whether this is the game a withdrawal ended */
+  retired: boolean;
+
+  /* Which side won it, by the scoreboard or by the withdrawal */
+  winner: Side | null;
+}
+
+/**
+ * One line of an amended result's history
+ * @public
+ */
+export interface IMatchViewRevision {
+  /* Who recorded or amended it */
+  by: IResultIdentity;
+
+  /* Who disputed that revision, when somebody did */
+  disputedBy: IResultIdentity | null;
+
+  /* When they disputed it */
+  disputedAt: string | null;
+
+  /* The scores it stated, in game order */
+  scores: string;
+
+  /* Which revision this is */
+  revision: number;
+
+  /* When it was recorded or amended */
+  at: string;
+}
+
+/**
+ * A match as its page reads it: what happened, where it stands, and what this viewer may do about it
+ * @public
+ */
+export interface IMatchView {
+  /* The match, which is the page it lives at */
+  canonicalMatchId: string;
+
+  /* When it is due to be accepted if nobody disputes it */
+  confirmationDeadline: string | null;
+
+  /* What the dispute said, when the current revision is disputed */
+  dispute: { at: string; by: IResultIdentity; note: string | null; redacted: boolean } | null;
+
+  /* Whether the match was played out or ended by a withdrawal */
+  ending: ResultEnding;
+
+  /* The games of the current revision, in order */
+  games: IMatchViewGame[];
+
+  /* Games won, by side */
+  gamesWon: { a: number; b: number };
+
+  /* The format the match was played in */
+  gameType: GameType;
+
+  /* Every revision, oldest first, for an amended result */
+  history: IMatchViewRevision[];
+
+  /* The seats */
+  participants: IMatchViewParticipant[];
+
+  /* When the match was played */
+  playedAt: string;
+
+  /* Whether this match moved ratings, and why not when it did not */
+  rating: { rated: boolean; unratedReason: 'GUEST' | 'RATINGS_OFF' | null };
+
+  /* Who recorded the current revision */
+  recordedBy: IResultIdentity;
+
+  /* Which revision the page is showing */
+  revision: number;
+
+  /* The rules the match was played under, from its own snapshot rather than the league's current settings */
+  rules: { matchFormat: number; targetScore: number; winningMargin: number };
+
+  /* When it was accepted, and why */
+  settledAt: string | null;
+
+  /* Why it settled */
+  settledReason: ResultSettleReason | null;
+
+  /* The sides and who may answer for them */
+  sides: IMatchViewSide[];
+
+  /* Where the result stands */
+  state: ResultState;
+
+  /* When the current revision was submitted */
+  submittedAt: string;
+
+  /* What this viewer may do, decided against their role and membership now */
+  viewer: { mayAmend: boolean; mayConfirm: boolean; mayDispute: boolean; mayVoid: boolean; seated: boolean };
+
+  /* Who voided it, when somebody did */
+  voided: { at: string; by: IResultIdentity } | null;
 }
