@@ -41,17 +41,38 @@ export interface IInteractiveTransaction {
 }
 
 /**
+ * The instant one operation must be finished by, and the budget that instant was derived from.
+ *
+ * An instant rather than a duration, because every step of the operation is held to the same one: a per-step duration
+ * would let a long enough sequence of permitted steps run for as long as it liked
+ * @public
+ */
+export interface IOperationBudget {
+  /* The budget the operation was given, kept for the message a refusal carries */
+  budgetMs: number;
+
+  /* The epoch millisecond the operation must be finished by */
+  deadline: number;
+}
+
+/**
  * What bounds one result transaction, in milliseconds
  * @public
  */
 export interface ITransactionLimits {
+  /**
+   * How long rolling back and closing the pool may take. Bounded separately from the operation, whose deadline is
+   * usually the thing that has just passed by the time cleanup runs
+   */
+  cleanupTimeoutMs: number;
+
   /* How long the transaction may sit between statements before the database ends it */
   idleTimeoutMs: number;
 
   /**
-   * How long the whole operation may take, from the first statement to the commit. The three database limits below
-   * each bound one wait; a long enough sequence of statements that never breaks any of them can still outlive the
-   * function holding the connection, which is what this one refuses
+   * How long the whole operation may take, from before the connection is dialled to the commit being answered. The
+   * three database limits below each bound one wait; a long enough sequence of statements that never breaks any of
+   * them can still outlive the function holding the connection, which is what this one refuses
    */
   operationTimeoutMs: number;
 

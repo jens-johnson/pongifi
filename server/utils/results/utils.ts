@@ -816,6 +816,11 @@ export async function recordResult(
     const submission: IResultSubmission = normalizeSubmission(request.submission);
     const requestDigest: string = digest({ ...request, submission });
     const league = await lockLeague(transaction, request.leagueId);
+
+    // A first entry has no match to read participants from, but it names accounts all the same, and its liveness
+    // check is worth no more than an amendment's without the lock underneath it
+    await lockAccounts(transaction, [actorId, ...seatedMembers(submission)]);
+
     const now: Date = await sampleClock(transaction);
     const role: string | null = await readRole(transaction, request.leagueId, actorId);
 
@@ -1147,42 +1152,141 @@ async function isRequiredAnswerer(
 }
 
 /**
- * Locks every account the match names, and reports whether any of them is gone.
- *
- * This is one half of the protocol a deletion and a new note share; {@link redactNotesForAccount} is the other. A note
- * can name whoever wrote it and whoever played in any revision of the match it belongs to, so those are the rows a
- * note writer holds while it decides whether words may be stored: a deletion that has already committed is seen here,
- * and a deletion that has not yet run has to wait behind this lock and will find the new note when it scans.
- *
- * The accounts are locked last, after the league and the revision, and read in id order. The league's lock is what
- * actually serializes two note writers in one league; the ordering is there so nothing in a later slice can make a
- * cycle out of these two by accident
+ * Whether this account's confirmation of this revision is already recorded
  * @internal
  * @async
  * @function
- * @param transaction - The open transaction, already holding the league and revision locks
- * @param canonicalMatchId - The match whose participants a note could name
- * @param actorId - The account writing the note
- * @returns Whether any account the note could identify has been deleted
+ * @param transaction - The open transaction
+ * @param revisionId - The revision
+ * @param userId - The account
+ * @returns Whether they have already confirmed it
  */
-async function lockAccountsOfMatch(
+async function hasConfirmed(
   transaction: IInteractiveTransaction,
-  canonicalMatchId: string,
-  actorId: string,
+  revisionId: string,
+  userId: string,
 ): Promise<boolean> {
-  const { rows: participants } = await transaction.query<{ user_id: string }>(
+  const { rows } = await transaction.query<{ confirmed: number }>(
+    `SELECT count(*)::int AS "confirmed" FROM "result_actions"
+     WHERE "result_revision_id" = $1 AND "actor_user_id" = $2 AND "type" = 'CONFIRM'`,
+    [revisionId, userId],
+  );
+
+  return (rows[0]?.confirmed ?? 0) > 0;
+}
+
+/**
+ * Answers a confirmation somebody has already made, without making it a second time.
+ *
+ * Pressing Confirm again under a fresh operation id is not a replay — the receipt is keyed by that id and there is no
+ * receipt to find — but the page's contract is that it is a 200 carrying the current state rather than an error the
+ * person has to interpret. Their vote stands, nothing is written against the revision, and a receipt is recorded for
+ * the new id so that a lost response to *this* request replays like any other.
+ *
+ * Only while the revision still stands as they left it. A match voided or disputed since their confirmation has
+ * genuinely changed underneath the page, and the conflict is what redraws it
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param actorId - The account confirming again
+ * @param request - The action and the operation's identity
+ * @param current - The current revision, locked and settled if it was due
+ * @param requestDigest - The digest the receipt is keyed by
+ * @throws ResultRefusalError when the revision is no longer one their confirmation applies to
+ * @returns Where the match stands, unchanged
+ */
+async function acknowledgeConfirmation(
+  transaction: IInteractiveTransaction,
+  actorId: string,
+  request: IAnswerResultRequest,
+  current: IRevisionRow,
+  requestDigest: string,
+): Promise<IResultEffect> {
+  if (current.state !== ResultState.UNCONFIRMED && current.state !== ResultState.CONFIRMED) {
+    throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+  }
+
+  const effect: IResultEffect = {
+    canonicalMatchId: current.canonicalMatchId,
+    revision: current.revision,
+    resultRevisionId: current.id,
+    state: current.state,
+  };
+
+  await writeReceipt(transaction, {
+    actorId,
+    canonicalMatchId: current.canonicalMatchId,
+    clientOperationId: request.clientOperationId,
+    effect,
+    operation: ResultAction.CONFIRM,
+    requestDigest,
+    revisionId: current.id,
+  });
+
+  return effect;
+}
+
+/**
+ * Every account a match could identify: the people seated in any revision of it, current or superseded.
+ *
+ * Read under the league's lock, which is what makes a plain read enough. Only a result write adds a participant to a
+ * match, and every result write in a league is sequential behind that lock, so nothing can join this set between the
+ * read and the lock the caller takes over it
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding the league's lock
+ * @param canonicalMatchId - The match
+ * @returns The accounts seated in it, across every revision
+ */
+async function accountsOfMatch(transaction: IInteractiveTransaction, canonicalMatchId: string): Promise<string[]> {
+  const { rows } = await transaction.query<{ user_id: string }>(
     `SELECT DISTINCT p."user_id" FROM "game_participants" p
      JOIN "result_revisions" r ON r."id" = p."result_revision_id"
      WHERE r."canonical_match_id" = $1 AND p."user_id" IS NOT NULL`,
     [canonicalMatchId],
   );
-  const named: string[] = [...new Set([actorId, ...participants.map((row): string => row.user_id)])];
-  const { rows: locked } = await transaction.query<{ deleted_at: Date | null }>(
+
+  return rows.map((row): string => row.user_id);
+}
+
+/**
+ * Takes the shared account lock over every account this write could name, and reports whether any of them is gone.
+ *
+ * One half of the protocol {@link redactNotesForAccount} is the other half of. A deletion takes the account row
+ * `FOR UPDATE`; a result write takes `FOR SHARE` over the accounts it names and holds them until it commits, so the
+ * two orders both end somewhere defensible. Deletion first: this waits, then reads a `deleted_at` that is set, and
+ * the write either refuses the seat or stores its note born redacted. This write first: the deletion waits, and the
+ * redactor's scan afterwards sees every relation this transaction published rather than the ones that existed when
+ * it started.
+ *
+ * Taken before the clock is sampled and before anything is decided against it, because the wait is unbounded. An
+ * action that sampled first could queue here, cross a deadline while it waited, and then commit against the instant
+ * it read before the wait — which is the same mistake `now()` made, arriving through a different door.
+ *
+ * The rows are locked in id order. Two writes naming overlapping sets therefore queue rather than deadlock
+ * @see {@link https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-ROWS}
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding the league and revision locks
+ * @param userIds - Every account this write names, in any order and with repeats
+ * @returns Whether any of them has been deleted
+ */
+async function lockAccounts(transaction: IInteractiveTransaction, userIds: string[]): Promise<boolean> {
+  const named: string[] = [...new Set(userIds)];
+
+  if (named.length === 0) {
+    return false;
+  }
+
+  const { rows } = await transaction.query<{ deleted_at: Date | null }>(
     `SELECT "deleted_at" FROM "users" WHERE "id" = ANY($1::uuid[]) ORDER BY "id" FOR SHARE`,
     [named],
   );
 
-  return locked.some((row): boolean => row.deleted_at !== null);
+  return rows.some((row): boolean => row.deleted_at !== null);
 }
 
 /**
@@ -1190,26 +1294,29 @@ async function lockAccountsOfMatch(
  *
  * A deleted participant does not cost a live player their dispute: the action is recorded either way. What changes is
  * that the words are never written, and the row is born carrying the same redaction stamp a later deletion would have
- * left on it, so the audit reads identically whichever order the two events arrived in
+ * left on it, so the audit reads identically whichever order the two events arrived in.
+ *
+ * The lock that answers the question is not taken here. {@link lockAccounts} took it before this transition read the
+ * clock, because waiting for it after the deadline had been decided would have let a note-bearing dispute cross that
+ * deadline inside the wait
  * @internal
  * @async
  * @function
- * @param transaction - The open transaction
- * @param context - The action the note hangs off, the match it names, its author, its words and the database clock
+ * @param transaction - The open transaction, already holding the account locks
+ * @param context - The action the note hangs off, its words, the database clock, and whether anyone it could name is
+ *   gone
  * @returns Whether the note was born redacted
  */
 async function writeDisputeNote(
   transaction: IInteractiveTransaction,
-  context: { actionId: string; actorId: string; canonicalMatchId: string; note: string; now: Date },
+  context: { actionId: string; deleted: boolean; note: string; now: Date },
 ): Promise<boolean> {
-  const deleted: boolean = await lockAccountsOfMatch(transaction, context.canonicalMatchId, context.actorId);
-
   await transaction.query(
     `INSERT INTO "result_dispute_notes" ("result_action_id", "body", "redacted_at") VALUES ($1, $2, $3)`,
-    [context.actionId, deleted ? null : context.note, deleted ? context.now : null],
+    [context.actionId, context.deleted ? null : context.note, context.deleted ? context.now : null],
   );
 
-  return deleted;
+  return context.deleted;
 }
 
 /**
@@ -1244,6 +1351,13 @@ export async function answerResult(
     await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
 
     const revision: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
+
+    // Before the clock, not after it. This wait is unbounded, and a note-bearing dispute that sampled the clock first
+    // could sit here while its deadline passed and then commit against the instant it read before the queue
+    const deleted: boolean = await lockAccounts(transaction, [
+      actorId,
+      ...(await accountsOfMatch(transaction, request.canonicalMatchId)),
+    ]);
     const now: Date = await sampleClock(transaction);
     const role: string | null = await readRole(transaction, revision.leagueId, actorId);
 
@@ -1275,7 +1389,13 @@ export async function answerResult(
 
     return await refusable(
       transaction,
-      (): Promise<IResultEffect> => applyAnswerAction(transaction, actorId, request, current, now, role, requestDigest),
+      (): Promise<IResultEffect> =>
+        applyAnswerAction(transaction, actorId, request, current, {
+          deleted,
+          now,
+          requestDigest,
+          role,
+        }),
       current.state,
     );
   } catch (error: unknown) {
@@ -1292,34 +1412,29 @@ export async function answerResult(
 }
 
 /**
- * Records the action itself, once settlement and authority have been established
+ * Refuses an action the actor may not take, or the revision is no longer in a state to receive.
+ *
+ * Void is the commissioner's alone and applies in every state but the one it would repeat. Everything else needs a
+ * revision still being answered: a confirmation from a participant the revision is actually waiting on, and a dispute
+ * from anybody seated in it, the recorder and an earlier confirmer included
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
  * @param actorId - The account acting
- * @param request - The action and the operation's identity
+ * @param action - What they are trying to do
  * @param current - The current revision, locked and settled if it was due
- * @param now - The database clock, sampled under the locks
  * @param role - The actor's current role in the league
- * @param requestDigest - The digest the receipt is keyed by
  * @throws ResultRefusalError when the action is refused
- * @returns What the action did
  */
-async function applyAnswerAction(
+async function refuseUnlessActionable(
   transaction: IInteractiveTransaction,
   actorId: string,
-  request: IAnswerResultRequest,
+  action: ResultAction,
   current: IRevisionRow,
-  now: Date,
   role: string,
-  requestDigest: string,
-): Promise<IResultEffect> {
-  if (current.revision !== request.expectedRevision) {
-    throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
-  }
-
-  if (request.action === ResultAction.VOID) {
+): Promise<void> {
+  if (action === ResultAction.VOID) {
     if (role !== VOID_ROLE) {
       throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
     }
@@ -1328,15 +1443,56 @@ async function applyAnswerAction(
     if (current.state === ResultState.VOID) {
       throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
     }
-  } else if (current.state !== ResultState.UNCONFIRMED) {
+
+    return;
+  }
+
+  if (current.state !== ResultState.UNCONFIRMED) {
     throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
-  } else if (request.action === ResultAction.CONFIRM) {
-    if (!(await isRequiredAnswerer(transaction, current.id, actorId))) {
-      throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
-    }
-  } else if (!current.submission.seats.some((seat): boolean => seat.userId === actorId)) {
+  }
+
+  const permitted: boolean =
+    action === ResultAction.CONFIRM
+      ? await isRequiredAnswerer(transaction, current.id, actorId)
+      : current.submission.seats.some((seat): boolean => seat.userId === actorId);
+
+  if (!permitted) {
     throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
   }
+}
+
+/**
+ * Records the action itself, once settlement and authority have been established
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param actorId - The account acting
+ * @param request - The action and the operation's identity
+ * @param current - The current revision, locked and settled if it was due
+ * @param context - Whether anyone this match names has been deleted, the sampled clock, the digest the receipt is
+ *   keyed by, and the actor's current role in the league
+ * @throws ResultRefusalError when the action is refused
+ * @returns What the action did
+ */
+async function applyAnswerAction(
+  transaction: IInteractiveTransaction,
+  actorId: string,
+  request: IAnswerResultRequest,
+  current: IRevisionRow,
+  context: { deleted: boolean; now: Date; requestDigest: string; role: string },
+): Promise<IResultEffect> {
+  if (current.revision !== request.expectedRevision) {
+    throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+  }
+
+  // Before the state check, because a confirmation that already settled the match would otherwise be told its own
+  // effect was too late. Pressing Confirm twice is a 200 with where the match stands, never a second vote
+  if (request.action === ResultAction.CONFIRM && (await hasConfirmed(transaction, current.id, actorId))) {
+    return await acknowledgeConfirmation(transaction, actorId, request, current, context.requestDigest);
+  }
+
+  await refuseUnlessActionable(transaction, actorId, request.action, current, context.role);
 
   const { rows: actions } = await transaction.query<{ id: string }>(
     `INSERT INTO "result_actions" ("result_revision_id", "actor_user_id", "type")
@@ -1353,14 +1509,13 @@ async function applyAnswerAction(
   if (request.action === ResultAction.DISPUTE && request.note !== null) {
     await writeDisputeNote(transaction, {
       actionId: actions[0]!.id,
-      actorId,
-      canonicalMatchId: current.canonicalMatchId,
+      deleted: context.deleted,
       note: request.note,
-      now,
+      now: context.now,
     });
   }
 
-  const state: ResultState = await applyAnswer(transaction, current, request.action, now);
+  const state: ResultState = await applyAnswer(transaction, current, request.action, context.now);
   const effect: IResultEffect = {
     canonicalMatchId: current.canonicalMatchId,
     revision: current.revision,
@@ -1374,7 +1529,7 @@ async function applyAnswerAction(
     clientOperationId: request.clientOperationId,
     effect,
     operation: request.action,
-    requestDigest,
+    requestDigest: context.requestDigest,
     revisionId: current.id,
   });
 
@@ -1468,6 +1623,16 @@ export async function amendResult(
     const requestDigest: string = digest({ ...request, submission });
     const league = await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
     const previous: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
+
+    // The proposed seats as well as the people already in the match, and before the clock rather than beside the
+    // liveness check. A correction that read a new seat as live, then published it after that account's deletion had
+    // committed, would leave a match naming somebody gone with the old revision's note still legible
+    await lockAccounts(transaction, [
+      actorId,
+      ...(await accountsOfMatch(transaction, request.canonicalMatchId)),
+      ...seatedMembers(submission),
+    ]);
+
     const now: Date = await sampleClock(transaction);
     const role: string | null = await readRole(transaction, previous.leagueId, actorId);
 
@@ -1725,7 +1890,7 @@ export async function resolveMatchRoute(
  * @returns How many notes were redacted
  */
 export async function redactNotesForAccount(transaction: IInteractiveTransaction, userId: string): Promise<number> {
-  // The other half of the protocol {@link lockAccountsOfMatch} describes. Taking the account row first is what makes
+  // The other half of the protocol {@link lockAccounts} describes. Taking the account row first is what makes
   // the two orders equivalent: a note writer that got here first holds this row until it commits, so the scan below
   // sees its note; one that arrives later finds the deletion this transaction is part of and never writes the words
   await transaction.query(`SELECT "id" FROM "users" WHERE "id" = $1 FOR UPDATE`, [userId]);

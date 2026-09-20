@@ -29,7 +29,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GameCreator, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
 import type { IResultSubmission } from '#shared/results';
-import { MAX_ENTERED_SCORE, ResultAction, ResultEnding, ResultState, Seat } from '#shared/results';
+import {
+  MAX_ENTERED_SCORE,
+  MAX_GUEST_NAME_LENGTH,
+  ResultAction,
+  ResultEnding,
+  ResultState,
+  Seat,
+} from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
@@ -640,6 +647,85 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(await read(`SELECT 1 FROM "result_revisions"`)).toHaveLength(0);
     });
 
+    it('conflicts rather than replaying when a retry lengthens a guest label past the bound', async (): Promise<void> => {
+      const operation: string = randomUUID();
+      const guest = (length: number): IResultSubmission =>
+        singles([[11, 4]], [ids.Ada!, ids.Ben!], {
+          seats: [
+            {
+              guestName: null,
+              seat: Seat.A1,
+              userId: ids.Ada!,
+            },
+            {
+              guestName: 'x'.repeat(length),
+              seat: Seat.B1,
+              userId: null,
+            },
+          ],
+        });
+
+      effectOf(await record(ids.Ada!, guest(MAX_GUEST_NAME_LENGTH), { clientOperationId: operation }));
+
+      const changed: TResultOutcome = await record(ids.Ada!, guest(MAX_GUEST_NAME_LENGTH + 1), {
+        clientOperationId: operation,
+      });
+
+      // Normalization used to cut the longer label back to the shorter one before the digest was taken, so a body
+      // the server would have refused digested identically to the one already committed and was answered from its
+      // receipt. The person would have been told their changed result was recorded
+      expect(refusalOf(changed)).toBe(ResultRefusal.OPERATION_BODY_CHANGED);
+      expect(await read(`SELECT 1 FROM "result_revisions"`)).toHaveLength(1);
+    });
+
+    it('still replays a retry that only reorders or pads what it sent', async (): Promise<void> => {
+      const operation: string = randomUUID();
+      const submission: IResultSubmission = singles([[11, 4]], [ids.Ada!, ids.Ben!], {
+        seats: [
+          {
+            guestName: null,
+            seat: Seat.A1,
+            userId: ids.Ada!,
+          },
+          {
+            guestName: 'Priya',
+            seat: Seat.B1,
+            userId: null,
+          },
+        ],
+      });
+      const first: IResultEffect = effectOf(await record(ids.Ada!, submission, { clientOperationId: operation }));
+      const again: TResultOutcome = await record(
+        ids.Ada!,
+        {
+          ...submission,
+          playedAt: submission.playedAt.replace('.000Z', 'Z'),
+          seats: [...submission.seats].reverse().map((seat) => ({
+            ...seat,
+            guestName: seat.guestName === null ? null : `  ${seat.guestName} `,
+          })),
+        },
+        { clientOperationId: operation },
+      );
+
+      // The other half of the same rule: trimming and ordering are presentation, and a retry that differs only in
+      // those is the same operation rather than a conflict
+      expect(again.ok && again.replayed).toBe(true);
+      expect(effectOf(again).resultRevisionId).toBe(first.resultRevisionId);
+    });
+
+    it('refuses a play time that states no instant rather than raising on it', async (): Promise<void> => {
+      // Normalization read this field before anything validated it, so the request died as a `RangeError` — a 500
+      // where the form's own rule says which field is wrong
+      const outcome: TResultOutcome = await record(
+        ids.Ada!,
+        singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: 'not-an-instant' }),
+      );
+
+      expect(refusalOf(outcome)).toBe(ResultRefusal.INVALID_SUBMISSION);
+      expect(await read(`SELECT 1 FROM "result_revisions"`)).toHaveLength(0);
+    });
+
     it('refuses a seat naming somebody who has left the league or deleted their account', async (): Promise<void> => {
       await read(`DELETE FROM "memberships" WHERE "user_id" = $1`, [ids.Cara!]);
 
@@ -838,9 +924,146 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(redacted).toBe(1);
       expect(await read(`SELECT 1 FROM "result_dispute_notes" WHERE "body" IS NOT NULL`)).toHaveLength(0);
     });
+
+    it('answers a confirmation somebody makes twice with where the match stands, not an error', async (): Promise<void> => {
+      // Doubles, so one confirmation leaves the match waiting and the second press has somewhere to land that is not
+      // settlement: the spec's repeated confirm is a 200 with the current state while others are still outstanding
+      const match: string = effectOf(
+        await record(ids.Ada!, {
+          ...singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+          gameType: GameType.DOUBLES,
+          seats: [
+            {
+              guestName: null,
+              seat: Seat.A1,
+              userId: ids.Ada!,
+            },
+            {
+              guestName: null,
+              seat: Seat.A2,
+              userId: ids.Ben!,
+            },
+            {
+              guestName: null,
+              seat: Seat.B1,
+              userId: ids.Cara!,
+            },
+            {
+              guestName: 'Priya',
+              seat: Seat.B2,
+              userId: null,
+            },
+          ],
+        }),
+      ).canonicalMatchId;
+
+      effectOf(await answer(ids.Ben!, ResultAction.CONFIRM, match));
+
+      const again: TResultOutcome = await answer(ids.Ben!, ResultAction.CONFIRM, match);
+      const votes: unknown[] = await read(
+        `SELECT 1 FROM "result_actions" WHERE "actor_user_id" = $1 AND "type" = 'CONFIRM'`,
+        [ids.Ben!],
+      );
+
+      expect(refusalOf(again)).toBe('none');
+      expect(effectOf(again).state).toBe(ResultState.UNCONFIRMED);
+      // A fresh operation id, so this is not the receipt path: the vote is simply not cast a second time
+      expect(votes).toHaveLength(1);
+    });
+
+    it('answers a confirmation repeated after the match settled the same way', async (): Promise<void> => {
+      const match: string = await pending(ids.Ada!, [ids.Ada!, ids.Ben!]);
+
+      effectOf(await answer(ids.Ben!, ResultAction.CONFIRM, match));
+
+      const again: TResultOutcome = await answer(ids.Ben!, ResultAction.CONFIRM, match);
+
+      // Their own confirmation is what settled it; being told it is too late would be the page arguing with itself
+      expect(refusalOf(again)).toBe('none');
+      expect(effectOf(again).state).toBe(ResultState.CONFIRMED);
+      expect(await read(`SELECT 1 FROM "result_actions" WHERE "type" = 'CONFIRM'`)).toHaveLength(1);
+    });
+
+    it('still conflicts on a confirmation repeated after the result was voided', async (): Promise<void> => {
+      const match: string = effectOf(
+        await record(ids.Ada!, {
+          ...singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+          seats: [
+            {
+              guestName: null,
+              seat: Seat.A1,
+              userId: ids.Ben!,
+            },
+            {
+              guestName: null,
+              seat: Seat.B1,
+              userId: ids.Cara!,
+            },
+          ],
+        }),
+      ).canonicalMatchId;
+
+      effectOf(await answer(ids.Ben!, ResultAction.CONFIRM, match));
+      effectOf(await answer(ids.Ada!, ResultAction.VOID, match));
+
+      const again: TResultOutcome = await answer(ids.Ben!, ResultAction.CONFIRM, match);
+
+      // The match did change under the page, and the conflict carrying VOID is what redraws it
+      expect(refusalOf(again)).toBe(ResultRefusal.STALE_RESULT);
+      expect(again.ok ? null : again.state).toBe(ResultState.VOID);
+    });
+
+    it('refuses a repeated dispute rather than answering it as already done', async (): Promise<void> => {
+      const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
+
+      // Only confirmation is idempotent by the page's contract; a second dispute of a disputed result is an error
+      expect(refusalOf(await answer(ids.Ben!, ResultAction.DISPUTE, match))).toBe(ResultRefusal.STALE_RESULT);
+    });
   });
 
   describe(symbolName(amendResult), (): void => {
+    it('refuses a correction whose play time states no instant', async (): Promise<void> => {
+      const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
+      const outcome: TResultOutcome = await amend(
+        ids.Ada!,
+        match,
+        singles([[11, 9]], [ids.Ada!, ids.Ben!], { playedAt: 'not-an-instant' }),
+      );
+
+      expect(refusalOf(outcome)).toBe(ResultRefusal.INVALID_SUBMISSION);
+      expect(await read(`SELECT 1 FROM "result_revisions" WHERE "revision" = 2`)).toHaveLength(0);
+    });
+
+    it('conflicts when a retried correction lengthens a guest label past the bound', async (): Promise<void> => {
+      const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
+      const operation: string = randomUUID();
+      const guest = (length: number): IResultSubmission =>
+        singles([[11, 9]], [ids.Ada!, ids.Ben!], {
+          seats: [
+            {
+              guestName: null,
+              seat: Seat.A1,
+              userId: ids.Ada!,
+            },
+            {
+              guestName: 'x'.repeat(length),
+              seat: Seat.B1,
+              userId: null,
+            },
+          ],
+        });
+
+      effectOf(await amend(ids.Ada!, match, guest(MAX_GUEST_NAME_LENGTH), { clientOperationId: operation }));
+
+      const changed: TResultOutcome = await amend(ids.Ada!, match, guest(MAX_GUEST_NAME_LENGTH + 1), {
+        clientOperationId: operation,
+        expectedRevision: 1,
+      });
+
+      expect(refusalOf(changed)).toBe(ResultRefusal.OPERATION_BODY_CHANGED);
+      expect(await read(`SELECT 1 FROM "result_revisions" WHERE "revision" = 3`)).toHaveLength(0);
+    });
+
     it('corrects a disputed result and refuses every other state', async (): Promise<void> => {
       const unconfirmed: string = await pending(ids.Ada!, [ids.Ada!, ids.Ben!]);
       const pendingRefusal: string = refusalOf(

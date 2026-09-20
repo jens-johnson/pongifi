@@ -669,6 +669,94 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
   },
   {
     package: PACKAGES.CONCURRENCY,
+    name: 'a dispute carrying a note is late when the deadline passed while it queued for the account lock',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Ben!, ids.Cara!]);
+      const [revision] = await read<{ deadline: Date }>(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = clock_timestamp() + interval '600 milliseconds'
+         WHERE "id" = $1 RETURNING "confirmation_deadline" AS deadline`,
+        [created.resultRevisionId],
+      );
+      const holding = latch();
+      const release = latch();
+
+      // The league's lock is free and the revision's lock is free. What is held is a seated player's account row,
+      // which only a note-bearing dispute ever waited on — and it used to wait on it after it had already read the
+      // clock and decided the action was in time
+      const blocker: Promise<void> = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query(`SELECT "id" FROM "users" WHERE "id" = $1 FOR UPDATE`, [ids.Cara!]);
+          holding.open();
+          await release.reached;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      const disputing = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await answerResult(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'I disagree',
+          });
+          const { rows } = await transaction.query<{ crossed: boolean; started: boolean }>(
+            `SELECT now() < $1::timestamptz AS "started", clock_timestamp() > $1::timestamptz AS "crossed"`,
+            [revision!.deadline],
+          );
+
+          return { clock: rows[0]!, outcome };
+        },
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 10000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 10000,
+          },
+        },
+      );
+
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 1000);
+      });
+
+      release.open();
+      await blocker;
+
+      const { clock, outcome } = await disputing;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const [state] = await read<{ disputes: number; notes: number; reason: string; state: string }>(
+        connectionString,
+        `SELECT "state", "settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'DISPUTE') AS disputes,
+                (SELECT count(*)::int FROM "result_dispute_notes") AS notes
+         FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `the transaction began ${clock.started ? 'before' : 'after'} the deadline and reached the account lock ${clock.crossed ? 'after' : 'before'} it; the dispute was refused as ${refusal}, writing ${state!.disputes} actions and ${state!.notes} notes, leaving ${state!.state} by ${state!.reason}`,
+        passed:
+          clock.started &&
+          clock.crossed &&
+          refusal === 'STALE_RESULT' &&
+          state!.disputes === 0 &&
+          state!.notes === 0 &&
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'DEADLINE_PASSED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
     name: 'a dispute committed before the deadline stops the deadline settling it, even across a held transaction',
     run: async (connectionString: string): Promise<IScenarioResult> => {
       await resetDatabase(connectionString);

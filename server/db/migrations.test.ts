@@ -11,16 +11,21 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  * ███████████████████████████████████████████ #server/db/migrations.test.ts ███████████████████████████████████████████
  *
- * Tests that the welcome-state migration backfills existing accounts and only those.
+ * Tests the migrations against the schemas they actually meet: a fresh database, and one an earlier deployment left
+ * behind.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { readFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PGlite } from '@electric-sql/pglite';
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -61,6 +66,32 @@ const REVISION_MIGRATION: string = '0003_stale_gateway.sql';
  * @constant
  */
 const RESULT_MIGRATION: string = '0004_result_entry_persistence.sql';
+
+/**
+ * The migration that adds the rating audit columns and the voided settle reason to a database 0004 already reached
+ * @internal
+ * @constant
+ */
+const RATING_AUDIT_MIGRATION: string = '0005_rating_audit_and_void_reason.sql';
+
+/**
+ * Where the checked-in migrations live
+ * @internal
+ * @constant
+ */
+const MIGRATIONS_FOLDER: string = fileURLToPath(new URL('migrations', import.meta.url));
+
+/**
+ * The statements the correction pass first tried to add by editing 0004, which is how a database created after that
+ * edit already carries them
+ * @internal
+ * @constant
+ */
+const EDITED_INTO_0004: string[] = [
+  `ALTER TYPE "public"."result_settle_reason" ADD VALUE 'VOIDED'`,
+  `ALTER TABLE "rating_snapshots" ADD COLUMN "rating_before" double precision`,
+  `ALTER TABLE "rating_snapshots" ADD COLUMN "delta" double precision`,
+];
 
 /**
  * The match every result fixture below is a revision of
@@ -109,6 +140,35 @@ async function applyMigration(fileName: string): Promise<void> {
   for (const statement of contents.split('--> statement-breakpoint')) {
     await database.exec(statement);
   }
+}
+
+/**
+ * Writes a migrations folder holding everything up to and including one tag, and nothing after it.
+ *
+ * This is how the state a deployed database is actually in gets reproduced: it ran the migrations that existed the
+ * day it deployed, and the journal it wrote then is what decides which of today's migrations it still needs. Nothing
+ * here reimplements that decision — the real migrator makes it, twice, against the two folders
+ * @internal
+ * @async
+ * @function
+ * @param tag - The last migration the earlier deployment had
+ * @returns The folder to point the migrator at
+ */
+async function folderThrough(tag: string): Promise<string> {
+  const journal = JSON.parse(await readFile(join(MIGRATIONS_FOLDER, 'meta', '_journal.json'), 'utf8')) as {
+    entries: { tag: string }[];
+  };
+  const kept = journal.entries.slice(0, journal.entries.findIndex((entry): boolean => entry.tag === tag) + 1);
+  const folder: string = await mkdtemp(join(tmpdir(), 'pongifi-migrations-'));
+
+  await mkdir(join(folder, 'meta'));
+  await writeFile(join(folder, 'meta', '_journal.json'), JSON.stringify({ ...journal, entries: kept }));
+
+  for (const entry of kept) {
+    await copyFile(join(MIGRATIONS_FOLDER, `${entry.tag}.sql`), join(folder, `${entry.tag}.sql`));
+  }
+
+  return folder;
 }
 
 /**
@@ -508,6 +568,92 @@ describe(getTestFileName(import.meta.url), (): void => {
           [rows[0]!.id, 'that was not the score'],
         ),
       ).rejects.toThrow();
+    });
+  });
+  describe(RATING_AUDIT_MIGRATION, (): void => {
+    /**
+     * The folder the deployment before this change ran, rebuilt for every case
+     * @internal
+     */
+    let previous: string;
+
+    beforeEach(async (): Promise<void> => {
+      database = new PGlite();
+      previous = await folderThrough('0004_result_entry_persistence');
+    });
+
+    /**
+     * Whether the schema carries the rating audit columns and the voided settle reason
+     * @internal
+     * @async
+     * @function
+     * @returns What the schema has
+     */
+    async function readAdditions(): Promise<{ columns: string[]; voidable: boolean }> {
+      const { rows: columns } = await database.query<{ column_name: string }>(
+        `SELECT "column_name" FROM "information_schema"."columns"
+         WHERE "table_name" = 'rating_snapshots' AND "column_name" IN ('rating_before', 'delta')
+         ORDER BY "column_name"`,
+      );
+      const voidable: boolean = await database
+        .query(`SELECT 'VOIDED'::result_settle_reason`)
+        .then((): boolean => true)
+        .catch((): boolean => false);
+
+      return {
+        columns: columns.map((row): string => row.column_name),
+        voidable,
+      };
+    }
+
+    it('adds the columns and the reason to a database that stopped at the migration before it', async (): Promise<void> => {
+      // A fresh database cannot prove this. The rows have to be added by a migration the deployed database has not
+      // run, on a schema whose 0004 it already ran and will never run again: the migrator skips a migration by its
+      // place in the journal, so editing 0004 after a deployment applied it repairs nothing
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      expect(await readAdditions()).toEqual({
+        columns: [],
+        voidable: false,
+      });
+
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      expect(await readAdditions()).toEqual({
+        columns: ['delta', 'rating_before'],
+        voidable: true,
+      });
+    });
+
+    it('leaves a database that already carries them alone rather than failing on them', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      // The other schema in the wild: one created from the edited 0004, which had these three statements inside it
+      for (const statement of EDITED_INTO_0004) {
+        await database.exec(statement);
+      }
+
+      await expect(migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER })).resolves.toBeUndefined();
+      expect(await readAdditions()).toEqual({
+        columns: ['delta', 'rating_before'],
+        voidable: true,
+      });
+    });
+
+    it('records a voided result under its own reason once the migration has run', async (): Promise<void> => {
+      const owner: string = await (async (): Promise<string> => {
+        await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+        return seedLeague();
+      })();
+      const revision: string = await seedRevision(owner, 1, true);
+
+      await expect(
+        database.query(
+          `UPDATE "result_revisions" SET "settled_reason" = 'VOIDED', "settled_at" = now() WHERE "id" = $1`,
+          [revision],
+        ),
+      ).resolves.toBeDefined();
     });
   });
 });

@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
 
+import { MAX_GUEST_NAME_LENGTH } from './constants';
 import { ResultEnding, Seat } from './enums';
 import type { IResultSubmission } from './types';
 import type { IOrderedGame } from './utils';
@@ -41,6 +42,55 @@ function ordered(overrides: Partial<IOrderedGame> = {}): IOrderedGame {
     gameNumber: 1,
     playedAt: '2026-09-19T18:00:00.000Z',
     ...overrides,
+  };
+}
+
+/**
+ * A singles submission with one guest, for the cases about what normalization keeps
+ * @internal
+ * @function
+ * @param guestName - The label the guest seat carries, as it arrived
+ * @returns The submission
+ */
+function guested(guestName: string): IResultSubmission {
+  return {
+    ending: ResultEnding.COMPLETED,
+    gameType: GameType.SINGLES,
+    games: [
+      {
+        a: 11,
+        b: 4,
+        gameNumber: 1,
+      },
+    ],
+    playedAt: '2026-09-19T18:00:00.000Z',
+    retiredSeat: null,
+    seats: [
+      {
+        guestName,
+        seat: Seat.A1,
+        userId: null,
+      },
+      {
+        guestName: null,
+        seat: Seat.B1,
+        userId: 'u1',
+      },
+    ],
+  };
+}
+
+/**
+ * A submission stating a given play time, however well or badly formed
+ * @internal
+ * @function
+ * @param playedAt - The stated play time
+ * @returns The submission
+ */
+function played(playedAt: string): IResultSubmission {
+  return {
+    ...guested('Sam'),
+    playedAt,
   };
 }
 
@@ -111,34 +161,31 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(canonicalize(normalizeSubmission(one))).toBe(canonicalize(normalizeSubmission(other)));
     });
 
-    it('trims a guest label and bounds its length', (): void => {
-      const [seat] = normalizeSubmission({
-        ending: ResultEnding.COMPLETED,
-        gameType: GameType.SINGLES,
-        games: [
-          {
-            a: 11,
-            b: 4,
-            gameNumber: 1,
-          },
-        ],
-        playedAt: '2026-09-19T18:00:00.000Z',
-        retiredSeat: null,
-        seats: [
-          {
-            guestName: `  ${'x'.repeat(60)}  `,
-            seat: Seat.A1,
-            userId: null,
-          },
-          {
-            guestName: null,
-            seat: Seat.B1,
-            userId: 'u1',
-          },
-        ],
-      }).seats;
+    it('trims a guest label without shortening it', (): void => {
+      const [seat] = normalizeSubmission(guested(`  ${'x'.repeat(60)}  `)).seats;
 
-      expect(seat?.guestName).toHaveLength(40);
+      // Trimming is presentation the person did not mean; cutting the label is a different result than the one typed
+      expect(seat?.guestName).toBe('x'.repeat(60));
+    });
+
+    it('keeps a guest label one character over the bound distinct from one exactly on it', (): void => {
+      const permitted: string = canonicalize(normalizeSubmission(guested('x'.repeat(MAX_GUEST_NAME_LENGTH))));
+      const refused: string = canonicalize(normalizeSubmission(guested('x'.repeat(MAX_GUEST_NAME_LENGTH + 1))));
+
+      // The digest is taken before the bounds are checked. Were these equal, retrying a committed operation id with
+      // the longer label would be answered from the shorter one's receipt rather than refused
+      expect(refused).not.toBe(permitted);
+    });
+
+    it('carries a play time that states no instant through rather than raising on it', (): void => {
+      // The validator refuses this by name; it never gets the chance if reading the field throws first
+      expect(normalizeSubmission(played('not-an-instant')).playedAt).toBe('not-an-instant');
+    });
+
+    it('writes two spellings of one instant as the same string', (): void => {
+      expect(normalizeSubmission(played('2026-09-19T19:00:00+01:00')).playedAt).toBe(
+        normalizeSubmission(played('2026-09-19T18:00:00Z')).playedAt,
+      );
     });
   });
 

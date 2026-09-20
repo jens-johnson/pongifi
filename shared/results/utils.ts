@@ -19,7 +19,7 @@
 import { GameType } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
-import { DOUBLES_SEATS, MAX_GUEST_NAME_LENGTH, SINGLES_SEATS } from './constants';
+import { DOUBLES_SEATS, SINGLES_SEATS } from './constants';
 import { Seat } from './enums';
 import type { IGameScoreRow, IResultSeat, IResultSubmission } from './types';
 
@@ -75,11 +75,34 @@ export function canonicalize(value: unknown): string {
 }
 
 /**
+ * Writes a stated play time as the one string two equal instants share, or leaves it alone when it is not one.
+ *
+ * Normalization has to be total: it runs before the submission's bounds are checked, so a body carrying rubbish in
+ * this field has to reach the validator that names the problem rather than raising a `RangeError` on the way
+ * @internal
+ * @function
+ * @param playedAt - The stated play time, as it arrived
+ * @returns The instant in its canonical form, or the original string when it states no instant
+ */
+function toInstant(playedAt: string): string {
+  const stated: number = Date.parse(playedAt);
+
+  return Number.isNaN(stated) ? playedAt : new Date(stated).toISOString();
+}
+
+/**
  * Puts a submission into the one shape it is stored, digested and compared in.
  *
  * Trimming and ordering happen here rather than at each caller, because the digest that decides whether a retry is
  * the same submission has to be taken over the normalized form: a guest name with a trailing space, or seats listed
- * in another order, is the same result and must not read as a changed body
+ * in another order, is the same result and must not read as a changed body.
+ *
+ * Everything this does is reversible in the only sense that matters: two bodies normalize alike exactly when they
+ * state the same result. Nothing is truncated, clamped or dropped, because the digest runs before the bounds are
+ * checked — a step that shortened an over-long guest label here would make a body the server is about to refuse
+ * digest identically to the valid one somebody already committed, and answer the changed request from that receipt.
+ * A play time that is not an instant is carried through untouched for the same reason: {@link findSubmissionProblem}
+ * refuses it by name, which it cannot do if reading it threw first
  * @public
  * @function
  * @param submission - The submission as it arrived
@@ -91,7 +114,7 @@ export function normalizeSubmission(submission: IResultSubmission): IResultSubmi
       (left: IResultSeat, right: IResultSeat): number => SEAT_ORDER.indexOf(left.seat) - SEAT_ORDER.indexOf(right.seat),
     )
     .map((seat: IResultSeat): IResultSeat => ({
-      guestName: seat.guestName === null ? null : seat.guestName.trim().slice(0, MAX_GUEST_NAME_LENGTH),
+      guestName: seat.guestName === null ? null : seat.guestName.trim(),
       seat: seat.seat,
       userId: seat.userId,
     }));
@@ -108,7 +131,7 @@ export function normalizeSubmission(submission: IResultSubmission): IResultSubmi
     ending: submission.ending,
     gameType: submission.gameType,
     games,
-    playedAt: new Date(submission.playedAt).toISOString(),
+    playedAt: toInstant(submission.playedAt),
     retiredSeat: submission.retiredSeat,
     seats,
   };

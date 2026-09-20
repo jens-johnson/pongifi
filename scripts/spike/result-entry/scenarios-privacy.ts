@@ -20,8 +20,9 @@ import { randomUUID } from 'node:crypto';
 
 import { ResultAction } from '#shared/results';
 import { withInteractiveTransaction } from '#utils/db/transaction';
+import type { IInteractiveTransaction } from '#utils/db/types';
 import type { TResultOutcome } from '#utils/results';
-import { answerResult, redactNotesForAccount, ResultRefusalError } from '#utils/results';
+import { amendResult, answerResult, redactNotesForAccount, ResultRefusalError } from '#utils/results';
 
 import { HOUR_MS, LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
 import { amendOrThrow, recordOrThrow, singles } from './scenarios-schema';
@@ -115,6 +116,101 @@ async function pending(connectionString: string): Promise<{ ids: Record<string, 
   );
 
   return { ids, match: created.canonicalMatchId };
+}
+
+/**
+ * How a note's words read now, for a detail line
+ * @internal
+ * @function
+ * @param body - The stored words, or null when they were never written or have been taken away
+ * @returns The word a detail line uses for it
+ */
+function describeBody(body: string | null): string {
+  return body === null ? 'null' : 'still present';
+}
+
+/**
+ * Records a disputed Ada-versus-Ben match carrying a note, ready for a correction that seats somebody new.
+ *
+ * The third account is deliberately not in the match yet. That is the whole of the race: while Cara belongs to no
+ * revision of this match, a deletion looking for her notes finds none, and an amendment about to seat her has read
+ * her as live
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @returns The accounts and the match
+ */
+async function disputedBeforeReplacement(
+  connectionString: string,
+): Promise<{ ids: Record<string, string>; match: string }> {
+  await resetDatabase(connectionString);
+
+  const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara'], settingsFixture());
+  const created = await withInteractiveTransaction(
+    (transaction) =>
+      recordOrThrow(transaction, ids.Ada!, {
+        clientOperationId: randomUUID(),
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], {
+          playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
+        }),
+      }),
+    { connectionString },
+  );
+
+  await withInteractiveTransaction(
+    async (transaction) => {
+      const outcome: TResultOutcome = await answerResult(transaction, ids.Ben!, {
+        action: ResultAction.DISPUTE,
+        canonicalMatchId: created.canonicalMatchId,
+        clientOperationId: randomUUID(),
+        expectedRevision: 1,
+        note: NOTE,
+      });
+
+      if (!outcome.ok) {
+        throw new ResultRefusalError(outcome.refusal);
+      }
+
+      return outcome;
+    },
+    { connectionString },
+  );
+
+  return { ids, match: created.canonicalMatchId };
+}
+
+/**
+ * Marks an account deleted, takes away its membership and redacts whatever it can find, as deletion will.
+ *
+ * One transaction, because that is the protocol: the account lock the first statement takes is what a concurrent
+ * result write contends with, and releasing it before the redaction ran would be a window rather than a lock
+ * @internal
+ * @function
+ * @param transaction - The open transaction
+ * @param userId - The account being deleted
+ * @returns How many notes it redacted
+ */
+async function deleteAccount(transaction: IInteractiveTransaction, userId: string): Promise<number> {
+  await transaction.query(`UPDATE "users" SET "deleted_at" = now() WHERE "id" = $1`, [userId]);
+  await transaction.query(`DELETE FROM "memberships" WHERE "user_id" = $1`, [userId]);
+
+  return redactNotesForAccount(transaction, userId);
+}
+
+/**
+ * Waits, so the transaction being raced has demonstrably reached the lock rather than merely been started
+ * @internal
+ * @async
+ * @function
+ * @param milliseconds - How long to wait
+ */
+async function settle(milliseconds: number = 300): Promise<void> {
+  return new Promise<void>((resolve: () => void): void => {
+    setTimeout(resolve, milliseconds);
+  });
 }
 
 /**
@@ -227,7 +323,7 @@ export const PRIVACY_SCENARIOS: readonly IScenario[] = [
       );
 
       return {
-        detail: `${redacted} note redacted; body ${after!.body === null ? 'null' : 'still present'}, row kept ${after!.rows === 1}, stamped ${after!.redacted_at !== null}, ${after!.live} game rows untouched`,
+        detail: `${redacted} note redacted; body ${describeBody(after!.body)}, row kept ${after!.rows === 1}, stamped ${after!.redacted_at !== null}, ${after!.live} game rows untouched`,
         passed:
           redacted === 1 &&
           after!.body === null &&
@@ -280,7 +376,7 @@ export const PRIVACY_SCENARIOS: readonly IScenario[] = [
       const note = await noteState(connectionString);
 
       return {
-        detail: `the dispute ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`} and the deletion redacted ${redacted}; body ${note.body === null ? 'null' : 'still present'}, stamped ${note.redacted_at !== null}, ${note.rows} note row`,
+        detail: `the dispute ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`} and the deletion redacted ${redacted}; body ${describeBody(note.body)}, stamped ${note.redacted_at !== null}, ${note.rows} note row`,
         passed: outcome.ok && redacted === 1 && note.body === null && note.redacted_at !== null && note.rows === 1,
       };
     },
@@ -342,7 +438,7 @@ export const PRIVACY_SCENARIOS: readonly IScenario[] = [
       );
 
       return {
-        detail: `the deletion found ${redacted} existing notes and the dispute ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`}; body ${note.body === null ? 'null' : 'still present'}, stamped ${note.redacted_at !== null}, ${copies!.n} copies of the words anywhere`,
+        detail: `the deletion found ${redacted} existing notes and the dispute ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`}; body ${describeBody(note.body)}, stamped ${note.redacted_at !== null}, ${copies!.n} copies of the words anywhere`,
         passed: outcome.ok && redacted === 0 && note.body === null && note.redacted_at !== null && copies!.n === 0,
       };
     },
@@ -380,6 +476,129 @@ export const PRIVACY_SCENARIOS: readonly IScenario[] = [
       return {
         detail: `${redacted} note redacted across ${after!.revisions} revisions; ${after!.remaining} notes still carry words`,
         passed: redacted === 1 && after!.remaining === 0 && after!.revisions === 2,
+      };
+    },
+  },
+  {
+    package: PACKAGES.PRIVACY,
+    name: 'a correction that would seat an account whose deletion committed first is refused the seat',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      const { ids, match } = await disputedBeforeReplacement(connectionString);
+      const held = latch();
+      const release = latch();
+      const deleting: Promise<number> = withInteractiveTransaction(
+        async (transaction) => {
+          const redacted: number = await deleteAccount(transaction, ids.Cara!);
+
+          held.open();
+          await release.reached;
+
+          return redacted;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await held.reached;
+
+      // Reads the seats it proposes only after it holds them, which is what makes the answer it reads still true
+      // when it publishes them
+      const amending: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) =>
+          amendResult(transaction, ids.Ada!, {
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            submission: singles([[11, 6]], [ids.Ada!, ids.Cara!], {
+              playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
+            }),
+          }),
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 20000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 20000,
+          },
+        },
+      );
+
+      await settle();
+      release.open();
+
+      const [redacted, outcome] = await Promise.all([deleting, amending]);
+      const [after] = await read<{ revisions: number; seated: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "game_participants" WHERE "user_id" = $1) AS seated`,
+        [ids.Cara!],
+      );
+
+      return {
+        detail: `the deletion redacted ${redacted} notes and the correction ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`}; ${after!.revisions} revisions, the deleted account seated in ${after!.seated}`,
+        passed:
+          redacted === 0 &&
+          !outcome.ok &&
+          outcome.refusal === 'SEAT_NOT_A_MEMBER' &&
+          after!.revisions === 1 &&
+          after!.seated === 0,
+      };
+    },
+  },
+  {
+    package: PACKAGES.PRIVACY,
+    name: 'a deletion queued behind a correction redacts the notes of the match it has just joined',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      const { ids, match } = await disputedBeforeReplacement(connectionString);
+      const held = latch();
+      const release = latch();
+      const amending: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await amendResult(transaction, ids.Ada!, {
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            submission: singles([[11, 6]], [ids.Ada!, ids.Cara!], {
+              playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
+            }),
+          });
+
+          held.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await held.reached;
+
+      // Blocked on the very account the correction is seating, so its scan runs against the match as the correction
+      // left it rather than as it found it
+      const deleting: Promise<number> = withInteractiveTransaction(
+        (transaction) => deleteAccount(transaction, ids.Cara!),
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 20000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 20000,
+          },
+        },
+      );
+
+      await settle();
+      release.open();
+
+      const [outcome, redacted] = await Promise.all([amending, deleting]);
+      const note = await noteState(connectionString);
+      const [copies] = await read<{ n: number }>(
+        connectionString,
+        `SELECT count(*)::int AS n FROM "result_dispute_notes" WHERE "body" IS NOT NULL`,
+      );
+
+      return {
+        detail: `the correction ${outcome.ok ? 'committed' : `was refused as ${outcome.refusal}`} and the deletion behind it redacted ${redacted}; body ${describeBody(note.body)}, stamped ${note.redacted_at !== null}, ${copies!.n} notes still carry words`,
+        passed: outcome.ok && redacted === 1 && note.body === null && note.redacted_at !== null && copies!.n === 0,
       };
     },
   },
