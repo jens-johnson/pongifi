@@ -35,6 +35,7 @@ import type { IMatchSettings } from '#shared/rules-engine';
 
 import {
   gameTypeEnum,
+  leagueRoleEnum,
   participantSideEnum,
   resultActionEnum,
   resultOperationEnum,
@@ -189,10 +190,17 @@ export const resultRevisionSides = pgTable(
     uniqueIndex('result_revision_sides_pk').on(table.resultRevisionId, table.side),
     /* Settlement asks one question of this table: does this revision still have a side that owes an answer */
     index('result_revision_sides_pending_idx').on(table.resultRevisionId, table.satisfiedBy),
-    /* A confirmer and a time exist exactly when the side was satisfied by a confirmation, and never otherwise */
+    /**
+     * A confirmer and a time exist exactly when the side was satisfied by a confirmation, and neither exists
+     * otherwise. Stated as a case rather than as an equality between two booleans: `false = false` is satisfied by a
+     * pending side carrying half a confirmation, which is audit evidence for something that never happened
+     */
     check(
       'result_revision_sides_confirmation_pair',
-      sql`(${table.satisfiedBy} = 'CONFIRMATION') = (${table.confirmedByUserId} IS NOT NULL AND ${table.confirmedAt} IS NOT NULL)`,
+      sql`CASE WHEN ${table.satisfiedBy} = 'CONFIRMATION'
+            THEN ${table.confirmedByUserId} IS NOT NULL AND ${table.confirmedAt} IS NOT NULL
+            ELSE ${table.confirmedByUserId} IS NULL AND ${table.confirmedAt} IS NULL
+          END`,
     ),
   ],
 );
@@ -244,6 +252,12 @@ export const resultActions = pgTable(
       .notNull()
       .references(() => users.id),
     type: resultActionEnum('type').notNull(),
+    /**
+     * The role the actor held when this action was authorized, kept because the page's Void transition has to say
+     * who ruled and under what authority. Null on a row written before the column existed: an unknown historical
+     * role stays unknown rather than being inferred from today's membership
+     */
+    actorRole: leagueRoleEnum('actor_role'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

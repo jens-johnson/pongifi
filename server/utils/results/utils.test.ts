@@ -1115,6 +1115,56 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(ladder!.snapshots).toBe(0);
     });
 
+    it('records the role a void was taken under, and keeps it after the role is gone', async (): Promise<void> => {
+      await setRole(ids.Ben!, 'MANAGER');
+
+      const match: string = await pending(ids.Ada!, [ids.Ada!, ids.Cara!]);
+      const key: string = randomUUID();
+
+      effectOf(await answer(ids.Ben!, ResultAction.VOID, match, { clientOperationId: key }));
+
+      await setRole(ids.Ben!, 'PLAYER');
+
+      // The same operation again, from an account that is no longer a manager: the receipt answers it, and the audit
+      // still says what authority the ruling was made under
+      const replayed: TResultOutcome = await answer(ids.Ben!, ResultAction.VOID, match, { clientOperationId: key });
+      const [action] = await read<{ role: string | null; type: string }>(
+        `SELECT "type", "actor_role" AS role FROM "result_actions" WHERE "actor_user_id" = $1`,
+        [ids.Ben!],
+      );
+
+      expect(replayed.ok && replayed.replayed).toBe(true);
+      expect([action!.type, action!.role]).toEqual(['VOID', 'MANAGER']);
+
+      await read(`DELETE FROM "memberships" WHERE "user_id" = $1`, [ids.Ben!]);
+
+      // Authorization comes before the receipt, so an account that has left the league is not handed its old answer
+      const gone: TResultOutcome = await answer(ids.Ben!, ResultAction.VOID, match, { clientOperationId: key });
+      const [unchanged] = await read<{ role: string | null }>(
+        `SELECT "actor_role" AS role FROM "result_actions" WHERE "actor_user_id" = $1`,
+        [ids.Ben!],
+      );
+
+      expect(refusalOf(gone)).toBe(ResultRefusal.NOT_FOUND);
+      expect(unchanged!.role).toBe('MANAGER');
+    });
+
+    it('records the role every other action was taken under too', async (): Promise<void> => {
+      const match: string = await pending(ids.Ada!, [ids.Ada!, ids.Ben!]);
+
+      effectOf(await answer(ids.Ben!, ResultAction.DISPUTE, match));
+      effectOf(await answer(ids.Ada!, ResultAction.VOID, match));
+
+      const rows = await read<{ role: string | null; type: string }>(
+        `SELECT "type", "actor_role" AS role FROM "result_actions" ORDER BY "type"`,
+      );
+
+      expect(rows).toEqual([
+        { role: 'PLAYER', type: 'DISPUTE' },
+        { role: 'COMMISSIONER', type: 'VOID' },
+      ]);
+    });
+
     it('refuses a void from a player, and from the same manager the moment the role is gone', async (): Promise<void> => {
       await setRole(ids.Ben!, 'MANAGER');
 

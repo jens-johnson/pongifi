@@ -82,6 +82,14 @@ const RATING_AUDIT_MIGRATION: string = '0005_rating_audit_and_void_reason.sql';
 const PER_SIDE_MIGRATION: string = '0006_per_side_confirmation.sql';
 
 /**
+ * The migration that makes a side's confirmation evidence all-or-nothing and records the role an action was taken
+ * under
+ * @internal
+ * @constant
+ */
+const SIDE_EVIDENCE_MIGRATION: string = '0007_side_evidence_and_action_role.sql';
+
+/**
  * Where the checked-in migrations live
  * @internal
  * @constant
@@ -733,6 +741,161 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       await expect(side('A')).rejects.toThrow();
       expect(owner).not.toBe(revision);
+    });
+  });
+  describe(SIDE_EVIDENCE_MIGRATION, (): void => {
+    /**
+     * The folder the deployment before this change ran, rebuilt for every case
+     * @internal
+     */
+    let previous: string;
+
+    beforeEach(async (): Promise<void> => {
+      database = new PGlite();
+      previous = await folderThrough('0006_per_side_confirmation');
+    });
+
+    /**
+     * Writes one side row with whatever evidence the case is testing
+     * @internal
+     * @async
+     * @function
+     * @param revision - The revision the side belongs to
+     * @param status - What the side claims satisfied it
+     * @param actor - The confirmer to store, if any
+     * @param at - The confirmation time to store, if any
+     * @returns Whether the database accepted it
+     */
+    async function writeSide(
+      revision: string,
+      status: string,
+      actor: string | null,
+      at: Date | null,
+    ): Promise<boolean> {
+      return database
+        .query(
+          `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by",
+             "confirmed_by_user_id", "confirmed_at")
+           VALUES ($1, 'A', $2::side_satisfaction, $3, $4)`,
+          [revision, status, actor, at],
+        )
+        .then((): boolean => true)
+        .catch((): boolean => false);
+    }
+
+    it('accepts a side’s confirmation evidence only whole, and only where it belongs', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+      const accepted: Record<string, boolean[]> = {};
+
+      for (const status of ['CONFIRMATION', 'EXEMPT', 'PENDING', 'SUBMISSION']) {
+        const outcomes: boolean[] = [];
+
+        for (const [actor, at] of [
+          [null, null],
+          [owner, null],
+          [null, new Date()],
+          [owner, new Date()],
+        ] as [string | null, Date | null][]) {
+          outcomes.push(await writeSide(revision, status, actor, at));
+
+          await database.query(`DELETE FROM "result_revision_sides"`);
+        }
+
+        accepted[status] = outcomes;
+      }
+
+      // Neither, actor only, time only, both — a confirmation needs both and every other status needs neither
+      expect(accepted).toEqual({
+        CONFIRMATION: [false, false, false, true],
+        EXEMPT: [true, false, false, false],
+        PENDING: [true, false, false, false],
+        SUBMISSION: [true, false, false, false],
+      });
+    });
+
+    it('clears half a confirmation a database already carried, and keeps the side it belonged to', async (): Promise<void> => {
+      // The rows the previous constraint admitted, written before this migration exists: an empty database cannot
+      // prove that the repair runs, because the constraint that refuses them is what is being added
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+
+      await database.query(
+        `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by", "confirmed_by_user_id",
+           "confirmed_at")
+         VALUES ($1, 'A', 'PENDING', $2, NULL), ($1, 'B', 'EXEMPT', NULL, now())`,
+        [revision, owner],
+      );
+
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const { rows } = await database.query<{ at: Date | null; by: string | null; side: string; status: string }>(
+        `SELECT "side", "satisfied_by" AS "status", "confirmed_by_user_id" AS "by", "confirmed_at" AS "at"
+         FROM "result_revision_sides" ORDER BY "side"`,
+      );
+
+      expect(rows).toEqual([
+        {
+          at: null,
+          by: null,
+          side: 'A',
+          status: 'PENDING',
+        },
+        {
+          at: null,
+          by: null,
+          side: 'B',
+          status: 'EXEMPT',
+        },
+      ]);
+    });
+
+    it('refuses to migrate a database whose confirmation is missing its confirmer', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+
+      // The schema in the wild this guards against: one restored without its constraints, which is the only way a
+      // half-written confirmation can exist at all. Half a confirmation is not repairable — nulling it would erase a
+      // vote and keeping it would state one nobody cast — so the deployment stops instead
+      await database.query(
+        `ALTER TABLE "result_revision_sides" DROP CONSTRAINT "result_revision_sides_confirmation_pair"`,
+      );
+      await database.query(
+        `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by", "confirmed_by_user_id",
+           "confirmed_at") VALUES ($1, 'A', 'CONFIRMATION', $2, NULL)`,
+        [revision, owner],
+      );
+
+      await expect(migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER })).rejects.toThrow(
+        /confirmation with no confirmer or no time/,
+      );
+    });
+
+    it('adds the acting role to a database that stopped before it, leaving older rows unknown', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+
+      await database.query(
+        `INSERT INTO "result_actions" ("result_revision_id", "actor_user_id", "type") VALUES ($1, $2, 'VOID')`,
+        [revision, owner],
+      );
+
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const { rows } = await database.query<{ role: string | null }>(
+        `SELECT "actor_role" AS "role" FROM "result_actions"`,
+      );
+
+      // Unknown, and left that way: today's membership cannot establish the role somebody held a month ago
+      expect(rows).toEqual([{ role: null }]);
     });
   });
 });

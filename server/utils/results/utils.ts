@@ -1659,12 +1659,15 @@ async function applyAnswerAction(
 
   await refuseUnlessActionable(transaction, actorId, request.action, current, context.role);
 
+  // The role is the one this action was authorized under, read under the same locks a moment ago, rather than the one
+  // the actor holds whenever somebody later reads the audit: a manager who voided a match and was demoted afterwards
+  // voided it as a manager, and nothing about today's membership can establish that
   const { rows: actions } = await transaction.query<{ id: string }>(
-    `INSERT INTO "result_actions" ("result_revision_id", "actor_user_id", "type")
-     VALUES ($1, $2, $3::result_action)
+    `INSERT INTO "result_actions" ("result_revision_id", "actor_user_id", "type", "actor_role")
+     VALUES ($1, $2, $3::result_action, $4::league_role)
      ON CONFLICT ("result_revision_id", "actor_user_id", "type") DO NOTHING
      RETURNING "id"`,
-    [current.id, actorId, request.action],
+    [current.id, actorId, request.action, context.role],
   );
 
   if (actions.length === 0) {
