@@ -17,7 +17,7 @@
  */
 
 import type { PoolClient, QueryResult, QueryResultRow } from '@neondatabase/serverless';
-import { Pool } from '@neondatabase/serverless';
+import { DatabaseError, Pool } from '@neondatabase/serverless';
 
 import { DEFAULT_TRANSACTION_LIMITS } from './constants';
 import type { IInteractiveTransaction, IOperationBudget, ITransactionLimits } from './types';
@@ -41,24 +41,45 @@ export class TransactionBudgetError extends Error {
 }
 
 /**
- * Thrown when the budget expired with the commit already in flight.
+ * Thrown when the commit was sent and no answer to it ever arrived.
  *
  * The distinction from {@link TransactionBudgetError} is the whole point of having two: there the work is known not to
  * have happened, and here nobody knows. The database may have applied the commit and been unable to say so before the
  * connection went away. A caller must not report this as a failure, and must not retry it as a fresh operation
  * either — it resends the identical request under the same operation id, which is answered from the receipt the
- * commit either did or did not write
+ * commit either did or did not write.
+ *
+ * What makes an outcome unknown is the commit having been sent, not the shape of the error that came back instead of
+ * its answer. A budget that expired around it and a socket that died under it are the same ignorance, so both arrive
+ * here and both keep the cause that produced them
  * @public
  */
 export class TransactionOutcomeUnknownError extends Error {
   /**
    * Builds the error a caller sees when the commit's outcome is unknown
-   * @param budgetMs - The budget the operation outran, in milliseconds
+   * @param why - What happened instead of the commit being answered
+   * @param cause - The failure that stood in for the answer
    */
-  public constructor(budgetMs: number) {
-    super(`the result transaction outran its ${budgetMs}ms operation budget while committing; its outcome is unknown`);
+  public constructor(why: string, cause: unknown) {
+    super(`the result transaction sent its commit and ${why}; its outcome is unknown`, { cause });
     this.name = 'TransactionOutcomeUnknownError';
   }
+}
+
+/**
+ * Whether the database itself refused the commit, rather than its answer never arriving.
+ *
+ * Only an error the server composed and sent settles what happened to a commit, and only at `ERROR` severity: that is
+ * a statement the database rejected and a transaction it has already rolled back. Anything else that surfaces while a
+ * commit is outstanding — a dead socket, a pool tearing itself down, a `FATAL` that ends the session mid-flight — says
+ * that this end stopped hearing, which is not the same as the commit not having happened
+ * @internal
+ * @function
+ * @param error - Whatever came back instead of the commit's answer
+ * @returns Whether it establishes that the commit did not take effect
+ */
+function wasRefusedByTheDatabase(error: unknown): boolean {
+  return error instanceof DatabaseError && error.severity === 'ERROR';
 }
 
 /**
@@ -88,9 +109,13 @@ async function withinBudget<TValue>(
   }
 
   const work: Promise<TValue> = start();
+  // Floored, because a step can begin inside the budget and take the whole of it to begin: a body that computes
+  // rather than awaits crosses the deadline before it ever yields, and a negative delay is a warning from the runtime
+  // where what is meant is an expiry that has already arrived
+  const remaining: number = Math.max(0, budget.deadline - Date.now());
   let timer: ReturnType<typeof setTimeout> | undefined = undefined;
   const expiry: Promise<never> = new Promise<never>((_resolve, reject: (reason: Error) => void): void => {
-    timer = setTimeout((): void => reject(new TransactionBudgetError(budget.budgetMs)), budget.deadline - Date.now());
+    timer = setTimeout((): void => reject(new TransactionBudgetError(budget.budgetMs)), remaining);
   });
 
   try {
@@ -136,6 +161,50 @@ async function cleanly(work: Promise<unknown>, limitMs: number): Promise<boolean
 }
 
 /**
+ * Sends the commit under the operation's deadline, and settles what a failure of it means.
+ *
+ * Which of the two answers a caller gets turns on whether the commit reached the wire, recorded inside the thunk
+ * where it is a fact rather than inferred from a deadline read a moment earlier or from the shape of what came back.
+ * A commit never sent leaves a transaction this connection's death rolls back, and the budget refusal stands. A
+ * commit the database itself refused is an answer, and it stands too. Everything else — a socket that died, a
+ * session that ended, a budget that expired around a statement already gone — is the case nobody can account for
+ * @internal
+ * @async
+ * @function
+ * @param client - The connection the transaction is open on
+ * @param budget - The operation's deadline and the budget it was given
+ * @throws TransactionBudgetError when the deadline passed before the commit could be sent
+ * @throws TransactionOutcomeUnknownError when it was sent and its answer never arrived
+ * @throws Whatever the database refused it with
+ */
+async function commitWithin(client: PoolClient, budget: IOperationBudget): Promise<void> {
+  let sent: boolean = false;
+
+  try {
+    await withinBudget(
+      async (): Promise<QueryResult<QueryResultRow>> => {
+        sent = true;
+
+        return client.query('COMMIT');
+      },
+      budget,
+      (): void => undefined,
+    );
+  } catch (error: unknown) {
+    if (!sent || wasRefusedByTheDatabase(error)) {
+      throw error;
+    }
+
+    throw new TransactionOutcomeUnknownError(
+      error instanceof TransactionBudgetError
+        ? `outran its ${budget.budgetMs}ms operation budget waiting for the answer`
+        : 'never heard the answer',
+      error,
+    );
+  }
+}
+
+/**
  * Runs one interactive transaction and hands back whatever the body returns.
  *
  * The application's ordinary reads stay on Neon's HTTP driver, which cannot hold a transaction open across statements:
@@ -171,7 +240,8 @@ async function cleanly(work: Promise<unknown>, limitMs: number): Promise<boolean
  * @param options - The connection string to dial and the limits to bound it by
  * @throws TransactionBudgetError when the operation outruns its budget before the commit is sent, in which case
  *   nothing it attempted is durable
- * @throws TransactionOutcomeUnknownError when it outruns the budget with the commit in flight
+ * @throws TransactionOutcomeUnknownError when the commit was sent and its answer never arrived, whether the budget
+ *   expired around it or the connection failed under it
  * @throws Whatever the body throws, after the transaction is rolled back
  * @returns The body's value
  */
@@ -216,38 +286,28 @@ export async function withInteractiveTransaction<TResult>(
         (): void => undefined,
       );
 
-      // Asked here rather than left to the step, because the two ways a commit can fall outside the budget are not
-      // the same answer. A commit never sent is a transaction the server rolls back when this connection dies, which
-      // is knowledge worth having; a commit sent and unanswered is not
-      if (budget.deadline - Date.now() <= 0) {
-        client.release(new TransactionBudgetError(limits.operationTimeoutMs));
-
-        throw new TransactionBudgetError(limits.operationTimeoutMs);
-      }
-
-      try {
-        await run('COMMIT');
-      } catch (error: unknown) {
-        if (error instanceof TransactionBudgetError) {
-          client.release(error);
-
-          throw new TransactionOutcomeUnknownError(limits.operationTimeoutMs);
-        }
-
-        throw error;
-      }
+      await commitWithin(client, budget);
 
       client.release();
 
       return result;
     } catch (error: unknown) {
+      // Every way out of the transaction hands the connection back from here, on exactly one of these branches and the
+      // successful return above. Neon's pool wraps each client it lends out in a release-once guard and throws on a
+      // second call, so a step that raises a refusal leaves the handing back to this owner rather than doing it too:
+      // a connection released twice replaces the reason the operation ended with a complaint about the pool
       if (error instanceof TransactionOutcomeUnknownError) {
+        // It may be holding a transaction whose fate nobody knows, and a ROLLBACK cannot establish that the commit
+        // already sent did not take effect. Destroying it is the only honest thing left to do with it
+        client.release(error);
+
         throw error;
       }
 
       if (error instanceof TransactionBudgetError) {
-        // A statement is still in flight on this connection, so a ROLLBACK would queue behind exactly the work the
-        // budget just refused to wait for. Destroying the connection ends the transaction at the database instead,
+        // Either a statement is still in flight on this connection, in which case a ROLLBACK would queue behind exactly
+        // the work the budget just refused to wait for, or the deadline passed with the commit still unsent and there
+        // is no budget left to spend on one. Destroying the connection ends the transaction at the database instead,
         // and the commit was never sent, so nothing the operation attempted survives
         client.release(error);
 

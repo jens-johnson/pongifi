@@ -18,8 +18,14 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { DatabaseError } from '@neondatabase/serverless';
+
 import { DEFAULT_TRANSACTION_LIMITS } from '#utils/db/constants';
-import { TransactionBudgetError, withInteractiveTransaction } from '#utils/db/transaction';
+import {
+  TransactionBudgetError,
+  TransactionOutcomeUnknownError,
+  withInteractiveTransaction,
+} from '#utils/db/transaction';
 import type { IPublishedGeneration } from '#utils/results';
 import { publishRatingGeneration, settleDueResults } from '#utils/results';
 
@@ -323,6 +329,50 @@ export const BUDGET_SCENARIOS: readonly IScenario[] = [
       return {
         detail: `refused by ${thrown} after ${elapsed.toFixed(0)}ms; league name is still "${league!.name}"`,
         passed: thrown === 'the operation budget' && league!.name === 'Spike League' && elapsed < 1500,
+      };
+    },
+  },
+  {
+    package: PACKAGES.BUDGET,
+    name: 'a commit the database itself refuses is a failure, not an outcome nobody knows',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+      await seedLeague(connectionString, ['Ada', 'Ben']);
+
+      let thrown: unknown = undefined;
+
+      try {
+        await withInteractiveTransaction(
+          async (transaction) => {
+            await transaction.query(`UPDATE "leagues" SET "name" = 'renamed' WHERE "id" = $1`, [LEAGUE_ID]);
+
+            // A violation the server cannot see until the transaction ends, which is how a real `COMMIT` is made to
+            // come back with an error of the database's own composing rather than with silence
+            await transaction.query(
+              `CREATE TEMP TABLE "deferred_check" ("id" integer PRIMARY KEY DEFERRABLE INITIALLY DEFERRED)`,
+            );
+            await transaction.query(`INSERT INTO "deferred_check" ("id") VALUES (1), (1)`);
+          },
+          { connectionString },
+        );
+      } catch (error: unknown) {
+        thrown = error;
+      }
+
+      const [league] = await read<{ name: string }>(connectionString, `SELECT "name" FROM "leagues" WHERE "id" = $1`, [
+        LEAGUE_ID,
+      ]);
+      const refused: boolean = thrown instanceof DatabaseError && thrown.severity === 'ERROR';
+      const described: string =
+        thrown instanceof DatabaseError
+          ? `${thrown.severity} ${thrown.code}`
+          : `${(thrown as Error | undefined)?.name ?? 'nothing'}`;
+
+      // The distinction the helper draws is only as good as what the driver really hands it: this is where the
+      // severity and the code a commit refusal actually carries are read off the wire rather than assumed
+      return {
+        detail: `the commit came back as ${described} and the helper reported it as a failure rather than an unknown outcome; league name is still "${league!.name}"`,
+        passed: refused && !(thrown instanceof TransactionOutcomeUnknownError) && league!.name === 'Spike League',
       };
     },
   },

@@ -17,6 +17,7 @@
  */
 
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
+import { DatabaseError } from '@neondatabase/serverless';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { symbolName } from '#shared/utils/symbol';
@@ -39,6 +40,9 @@ interface IFakeTransport {
 
   /* Whether the pool was closed */
   ended: boolean;
+
+  /* What a given statement fails with instead of answering, by its exact text; it is still sent first */
+  failures: Record<string, Error>;
 
   /* Every reason the connection was handed back with, `undefined` for a clean release */
   released: (Error | undefined)[];
@@ -69,21 +73,41 @@ async function pause(milliseconds: number): Promise<void> {
 // A synthetic transport rather than a database: what these cases are about is where the clock starts and stops, which
 // no real connection can be made to demonstrate on demand. The concurrency and rollback behaviour is proven against
 // PostgreSQL elsewhere
-vi.mock('@neondatabase/serverless', (): Record<string, unknown> => {
+vi.mock('@neondatabase/serverless', async (importActual): Promise<Record<string, unknown>> => {
   /**
-   * A connection whose every statement answers after a delay this case chose
+   * A connection whose every statement answers after a delay this case chose.
+   *
+   * Its `release` is the driver's, not a recorder's: Neon's pool wraps every client it lends out in a release-once
+   * guard and throws on a second call, so a helper that hands the same connection back twice must fail a case here
+   * rather than quietly look like a helper that hands it back once
    * @internal
    */
   class FakeClient {
+    /* Whether this connection has already gone back to the pool */
+    private handedBack: boolean = false;
+
     /**
-     * Answers a statement after whatever delay this case gave it
+     * Binds the connection to the transport of the case that dialled it
+     * @param owner - That transport
+     */
+    public constructor(private readonly owner: IFakeTransport) {}
+
+    /**
+     * Answers a statement after whatever delay this case gave it, or fails the way this case said it does
      * @param text - The statement
+     * @throws Whatever this case gave that statement to fail with, after it has been sent
      * @returns An empty result
      */
     public async query(text: string): Promise<{ rowCount: number; rows: unknown[] }> {
-      transport.sent.push(text);
+      this.owner.sent.push(text);
 
-      await pause(transport.delays[text] ?? 0);
+      await pause(this.owner.delays[text] ?? 0);
+
+      const failure: Error | undefined = this.owner.failures[text];
+
+      if (failure !== undefined) {
+        throw failure;
+      }
 
       return {
         rowCount: 0,
@@ -92,11 +116,17 @@ vi.mock('@neondatabase/serverless', (): Record<string, unknown> => {
     }
 
     /**
-     * Records how the connection was handed back
+     * Records how the connection was handed back, and refuses to be handed back twice
      * @param reason - The error it was destroyed with, if it was
+     * @throws The driver's own refusal when the connection has already been released
      */
     public release(reason?: Error): void {
-      transport.released.push(reason);
+      if (this.handedBack) {
+        throw new Error('Release called on client which has already been released to the pool.');
+      }
+
+      this.handedBack = true;
+      this.owner.released.push(reason);
     }
   }
 
@@ -106,28 +136,40 @@ vi.mock('@neondatabase/serverless', (): Record<string, unknown> => {
    */
   class FakePool {
     /**
+     * The transport of the case that built this pool, held rather than read later: a dial the budget already refused
+     * still arrives, and the connection it hands to the abandonment path must be recorded against the case that asked
+     * for it rather than against whichever case happens to be running by the time it lands
+     */
+    private readonly owner: IFakeTransport = transport;
+
+    /**
      * Dials the database after whatever delay this case gave it
      * @returns The connection
      */
     public async connect(): Promise<FakeClient> {
-      await pause(transport.connectMs);
+      await pause(this.owner.connectMs);
 
-      return new FakeClient();
+      return new FakeClient(this.owner);
     }
 
     /**
      * Closes the pool, or never answers when this case says so
      */
     public async end(): Promise<void> {
-      if (transport.endHangs) {
+      if (this.owner.endHangs) {
         return new Promise<void>((): void => undefined);
       }
 
-      transport.ended = true;
+      this.owner.ended = true;
     }
   }
 
-  return { Pool: FakePool };
+  // Everything but the pool stays real, because the helper reads `DatabaseError` to tell a commit the database refused
+  // from one whose answer never arrived, and a stubbed class would make that distinction true by construction
+  return {
+    ...(await importActual<Record<string, unknown>>()),
+    Pool: FakePool,
+  };
 });
 
 const { TransactionBudgetError, TransactionOutcomeUnknownError, withInteractiveTransaction } =
@@ -169,6 +211,48 @@ async function run<TResult>(
 }
 
 /**
+ * Builds the error the driver raises when the database itself answered a statement with a refusal.
+ *
+ * Severity is the parameter because it is the whole distinction under test: `ERROR` is a statement the server
+ * rejected and a transaction it has already ended, while `FATAL` is the session going away with whatever was
+ * outstanding still outstanding
+ * @internal
+ * @function
+ * @param severity - The severity the server reported
+ * @returns The refusal
+ */
+function serverRefusal(severity: string): DatabaseError {
+  const refusal: DatabaseError = new DatabaseError('could not serialize access due to concurrent update', 100, 'error');
+
+  refusal.severity = severity;
+  refusal.code = '40001';
+
+  return refusal;
+}
+
+/**
+ * Spends time without yielding, so the deadline passes while no timer can fire.
+ *
+ * A body that awaits gives the step's own expiry a chance to reject it; a body that computes does not, and what is
+ * left holding the operation to its budget is the check made before the next step is begun. That is the path these
+ * cases reach, and no asynchronous delay reaches it
+ * @internal
+ * @function
+ * @param milliseconds - How long to spend
+ * @returns How many turns it took, so the work cannot be optimised away
+ */
+function spin(milliseconds: number): number {
+  const until: number = Date.now() + milliseconds;
+  let turns: number = 0;
+
+  while (Date.now() < until) {
+    turns += 1;
+  }
+
+  return turns;
+}
+
+/**
  * What a body throws when the operation itself is refused, rather than the budget refusing it
  * @internal
  * @constant
@@ -205,6 +289,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       delays: {},
       endHangs: false,
       ended: false,
+      failures: {},
       released: [],
       sent: [],
     };
@@ -302,7 +387,67 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(outcome).toBeInstanceOf(TransactionOutcomeUnknownError);
       expect(elapsed).toBeLessThan(SLOW_MS);
       expect(transport.sent).toContain('COMMIT');
-      expect(transport.released[0]).toBeInstanceOf(TransactionBudgetError);
+      // Destroyed with the answer the caller was given, from the single place that hands a connection back
+      expect(transport.released).toEqual([expect.any(TransactionOutcomeUnknownError)]);
+    });
+
+    it('reports a commit whose connection died as an unknown outcome rather than a failure', async (): Promise<void> => {
+      const lost: Error = new Error('Connection terminated unexpectedly');
+
+      transport.failures['COMMIT'] = lost;
+
+      const { outcome } = await run(async (): Promise<string> => 'recorded');
+
+      // The finding this case exists for: only a budget expiry used to be read as uncertainty, so a socket that died
+      // with the commit outstanding was reported as a plain failure. Nothing here knows whether it committed
+      expect(outcome).toBeInstanceOf(TransactionOutcomeUnknownError);
+      expect((outcome as Error).cause).toBe(lost);
+      expect(transport.sent).toContain('COMMIT');
+      // A rollback sent afterwards cannot establish that the commit nobody answered did not happen
+      expect(transport.sent).not.toContain('ROLLBACK');
+      expect(transport.released).toEqual([expect.any(TransactionOutcomeUnknownError)]);
+    });
+
+    it('reports a commit the database itself refused as the failure it is', async (): Promise<void> => {
+      const refused: DatabaseError = serverRefusal('ERROR');
+
+      transport.failures['COMMIT'] = refused;
+
+      const { outcome } = await run(async (): Promise<string> => 'recorded');
+
+      // The other half of the distinction: the server composed this answer and ended the transaction writing it, so
+      // calling it unknown would send the caller looking for a receipt that certainly does not exist
+      expect(outcome).toBe(refused);
+      expect(outcome).not.toBeInstanceOf(TransactionOutcomeUnknownError);
+      expect(transport.sent).toContain('ROLLBACK');
+      expect(transport.released).toEqual([undefined]);
+    });
+
+    it('reports a commit the session died under as unknown, however the database announced it', async (): Promise<void> => {
+      const fatal: DatabaseError = serverRefusal('FATAL');
+
+      transport.failures['COMMIT'] = fatal;
+
+      const { outcome } = await run(async (): Promise<string> => 'recorded');
+
+      // A message from the server is not the same as an answer to the commit: a session ending underneath one says
+      // this end stopped hearing, which is the uncertainty rather than the refusal
+      expect(outcome).toBeInstanceOf(TransactionOutcomeUnknownError);
+      expect((outcome as Error).cause).toBe(fatal);
+      expect(transport.released).toEqual([expect.any(TransactionOutcomeUnknownError)]);
+    });
+
+    it('refuses a commit the deadline passed before it was sent, and hands the connection back once', async (): Promise<void> => {
+      const { outcome } = await run(async (): Promise<number> => spin(SLOW_MS));
+
+      // Two findings meet here. A body that crosses the deadline without ever awaiting cannot be refused by the
+      // step's own expiry, so it arrives at the commit with the budget already gone: the commit is never sent, which
+      // is knowledge, and the connection goes back exactly once — the fake refuses a second release the way the
+      // driver's pool does, so the branch that used to release and then let the catch release again fails here
+      expect(outcome).toBeInstanceOf(TransactionBudgetError);
+      expect(outcome).not.toBeInstanceOf(TransactionOutcomeUnknownError);
+      expect(transport.sent).not.toContain('COMMIT');
+      expect(transport.released).toEqual([expect.any(TransactionBudgetError)]);
     });
 
     it('rolls back and reports the body’s own failure rather than the budget', async (): Promise<void> => {
