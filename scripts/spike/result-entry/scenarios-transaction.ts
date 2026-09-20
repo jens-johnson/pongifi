@@ -112,6 +112,55 @@ export async function recordOne(
 }
 
 /**
+ * How long an arrangement waits for the connection it is arranging around to reach its lock
+ * @internal
+ * @constant
+ */
+const LOCK_WAIT_TIMEOUT_MS: number = 10000;
+
+/**
+ * How often it looks
+ * @internal
+ * @constant
+ */
+const LOCK_WAIT_POLL_MS: number = 25;
+
+/**
+ * Waits until another connection is actually blocked on a lock, or gives up saying so.
+ *
+ * A scenario that starts a second transaction and releases the first immediately proves nothing about overlap: the
+ * two may simply have run in order, and the case would pass for the wrong reason. This observes the second backend
+ * in the state the arrangement needs it to be in — waiting on a lock — before anything is released
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param waiters - How many connections must be waiting
+ * @throws Error when no such wait appears in time, so the case fails rather than passing sequentially
+ */
+async function awaitLockWaiters(connectionString: string, waiters: number = 1): Promise<void> {
+  const deadline: number = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const [seen] = await read<{ waiting: number }>(
+      connectionString,
+      `SELECT count(*)::int AS waiting FROM "pg_stat_activity"
+       WHERE "datname" = current_database() AND "wait_event_type" = 'Lock' AND "pid" <> pg_backend_pid()`,
+    );
+
+    if ((seen?.waiting ?? 0) >= waiters) {
+      return;
+    }
+
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, LOCK_WAIT_POLL_MS);
+    });
+  }
+
+  throw new Error(`no connection reached a lock wait within ${LOCK_WAIT_TIMEOUT_MS}ms; the case would prove nothing`);
+}
+
+/**
  * Confirms a revision on its own connection, throwing on a refusal
  * @internal
  * @function
@@ -503,7 +552,6 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       const operation: string = randomUUID();
       const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
       const request = {
-        acknowledgedDuplicates: [],
         clientOperationId: operation,
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
@@ -561,7 +609,6 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
       const operation: string = randomUUID();
       const request = {
-        acknowledgedDuplicates: [],
         clientOperationId: operation,
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
@@ -619,7 +666,6 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       const original: Promise<TResultOutcome> = withInteractiveTransaction(
         async (transaction) => {
           const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, {
-            acknowledgedDuplicates: [],
             clientOperationId: randomUUID(),
             expectedLeagueRevision: 1,
             leagueId: LEAGUE_ID,
@@ -640,7 +686,6 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       const second: Promise<TResultOutcome> = withInteractiveTransaction(
         (transaction) =>
           recordResult(transaction, ids.Ada!, {
-            acknowledgedDuplicates: [],
             clientOperationId: randomUUID(),
             expectedLeagueRevision: 1,
             leagueId: LEAGUE_ID,
@@ -649,7 +694,12 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
         { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
       );
 
-      release.open();
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
+
       await original;
 
       const outcome: TResultOutcome = await second;
@@ -668,13 +718,14 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
   },
   {
     package: PACKAGES.CONCURRENCY,
-    name: 'the same entry recorded again with that candidate acknowledged writes the second match',
+    name: 'the same entry recorded again, acknowledged under the operation that was warned, writes the second match',
     run: async (connectionString: string): Promise<IScenarioResult> => {
       await resetDatabase(connectionString);
 
       const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
       const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
-      const first: IResultEffect = await withInteractiveTransaction(
+
+      await withInteractiveTransaction(
         (transaction) =>
           recordOrThrow(transaction, ids.Ada!, {
             clientOperationId: randomUUID(),
@@ -684,25 +735,45 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
           }),
         { connectionString },
       );
+
+      // One operation id from the warning through to the save it becomes, which is what the page does: the person
+      // presses Record, is warned, and presses again without the form having started a new operation
+      const operation: string = randomUUID();
       const warned: TResultOutcome = await withInteractiveTransaction(
         (transaction) =>
           recordResult(transaction, ids.Ada!, {
-            acknowledgedDuplicates: [],
-            clientOperationId: randomUUID(),
+            clientOperationId: operation,
             expectedLeagueRevision: 1,
             leagueId: LEAGUE_ID,
             submission: entry,
           }),
         { connectionString },
       );
+      const acknowledgement: string | undefined = warned.ok ? undefined : warned.details?.acknowledgement;
       const recorded: TResultOutcome = await withInteractiveTransaction(
         (transaction) =>
           recordResult(transaction, ids.Ada!, {
-            acknowledgedDuplicates: [first.canonicalMatchId],
-            clientOperationId: randomUUID(),
+            acknowledgement,
+            clientOperationId: operation,
             expectedLeagueRevision: 1,
             leagueId: LEAGUE_ID,
             submission: entry,
+          }),
+        { connectionString },
+      );
+      // The same token against a result edited by a minute: what the person acknowledged is no longer what they are
+      // recording, so it is a fresh warning rather than a save
+      const edited: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgement,
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: {
+              ...entry,
+              playedAt: new Date(Date.parse(entry.playedAt) - 60 * 1000).toISOString(),
+            },
           }),
         { connectionString },
       );
@@ -712,8 +783,14 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       );
 
       return {
-        detail: `the warning named the first match and the acknowledged entry recorded; ${counts!.revisions} revisions`,
-        passed: !warned.ok && warned.refusal === 'PROBABLE_DUPLICATE' && recorded.ok && counts!.revisions === 2,
+        detail: `warned, then recorded under the same operation id; the same token against an edited result was ${edited.ok ? 'accepted' : `refused as "${edited.refusal}"`}; ${counts!.revisions} revisions`,
+        passed:
+          !warned.ok &&
+          warned.refusal === 'PROBABLE_DUPLICATE' &&
+          recorded.ok &&
+          !edited.ok &&
+          edited.refusal === 'PROBABLE_DUPLICATE' &&
+          counts!.revisions === 2,
       };
     },
   },

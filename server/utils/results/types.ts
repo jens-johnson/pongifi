@@ -57,6 +57,9 @@ export interface IDuplicateCandidate {
  * @public
  */
 export interface IResultRefusalDetails {
+  /* The token that records this exact result and this exact warning as seen, to be sent back to record anyway */
+  acknowledgement?: string;
+
   /* The matches this entry looks like, when that is why it was refused */
   candidates?: IDuplicateCandidate[];
 
@@ -70,14 +73,17 @@ export interface IResultRefusalDetails {
  */
 export interface IRecordResultRequest extends IOperationKey {
   /**
-   * The matches this person was shown as probable duplicates and chose to record anyway. Beside the result rather
-   * than in it: an acknowledgement is not part of what was recorded, so pressing "record it anyway" can never read
-   * as a different body under the same operation id.
+   * The token a probable-duplicate warning issued, sent back to say "record it anyway".
    *
-   * Absent means none were shown and none are excused, which is the direction that warns rather than the one that
-   * writes: a caller that forgets this field gets the warning, not a second match
+   * Bound to what was shown rather than to a list of ids: it is a digest of the submission the person saw warned and
+   * the candidates they were shown, so changing the result — a play time by one minute, a score — invalidates it and
+   * earns a fresh warning, and so does a new candidate appearing in the meantime.
+   *
+   * Beside the result rather than in it: it is no part of what was recorded, so pressing "record it anyway" can
+   * never read as a different body under the same operation id. Absent means nothing was acknowledged, which is the
+   * direction that warns rather than the one that writes
    */
-  acknowledgedDuplicates?: string[];
+  acknowledgement?: string | null;
 
   /* The configuration revision the form was drawn at; a league that has moved since refuses rather than adapts */
   expectedLeagueRevision: number;

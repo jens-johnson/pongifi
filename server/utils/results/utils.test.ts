@@ -920,6 +920,69 @@ describe(getTestFileName(import.meta.url), (): void => {
       ]);
     });
 
+    it('answers a retry that carries an acknowledgement the first attempt did not', async (): Promise<void> => {
+      // The acknowledgement travels with a save without being part of it. A digest that included it would make
+      // "record it anyway" a different body under the same key, and the retry of a lost save would conflict with
+      // the save it is retrying
+      const key: string = randomUUID();
+      const entry: IResultSubmission = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const first: TResultOutcome = await record(ids.Ada!, entry, { clientOperationId: key });
+      const retried: TResultOutcome = await inTransaction((transaction) =>
+        recordResult(transaction, ids.Ada!, {
+          acknowledgement: 'a token the first attempt never sent',
+          clientOperationId: key,
+          expectedLeagueRevision: 1,
+          leagueId: LEAGUE_ID,
+          submission: entry,
+        }),
+      );
+      const revisions: unknown[] = await read(`SELECT 1 FROM "result_revisions"`);
+
+      expect(effectOf(first).canonicalMatchId).toBe(effectOf(retried).canonicalMatchId);
+      expect(retried.ok && retried.replayed).toBe(true);
+      expect(revisions).toHaveLength(1);
+    });
+
+    it('warns again when the result changed after the warning was answered', async (): Promise<void> => {
+      // What was acknowledged was a particular result and a particular set of candidates. Moving the play time by a
+      // minute means the person is recording something they were never shown warned
+      const entry: IResultSubmission = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+
+      effectOf(await record(ids.Ada!, entry));
+
+      const warned: TResultOutcome = await inTransaction((transaction) =>
+        recordResult(transaction, ids.Ada!, {
+          clientOperationId: randomUUID(),
+          expectedLeagueRevision: 1,
+          leagueId: LEAGUE_ID,
+          submission: entry,
+        }),
+      );
+      const token: string | undefined = warned.ok ? undefined : warned.details?.acknowledgement;
+      const edited: TResultOutcome = await inTransaction((transaction) =>
+        recordResult(transaction, ids.Ada!, {
+          acknowledgement: token,
+          clientOperationId: randomUUID(),
+          expectedLeagueRevision: 1,
+          leagueId: LEAGUE_ID,
+          submission: { ...entry, playedAt: new Date(Date.parse(entry.playedAt) - 60 * 1000).toISOString() },
+        }),
+      );
+      const accepted: TResultOutcome = await inTransaction((transaction) =>
+        recordResult(transaction, ids.Ada!, {
+          acknowledgement: token,
+          clientOperationId: randomUUID(),
+          expectedLeagueRevision: 1,
+          leagueId: LEAGUE_ID,
+          submission: entry,
+        }),
+      );
+
+      expect(refusalOf(warned)).toBe(ResultRefusal.PROBABLE_DUPLICATE);
+      expect(refusalOf(edited)).toBe(ResultRefusal.PROBABLE_DUPLICATE);
+      expect(accepted.ok).toBe(true);
+    });
+
     it('asks only the other side of a doubles result one of its players entered', async (): Promise<void> => {
       await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
 

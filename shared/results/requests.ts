@@ -60,8 +60,13 @@ export type TRequestValidation<TValue> = IRequestValidationFailure | IRequestVal
  * @public
  */
 export interface IRecordRequestBody {
-  /* The candidate matches this person was shown and chose to record anyway; empty when they were shown none */
-  acknowledgedDuplicates: string[];
+  /**
+   * The token a probable-duplicate warning issued, sent back to record anyway. Null when nothing was warned about.
+   *
+   * Bound to the result that was warned about and the candidates that were shown, so an edited result or a newly
+   * appeared candidate earns a fresh warning rather than slipping through on an old answer
+   */
+  acknowledgement: string | null;
 
   /* The operation this save belongs to, from first attempt to resolved outcome */
   clientOperationId: string;
@@ -182,21 +187,17 @@ function isSubmissionShape(value: unknown): value is IResultSubmission {
  * @returns The normalized request, or what to refuse it with
  */
 export function validateRecordBody(body: unknown): TRequestValidation<IRecordRequestBody> {
-  if (
-    !isAllowlistedObject(body, ['acknowledgedDuplicates', 'clientOperationId', 'expectedLeagueRevision', 'submission'])
-  ) {
+  if (!isAllowlistedObject(body, ['acknowledgement', 'clientOperationId', 'expectedLeagueRevision', 'submission'])) {
     return MALFORMED;
   }
 
-  const { acknowledgedDuplicates, clientOperationId, expectedLeagueRevision, submission } = body;
-  const acknowledged: unknown[] = Array.isArray(acknowledgedDuplicates) ? acknowledgedDuplicates : [];
+  const { acknowledgement, clientOperationId, expectedLeagueRevision, submission } = body;
 
   if (
     !isUuid(clientOperationId) ||
     !isRevision(expectedLeagueRevision) ||
     !isSubmissionShape(submission) ||
-    !Array.isArray(acknowledgedDuplicates ?? []) ||
-    !acknowledged.every(isUuid)
+    (acknowledgement !== undefined && acknowledgement !== null && typeof acknowledgement !== 'string')
   ) {
     return MALFORMED;
   }
@@ -204,7 +205,7 @@ export function validateRecordBody(body: unknown): TRequestValidation<IRecordReq
   return {
     ok: true,
     value: {
-      acknowledgedDuplicates: acknowledged as string[],
+      acknowledgement: typeof acknowledgement === 'string' ? acknowledgement : null,
       clientOperationId,
       expectedLeagueRevision,
       submission,

@@ -16,7 +16,7 @@
  * ─── USAGE ───────────────────────────────────────────────────────────────────────────────────────────────────────────
  *
  * POST /api/leagues/:leagueId/games. Session, same origin and write allowance required. Body: { clientOperationId,
- * expectedLeagueRevision, submission, acknowledgedDuplicates? }.
+ * expectedLeagueRevision, submission, acknowledgement? }.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -141,7 +141,7 @@ export default defineEventHandler(
       throw createError({ statusCode: validated.statusCode, statusMessage: validated.message });
     }
 
-    const { acknowledgedDuplicates, clientOperationId, expectedLeagueRevision } = validated.value;
+    const { acknowledgement, clientOperationId, expectedLeagueRevision } = validated.value;
     const submission = normalizeSubmission(validated.value.submission);
 
     // League access before anything is read about the league. A match id and a play time are private data, and the
@@ -156,7 +156,7 @@ export default defineEventHandler(
     const outcome: TResultOutcome = await runUpstream(
       useResultTransaction(async (transaction): Promise<TResultOutcome> =>
         recordResult(transaction, user.id, {
-          acknowledgedDuplicates,
+          acknowledgement,
           clientOperationId,
           expectedLeagueRevision,
           leagueId,

@@ -928,15 +928,28 @@ async function refuseUnacknowledgedDuplicate(
   const key: string = duplicateKey(submission);
   const candidates: IDuplicateCandidate[] = rows
     .filter((row): boolean => key !== '' && duplicateKey(row.submission) === key)
-    .filter((row): boolean => !(request.acknowledgedDuplicates ?? []).includes(row.canonical_match_id))
     .map((row): IDuplicateCandidate => ({
       canonicalMatchId: row.canonical_match_id,
       playedAt: row.played_at.toISOString(),
     }));
 
-  if (candidates.length > 0) {
-    throw new ResultRefusalError(ResultRefusal.PROBABLE_DUPLICATE, { candidates });
+  if (candidates.length === 0) {
+    return;
   }
+
+  // The token says "I was shown these, for this result". A changed play time, a changed score or a candidate that
+  // appeared since all produce a different token, so the person is warned again rather than recording something
+  // they never saw warned
+  const acknowledgement: string = digest({
+    candidates: candidates.map((candidate: IDuplicateCandidate): string => candidate.canonicalMatchId).sort(),
+    submission,
+  });
+
+  if (request.acknowledgement === acknowledgement) {
+    return;
+  }
+
+  throw new ResultRefusalError(ResultRefusal.PROBABLE_DUPLICATE, { acknowledgement, candidates });
 }
 
 /**
@@ -964,7 +977,13 @@ export async function recordResult(
 ): Promise<TResultOutcome> {
   try {
     const submission: IResultSubmission = normalizeSubmission(request.submission);
-    const requestDigest: string = digest({ ...request, submission });
+    // Named fields rather than the whole request: the acknowledgement travels with a save without being part of it,
+    // and a digest over the request object would make "record it anyway" a different body under the same key
+    const requestDigest: string = digest({
+      expectedLeagueRevision: request.expectedLeagueRevision,
+      leagueId: request.leagueId,
+      submission,
+    });
     const league = await lockLeague(transaction, request.leagueId);
 
     // A first entry has no match to read participants from, but it names accounts all the same, and its liveness
@@ -1905,7 +1924,12 @@ export async function amendResult(
 ): Promise<TResultOutcome> {
   try {
     const submission: IResultSubmission = normalizeSubmission(request.submission);
-    const requestDigest: string = digest({ ...request, submission });
+    // Named fields, for the same reason creation names its own: a digest is what the body said, and nothing else
+    const requestDigest: string = digest({
+      canonicalMatchId: request.canonicalMatchId,
+      expectedRevision: request.expectedRevision,
+      submission,
+    });
     const league = await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
     const previous: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
 

@@ -115,6 +115,13 @@ const EXISTING_MATCH: string = 'c6f3e2a0-0000-4000-8000-000000000003';
 const CANDIDATE_PLAYED_AT: string = '2026-09-20T12:10:00.000Z';
 
 /**
+ * The token a warning issued, sent back to record anyway
+ * @internal
+ * @constant
+ */
+const ACKNOWLEDGEMENT: string = 'e3b0c44298fc1c149afbf4c8996fb924';
+
+/**
  * The operation this save belongs to
  * @internal
  * @constant
@@ -249,7 +256,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
   it('records the result inside one transaction, and hands the service what was acknowledged', async (): Promise<void> => {
     recordResultMock.mockResolvedValueOnce(RECORDED);
-    body = { ...body, acknowledgedDuplicates: [EXISTING_MATCH] };
+    body = { ...body, acknowledgement: ACKNOWLEDGEMENT };
 
     const answer = (await handler(buildEvent())) as { effect: unknown; replayed: boolean };
 
@@ -259,7 +266,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect.anything(),
       USER_ID,
       expect.objectContaining({
-        acknowledgedDuplicates: [EXISTING_MATCH],
+        acknowledgement: ACKNOWLEDGEMENT,
         clientOperationId: OPERATION,
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
@@ -288,7 +295,10 @@ describe(getTestFileName(import.meta.url), (): void => {
   it('passes a probable duplicate through as the service decided it, candidates and all', async (): Promise<void> => {
     // Decided under the league's lock rather than read before it, so the list travels with the refusal
     recordResultMock.mockResolvedValueOnce({
-      details: { candidates: [{ canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT }] },
+      details: {
+        acknowledgement: ACKNOWLEDGEMENT,
+        candidates: [{ canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT }],
+      },
       ok: false,
       refusal: ResultRefusal.PROBABLE_DUPLICATE,
       state: null,
@@ -302,6 +312,8 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(answer).toMatchObject({ refusal: ResultRefusal.PROBABLE_DUPLICATE, statusCode: 409 });
     expect(answer.candidates.map((candidate): string => candidate.canonicalMatchId)).toEqual([EXISTING_MATCH]);
+    // The page sends this back to record anyway; without it there is nothing to answer the warning with
+    expect((answer as unknown as { acknowledgement: string }).acknowledgement).toBe(ACKNOWLEDGEMENT);
   });
 
   it('hands a stale-rules conflict the rules that are current now', async (): Promise<void> => {

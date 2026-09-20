@@ -83,25 +83,26 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(validateRecordBody), (): void => {
     it('reads a body the form sends', (): void => {
       const outcome: TRequestValidation<IRecordRequestBody> = validateRecordBody({
-        acknowledgedDuplicates: [OTHER],
+        acknowledgement: 'a3f1c0de',
         clientOperationId: OPERATION,
         expectedLeagueRevision: 3,
         submission: submission(),
       });
 
       expect(outcome.ok && outcome.value.clientOperationId).toBe(OPERATION);
-      expect(outcome.ok && outcome.value.acknowledgedDuplicates).toEqual([OTHER]);
+      expect(outcome.ok && outcome.value.acknowledgement).toBe('a3f1c0de');
       expect(outcome.ok && outcome.value.expectedLeagueRevision).toBe(3);
     });
 
     it('treats an absent acknowledgement as having been shown nothing', (): void => {
+      // The direction that warns rather than the one that writes: a body that forgets this field gets the warning
       const outcome: TRequestValidation<IRecordRequestBody> = validateRecordBody({
         clientOperationId: OPERATION,
         expectedLeagueRevision: 1,
         submission: submission(),
       });
 
-      expect(outcome.ok && outcome.value.acknowledgedDuplicates).toEqual([]);
+      expect(outcome.ok && outcome.value.acknowledgement).toBeNull();
     });
 
     it('refuses a body carrying a key this request does not own', (): void => {
@@ -157,9 +158,9 @@ describe(getTestFileName(import.meta.url), (): void => {
       );
     });
 
-    it('refuses an acknowledgement that is not a list of match ids', (): void => {
+    it('refuses an acknowledgement that is not a token', (): void => {
       const outcome: TRequestValidation<IRecordRequestBody> = validateRecordBody({
-        acknowledgedDuplicates: ['../games'],
+        acknowledgement: { canonicalMatchId: OTHER },
         clientOperationId: OPERATION,
         expectedLeagueRevision: 1,
         submission: submission(),
