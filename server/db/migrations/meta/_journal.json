@@ -29,6 +29,34 @@
       "when": 1789426077040,
       "tag": "0003_stale_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789861290606,
+      "tag": "0004_result_entry_persistence",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789868000193,
+      "tag": "0005_rating_audit_and_void_reason",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789924571497,
+      "tag": "0006_per_side_confirmation",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789930416264,
+      "tag": "0007_side_evidence_and_action_role",
+      "breakpoints": true
     }
   ]
 }
