@@ -55,6 +55,21 @@ const SHARED_LINK_MIGRATION: string = '0002_dusty_gauntlet.sql';
 const REVISION_MIGRATION: string = '0003_stale_gateway.sql';
 
 /**
+ * The migration that adds the result-revision journal, receipts and generation-addressed ratings, and moves every
+ * snapshot written before generations existed into one
+ * @internal
+ * @constant
+ */
+const RESULT_MIGRATION: string = '0004_result_entry_persistence.sql';
+
+/**
+ * The match every result fixture below is a revision of
+ * @internal
+ * @constant
+ */
+const MATCH_ID: string = '22222222-2222-2222-2222-222222222222';
+
+/**
  * The league the invitation fixtures below belong to
  * @internal
  * @constant
@@ -149,6 +164,65 @@ async function readStamps(email: string): Promise<{ created_at: Date; profile_co
   );
 
   return rows[0]!;
+}
+
+/**
+ * Inserts a completed game, which is what a rating snapshot and a result revision both hang off
+ * @internal
+ * @async
+ * @function
+ * @param owner - The account recording it
+ * @returns The game's id
+ */
+async function seedGame(owner: string): Promise<string> {
+  const { rows } = await database.query<{ id: string }>(
+    `INSERT INTO "games" ("league_id", "type", "status", "settings_snapshot", "created_by")
+     VALUES ($1, 'SINGLES', 'COMPLETE', '{}', $2) RETURNING "id"`,
+    [LEAGUE_ID, owner],
+  );
+
+  return rows[0]!.id;
+}
+
+/**
+ * Inserts a rating snapshot from before generations existed
+ * @internal
+ * @async
+ * @function
+ * @param owner - The rated account
+ * @param gameId - The game that produced it
+ */
+async function seedSnapshot(owner: string, gameId: string): Promise<void> {
+  await database.query(
+    `INSERT INTO "rating_snapshots" ("league_id", "user_id", "scope", "rating", "games_played", "is_provisional", "game_id")
+     VALUES ($1, $2, 'OVERALL', 1216.5, 1, true, $3)`,
+    [LEAGUE_ID, owner, gameId],
+  );
+}
+
+/**
+ * Inserts one revision of a result
+ * @internal
+ * @async
+ * @function
+ * @param owner - The recorder
+ * @param revision - Which revision this is
+ * @param isCurrent - Whether it is the current one
+ * @returns The revision's id
+ */
+async function seedRevision(owner: string, revision: number, isCurrent: boolean): Promise<string> {
+  const { rows } = await database.query<{ id: string }>(
+    `INSERT INTO "result_revisions" (
+       "canonical_match_id", "league_id", "revision", "is_current", "state", "game_type",
+       "settings_snapshot", "policy_snapshot", "league_configuration_revision", "submission",
+       "reconstruction", "reconstruction_version", "submission_digest",
+       "played_at", "original_played_at", "submitted_at", "recorded_by"
+     ) VALUES ($1, $2, $3, $4, 'UNCONFIRMED', 'SINGLES', '{}', '{}', 1, '{}', '{}', 1, 'digest',
+       now(), now(), now(), $5) RETURNING "id"`,
+    [MATCH_ID, LEAGUE_ID, revision, isCurrent ? true : null, owner],
+  );
+
+  return rows[0]!.id;
 }
 
 /* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -301,6 +375,138 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       await expect(
         database.query('UPDATE "leagues" SET "configuration_revision" = NULL WHERE "id" = $1', [LEAGUE_ID]),
+      ).rejects.toThrow();
+    });
+  });
+  describe(RESULT_MIGRATION, (): void => {
+    beforeEach(async (): Promise<void> => {
+      database = new PGlite();
+
+      await applyMigration(INITIAL_MIGRATION);
+      await applyMigration(WELCOME_MIGRATION);
+      await applyMigration(SHARED_LINK_MIGRATION);
+      await applyMigration(REVISION_MIGRATION);
+    });
+
+    it('moves the ratings a league already had into one generation and points the league at it', async (): Promise<void> => {
+      // An empty database cannot prove this: the snapshots have to predate the migration that adopts them
+      const owner: string = await seedLeague();
+
+      await seedSnapshot(owner, await seedGame(owner));
+      await seedSnapshot(owner, await seedGame(owner));
+
+      await applyMigration(RESULT_MIGRATION);
+
+      const { rows } = await database.query<{ active: string; generation: string; rated: number }>(
+        `SELECT "s"."rating_generation_id" AS "generation", "a"."rating_generation_id" AS "active", "g"."rated_game_count" AS "rated"
+         FROM "rating_snapshots" AS "s"
+         JOIN "active_rating_generations" AS "a" ON "a"."league_id" = "s"."league_id"
+         JOIN "rating_generations" AS "g" ON "g"."id" = "s"."rating_generation_id"`,
+      );
+
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row): boolean => row.generation === rows[0]!.generation)).toBe(true);
+      expect(rows.every((row): boolean => row.active === row.generation)).toBe(true);
+      expect(rows[0]!.rated).toBe(2);
+    });
+
+    it('leaves a league with no ratings without a generation rather than an empty one', async (): Promise<void> => {
+      await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      const { rows } = await database.query('SELECT 1 FROM "rating_generations"');
+
+      expect(rows).toHaveLength(0);
+    });
+
+    it('refuses a snapshot written without a generation once the column is in place', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      await expect(seedSnapshot(owner, await seedGame(owner))).rejects.toThrow();
+    });
+
+    it('allows one current revision of a match and any number of superseded ones', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      await seedRevision(owner, 1, false);
+      await seedRevision(owner, 2, false);
+      await seedRevision(owner, 3, true);
+
+      await expect(seedRevision(owner, 4, true)).rejects.toThrow();
+    });
+
+    it('refuses a second revision under the same number', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      await seedRevision(owner, 1, true);
+
+      await expect(seedRevision(owner, 1, false)).rejects.toThrow();
+    });
+
+    it('keeps a superseded game addressable while leaving it out of a live count', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      const superseded: string = await seedGame(owner);
+      const live: string = await seedGame(owner);
+
+      await database.query('UPDATE "games" SET "superseded_at" = now() WHERE "id" = $1', [superseded]);
+
+      const { rows: counted } = await database.query<{ n: number }>(
+        `SELECT count(*)::int AS "n" FROM "games" WHERE "superseded_at" IS NULL AND "status" = 'COMPLETE'`,
+      );
+      const { rows: addressable } = await database.query('SELECT 1 FROM "games" WHERE "id" = $1', [superseded]);
+
+      expect(counted[0]!.n).toBe(1);
+      expect(addressable).toHaveLength(1);
+      expect(live).not.toBe(superseded);
+    });
+
+    it('refuses a second receipt under one operation key, and allows another key for the same actor', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      const revision: string = await seedRevision(owner, 1, true);
+      const receipt = async (clientOperationId: string): Promise<unknown> =>
+        database.query(
+          `INSERT INTO "result_operations" ("actor_user_id", "operation", "client_operation_id", "request_digest",
+             "canonical_match_id", "result_revision_id", "effect")
+           VALUES ($1, 'CREATE', $2, 'digest', $3, $4, '{}')`,
+          [owner, clientOperationId, MATCH_ID, revision],
+        );
+
+      await receipt('33333333-3333-3333-3333-333333333333');
+
+      await expect(receipt('33333333-3333-3333-3333-333333333333')).rejects.toThrow();
+      await expect(receipt('44444444-4444-4444-4444-444444444444')).resolves.toBeDefined();
+    });
+
+    it('refuses a note that claims to be redacted while its words are still there', async (): Promise<void> => {
+      const owner: string = await seedLeague();
+
+      await applyMigration(RESULT_MIGRATION);
+
+      const revision: string = await seedRevision(owner, 1, true);
+      const { rows } = await database.query<{ id: string }>(
+        `INSERT INTO "result_actions" ("result_revision_id", "actor_user_id", "type")
+         VALUES ($1, $2, 'DISPUTE') RETURNING "id"`,
+        [revision, owner],
+      );
+
+      await expect(
+        database.query(
+          'INSERT INTO "result_dispute_notes" ("result_action_id", "body", "redacted_at") VALUES ($1, $2, now())',
+          [rows[0]!.id, 'that was not the score'],
+        ),
       ).rejects.toThrow();
     });
   });

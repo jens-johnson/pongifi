@@ -9,17 +9,15 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████ #server/db/schema/index.ts █████████████████████████████████████████████
+ * ██████████████████████████████████████████ #server/utils/results/index.ts ███████████████████████████████████████████
  *
- * Barrel for the database schema; re-exports every table and enum drizzle-kit reads.
+ * Public entry point for the server-side result operations.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
+export * from './constants';
 export * from './enums';
-export * from './games';
-export * from './leagues';
-export * from './notifications';
-export * from './ratings';
-export * from './results';
-export * from './users';
+export * from './replay';
+export * from './types';
+export * from './utils';

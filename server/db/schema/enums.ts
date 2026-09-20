@@ -30,6 +30,7 @@ import {
   RatingScope,
   RecordingMode,
 } from '#shared/domain';
+import { ResultAction, ResultOperation, ResultSettleReason, ResultState } from '#shared/results';
 import { EventType, GameType, Side } from '#shared/rules-engine';
 
 /**
@@ -127,6 +128,34 @@ export const participantSideEnum = pgEnum('participant_side', valuesOf(Side));
  * @constant
  */
 export const ratingScopeEnum = pgEnum('rating_scope', valuesOf(RatingScope));
+
+/**
+ * A durable vote or ruling recorded against one result revision
+ * @public
+ * @constant
+ */
+export const resultActionEnum = pgEnum('result_action', valuesOf(ResultAction));
+
+/**
+ * A write against a result, as its receipt names it
+ * @public
+ * @constant
+ */
+export const resultOperationEnum = pgEnum('result_operation', valuesOf(ResultOperation));
+
+/**
+ * Why a result revision reached a settled state
+ * @public
+ * @constant
+ */
+export const resultSettleReasonEnum = pgEnum('result_settle_reason', valuesOf(ResultSettleReason));
+
+/**
+ * Where a result revision stands
+ * @public
+ * @constant
+ */
+export const resultStateEnum = pgEnum('result_state', valuesOf(ResultState));
 
 /**
  * How a game's log came to exist

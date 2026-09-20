@@ -1,0 +1,143 @@
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * █████████████████████████████████████████████ #shared/results/types.ts ██████████████████████████████████████████████
+ *
+ * The shapes a recorded result is submitted, frozen and reconstructed in.
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+import type { ResultRecorder } from '#shared/domain';
+import type { GameType, Side, TMatchEvent } from '#shared/rules-engine';
+
+import type { ResultEnding, Seat } from './enums';
+
+/**
+ * One seat as the recorder filled it: a member, or a guest label that belongs to this result alone
+ * @public
+ */
+export interface IResultSeat {
+  /* The label a guest was entered under, trimmed; null when the seat holds a member */
+  guestName: string | null;
+
+  /* Which seat this is */
+  seat: Seat;
+
+  /* The member in the seat; null when the seat holds a guest */
+  userId: string | null;
+}
+
+/**
+ * One game of the match, as scores rather than as a log
+ * @public
+ */
+export interface IGameScoreRow {
+  /* Side A's final score */
+  a: number;
+
+  /* Side B's final score */
+  b: number;
+
+  /* Which game of the match this is, from 1 */
+  gameNumber: number;
+}
+
+/**
+ * A result as the form submits it, before anything is frozen or reconstructed
+ * @public
+ */
+export interface IResultSubmission {
+  /* Whether the match was played out or ended by a withdrawal */
+  ending: ResultEnding;
+
+  /* Which format was played */
+  gameType: GameType;
+
+  /* The games, in order from 1 */
+  games: IGameScoreRow[];
+
+  /* When the match was played, as an ISO instant */
+  playedAt: string;
+
+  /* The seat that withdrew; null unless the ending is a retirement */
+  retiredSeat: Seat | null;
+
+  /* The seats, one per position the format fills */
+  seats: IResultSeat[];
+}
+
+/**
+ * The administration policy frozen onto a result at creation. Scoring rules freeze separately, as `IMatchSettings`:
+ * the two answer different questions and a league can move either without the other
+ * @public
+ */
+export interface IResultPolicySnapshot {
+  /* Rated games before a rating leaves provisional status */
+  provisionalGames: number;
+
+  /* Whether this league's games move ratings at all */
+  ratingEnabled: boolean;
+
+  /* Whether the other participants have to accept a recorded result */
+  requireConfirmation: boolean;
+
+  /* Hours after the stated play time during which the result may be amended */
+  resultAmendmentWindow: number;
+
+  /* Hours a result stays unconfirmed before it is eligible for automatic acceptance */
+  resultConfirmationWindow: number;
+
+  /* The shape this snapshot was written under */
+  version: number;
+
+  /* Who may record a result in this league */
+  whoCanRecordResults: ResultRecorder;
+}
+
+/**
+ * One game's reconstructed log, with the facts the replay proved about it
+ * @public
+ */
+export interface IReconstructedGame {
+  /* The events belonging to this game, in sequence order; game one carries the match's MATCH_INIT at sequence zero */
+  events: TMatchEvent[];
+
+  /* Which game of the match this is, from 1 */
+  gameNumber: number;
+
+  /* Whether this game was played to a result, or left unfinished by a withdrawal */
+  isComplete: boolean;
+
+  /* The final scores, captured before the engine resets them at a game boundary */
+  scores: Record<Side, number>;
+
+  /* The side credited with this game; null only for an unfinished game nobody won on the table */
+  winner: Side | null;
+}
+
+/**
+ * A whole match's reconstruction: the log split by game, exactly as it is persisted
+ * @public
+ */
+export interface IReconstruction {
+  /* The games, in order from 1 */
+  games: IReconstructedGame[];
+
+  /* Whether the match itself reached a result rather than ending in a withdrawal */
+  isComplete: boolean;
+
+  /* The builder version that produced this log */
+  version: number;
+
+  /* The side that took the match */
+  winner: Side;
+}

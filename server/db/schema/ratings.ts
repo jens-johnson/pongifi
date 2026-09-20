@@ -16,11 +16,12 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { boolean, doublePrecision, index, integer, pgTable, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, doublePrecision, index, integer, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 import { ratingScopeEnum } from './enums';
 import { games } from './games';
 import { leagues } from './leagues';
+import { ratingGenerations } from './results';
 import { users } from './users';
 
 /**
@@ -50,9 +51,26 @@ export const ratingSnapshots = pgTable(
     gameId: uuid('game_id')
       .notNull()
       .references(() => games.id, { onDelete: 'cascade' }),
+    /**
+     * The complete computation this snapshot belongs to. A rating read follows the league's active generation and the
+     * replay's own order; it never takes the newest row by insertion time, which is what a half-published rebuild
+     * would look like
+     */
+    ratingGenerationId: uuid('rating_generation_id')
+      .notNull()
+      .references(() => ratingGenerations.id, { onDelete: 'cascade' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    /* One snapshot per player per game per scope within a generation; a retried publication cannot double-write */
+    uniqueIndex('rating_snapshots_generation_unique').on(
+      table.ratingGenerationId,
+      table.gameId,
+      table.userId,
+      table.scope,
+    ),
+    /* The leaderboard reads one generation's rows for one scope */
+    index('rating_snapshots_generation_idx').on(table.ratingGenerationId, table.scope),
     /* Reading a current rating, and reading a rating history, are the same index walked in opposite directions */
     index('rating_snapshots_current_idx').on(table.leagueId, table.userId, table.scope, table.createdAt),
     /* The leaderboard reads every member's latest snapshot for one scope in one league */

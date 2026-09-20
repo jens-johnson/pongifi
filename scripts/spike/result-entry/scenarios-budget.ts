@@ -1,0 +1,290 @@
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * ██████████████████████████████████ scripts/spike/result-entry/scenarios-budget.ts ███████████████████████████████████
+ *
+ * Runtime and storage measurements for the result-entry spike.
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+import { randomUUID } from 'node:crypto';
+
+import { withInteractiveTransaction } from '#utils/db/transaction';
+import { settleDueResults } from '#utils/results';
+
+import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
+import { recordOrThrow, singles } from './scenarios-schema';
+import type { IScenario, IScenarioResult } from './types';
+import { PACKAGES } from './types';
+
+/**
+ * How many eligible game rows each measurement is taken at. Test sizes, not a promised supported capacity
+ * @internal
+ * @constant
+ */
+const SIZES: readonly number[] = [100, 1000, 10000];
+
+/**
+ * How many accounts the seeded matches rotate between, so the ladder is a real chain of transitive opponents rather
+ * than one pair playing itself
+ * @internal
+ * @constant
+ */
+const PLAYERS: readonly string[] = ['Ada', 'Ben', 'Cara', 'Dan', 'Eve', 'Fay', 'Gus', 'Hal'];
+
+/**
+ * Seeds a league with settled singles results, written directly rather than through the service.
+ *
+ * Recording ten thousand results one at a time would spend its whole time replaying the ladder after each, which is
+ * the cost being measured rather than the fixture. The rows written here are the same shape the service writes
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param count - How many matches to write
+ * @returns The seeded accounts
+ */
+async function seedLadder(connectionString: string, count: number): Promise<Record<string, string>> {
+  await resetDatabase(connectionString);
+
+  const ids: Record<string, string> = await seedLeague(
+    connectionString,
+    [...PLAYERS],
+    settingsFixture({ requireConfirmation: false }),
+  );
+  const players: string[] = PLAYERS.map((name: string): string => ids[name]!);
+
+  await read(
+    connectionString,
+    `WITH seeded AS (
+       SELECT i,
+              gen_random_uuid() AS revision_id,
+              gen_random_uuid() AS game_id,
+              (now() - ((10000 - i) || ' minutes')::interval) AS played_at,
+              ($2::uuid[])[(i % ${PLAYERS.length}) + 1] AS winner,
+              ($2::uuid[])[((i + 1) % ${PLAYERS.length}) + 1] AS loser
+       FROM generate_series(1, $1) AS i
+     ),
+     revisions AS (
+       INSERT INTO "result_revisions" ("id", "canonical_match_id", "league_id", "revision", "is_current", "state",
+         "game_type", "settings_snapshot", "policy_snapshot", "league_configuration_revision", "submission",
+         "reconstruction", "reconstruction_version", "submission_digest", "played_at", "original_played_at",
+         "submitted_at", "settled_at", "settled_reason", "recorded_by")
+       SELECT s.revision_id, s.revision_id, $3, 1, true, 'CONFIRMED', 'SINGLES', $4::jsonb, $5::jsonb, 1,
+              '{}'::jsonb, '{}'::jsonb, 1, 'seeded', s.played_at, s.played_at, s.played_at, s.played_at,
+              'NO_CONFIRMATION_NEEDED', $6
+       FROM seeded s
+       RETURNING "id"
+     ),
+     inserted_games AS (
+       INSERT INTO "games" ("id", "league_id", "match_id", "game_number", "type", "status", "confirmation_status",
+         "confirmed_at", "recording_mode", "settings_snapshot", "created_by", "ended_at", "result_revision_id")
+       SELECT s.game_id, $3, s.revision_id, 1, 'SINGLES', 'COMPLETE', 'CONFIRMED', s.played_at, 'RETROACTIVE',
+              $4::jsonb, $6, s.played_at, s.revision_id
+       FROM seeded s
+       RETURNING "id"
+     ),
+     links AS (
+       INSERT INTO "result_revision_games" ("result_revision_id", "game_id", "game_number")
+       SELECT s.revision_id, s.game_id, 1 FROM seeded s
+       RETURNING "game_id"
+     )
+     INSERT INTO "game_participants" ("game_id", "user_id", "side", "final_score", "outcome", "result_revision_id", "seat")
+     SELECT s.game_id, s.winner, 'A'::participant_side, 11, 'WIN'::participant_outcome, s.revision_id, 'A1' FROM seeded s
+     UNION ALL
+     SELECT s.game_id, s.loser, 'B'::participant_side, 4, 'LOSS'::participant_outcome, s.revision_id, 'B1' FROM seeded s`,
+    [
+      count,
+      players,
+      LEAGUE_ID,
+      JSON.stringify({
+        cutthroatTimeCap: 0,
+        expediteEnabled: false,
+        gameType: 'SINGLES',
+        matchFormat: 1,
+        serviceInterval: 2,
+        targetScore: 11,
+        winningMargin: 2,
+      }),
+      JSON.stringify({
+        provisionalGames: 5,
+        ratingEnabled: true,
+        requireConfirmation: false,
+        resultAmendmentWindow: 48,
+        resultConfirmationWindow: 24,
+        version: 1,
+        whoCanRecordResults: 'PARTICIPANTS',
+      }),
+      ids.Ada!,
+    ],
+  );
+
+  return ids;
+}
+
+/**
+ * How much space the generation tables take, in bytes
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @returns The total size of the snapshot and generation tables
+ */
+async function generationBytes(connectionString: string): Promise<number> {
+  const [row] = await read<{ bytes: string }>(
+    connectionString,
+    `SELECT (pg_total_relation_size('rating_snapshots') + pg_total_relation_size('rating_generations'))::text AS bytes`,
+  );
+
+  return Number(row!.bytes);
+}
+
+/**
+ * Measures one transition at one ladder size
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param count - How many game rows the league already has
+ * @returns A line of measurements
+ */
+async function measure(connectionString: string, count: number): Promise<string> {
+  const ids: Record<string, string> = await seedLadder(connectionString, count);
+  const before: number = await generationBytes(connectionString);
+  const started: number = performance.now();
+
+  await withInteractiveTransaction(
+    (transaction) =>
+      recordOrThrow(transaction, ids.Ada!, {
+        clientOperationId: randomUUID(),
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
+      }),
+    {
+      connectionString,
+      limits: {
+        idleTimeoutMs: 120000,
+        lockTimeoutMs: 120000,
+        statementTimeoutMs: 120000,
+      },
+    },
+  );
+
+  const elapsed: number = performance.now() - started;
+  const [written] = await read<{ generations: number; snapshots: number }>(
+    connectionString,
+    `SELECT (SELECT count(*)::int FROM "rating_snapshots") AS snapshots,
+            (SELECT count(*)::int FROM "rating_generations") AS generations`,
+  );
+  const after: number = await generationBytes(connectionString);
+
+  return `${count} rows → ${elapsed.toFixed(0)}ms for the whole transaction, ${written!.snapshots} snapshots in ${written!.generations} generation, ${(((after - before) / 1024 / 1024) * 1).toFixed(2)} MB of generation storage`;
+}
+
+/**
+ * The runtime-budget measurements
+ * @public
+ * @constant
+ */
+export const BUDGET_SCENARIOS: readonly IScenario[] = [
+  {
+    package: PACKAGES.BUDGET,
+    name: 'one transition, measured at 100, 1,000 and 10,000 eligible game rows',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      const lines: string[] = [];
+
+      for (const size of SIZES) {
+        lines.push(await measure(connectionString, size));
+      }
+
+      return { detail: lines.join('\n        '), passed: lines.length === SIZES.length };
+    },
+  },
+  {
+    package: PACKAGES.BUDGET,
+    name: 'a backdated correction near the beginning of a 1,000-row league costs the same full replay',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await seedLadder(connectionString, 1000);
+
+      const [oldest] = await read<{ id: string; played_at: Date }>(
+        connectionString,
+        `SELECT "canonical_match_id" AS id, "played_at" FROM "result_revisions" ORDER BY "played_at" LIMIT 1`,
+      );
+
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "state" = 'UNCONFIRMED', "settled_at" = NULL, "settled_reason" = NULL,
+           "confirmation_deadline" = now() - interval '1 minute' WHERE "canonical_match_id" = $1`,
+        [oldest!.id],
+      );
+
+      const started: number = performance.now();
+      const settled: number = await withInteractiveTransaction(
+        (transaction) => settleDueResults(transaction, LEAGUE_ID),
+        {
+          connectionString,
+          limits: {
+            idleTimeoutMs: 120000,
+            lockTimeoutMs: 120000,
+            statementTimeoutMs: 120000,
+          },
+        },
+      );
+      const elapsed: number = performance.now() - started;
+
+      return {
+        detail: `settling the oldest of 1,000 results took ${elapsed.toFixed(0)}ms and settled ${settled}`,
+        passed: settled === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.BUDGET,
+    name: 'two writers on one 1,000-row league serialize, and the second pays the first one’s replay as lock wait',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      const ids: Record<string, string> = await seedLadder(connectionString, 1000);
+      const record = (): Promise<{ elapsed: number }> => {
+        const started: number = performance.now();
+
+        return withInteractiveTransaction(
+          (transaction) =>
+            recordOrThrow(transaction, ids.Ada!, {
+              clientOperationId: randomUUID(),
+              expectedLeagueRevision: 1,
+              leagueId: LEAGUE_ID,
+              submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
+            }),
+          {
+            connectionString,
+            limits: {
+              idleTimeoutMs: 120000,
+              lockTimeoutMs: 120000,
+              statementTimeoutMs: 120000,
+            },
+          },
+        ).then((): { elapsed: number } => ({ elapsed: performance.now() - started }));
+      };
+      const [first, second] = await Promise.all([record(), record()]);
+      const [counts] = await read<{ generations: number; pointers: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "rating_generations") AS generations,
+                (SELECT count(*)::int FROM "active_rating_generations") AS pointers`,
+      );
+
+      return {
+        detail: `two concurrent writers took ${first!.elapsed.toFixed(0)}ms and ${second!.elapsed.toFixed(0)}ms; ${counts!.generations} generations published, ${counts!.pointers} active pointer`,
+        passed: counts!.generations === 2 && counts!.pointers === 1,
+      };
+    },
+  },
+];

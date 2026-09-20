@@ -9,17 +9,27 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████ #server/db/schema/index.ts █████████████████████████████████████████████
+ * ███████████████████████████████████████████ #server/utils/db/constants.ts ███████████████████████████████████████████
  *
- * Barrel for the database schema; re-exports every table and enum drizzle-kit reads.
+ * The limits one result transaction runs under.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-export * from './enums';
-export * from './games';
-export * from './leagues';
-export * from './notifications';
-export * from './ratings';
-export * from './results';
-export * from './users';
+import type { ITransactionLimits } from './types';
+
+/**
+ * How long one statement inside a result transaction may run, how long it may wait for a lock, and how long the
+ * transaction may sit idle, all in milliseconds.
+ *
+ * Chosen from the measured cost of a full-league rating replay rather than from a round number, and deliberately
+ * inside the platform's own request limit: a transaction that outlives the function holding it is a lock nobody will
+ * release. The measurements these are drawn from are recorded with the spike
+ * @public
+ * @constant
+ */
+export const DEFAULT_TRANSACTION_LIMITS: ITransactionLimits = {
+  idleTimeoutMs: 5000,
+  lockTimeoutMs: 5000,
+  statementTimeoutMs: 10000,
+};

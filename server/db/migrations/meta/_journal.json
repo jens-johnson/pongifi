@@ -29,6 +29,13 @@
       "when": 1789426077040,
       "tag": "0003_stale_gateway",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789861290606,
+      "tag": "0004_result_entry_persistence",
+      "breakpoints": true
     }
   ]
 }

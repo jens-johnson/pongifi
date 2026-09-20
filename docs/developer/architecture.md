@@ -41,11 +41,19 @@ A game's score is **never** a mutable counter. It is derived by replaying `GameE
 
 This is what makes undo, amendment, and statistic backfill cheap rather than painful.
 
-### 3. Ratings Are Append-Only Snapshots
+### 3. Ratings Are Append-Only Snapshots, Addressed By Generation
 
-Rating rows are keyed to the game that caused them; a current rating is the latest snapshot for a given league, user,
-and scope. Amending or voiding a game invalidates every snapshot from that game forward and Pongifi replays them in
-chronological order.
+Rating rows are keyed to the game that caused them and to the **generation** that computed them. A generation is one
+complete recomputation of a league's ladder; the league points at exactly one of them through
+`active_rating_generations`, and every rating read follows that pointer and the replay's chronological order. A
+current rating is _never_ the newest snapshot by insertion time: that is what a half-published rebuild looks like
+from the outside.
+
+Anything that changes what a league rates — a result settling, a correction, a void — recomputes the whole eligible
+stream from the opening rating with no games behind it, and publishes the generation, its snapshots and the pointer
+in one transaction. The whole stream, rather than the players involved, because ratings are transitive: changing
+A against B changes B, which changes what beating B was worth to C, which changes C against D. Superseded
+generations stay as audit history.
 
 Ratings are path-dependent, so recomputation has to be deterministic, which is only sound because both the rules
 engine and the rating engine are pure functions over the log.
@@ -98,8 +106,21 @@ Eleven tables model accounts, leagues, games, and ratings. The decisions worth k
   guest is a per-game label rather than an identity; two games with a guest called "Dave" are not the same Dave.
 - **`user_accounts` holds provider identities** rather than a column on the user, so a Google subject has somewhere
   to live and adding a second provider later is a row rather than a backfill.
+- **A result is a journal of revisions, not a mutable row.** `result_revisions` holds every revision of a recorded
+  result, with exactly one current per match enforced by a partial unique index, and names the game rows it includes
+  through `result_revision_games`. A correction writes new game rows and stamps the old ones `superseded_at`; the old
+  rows stay readable and addressable, so **every count, list and ladder predicate must filter `superseded_at IS
+NULL`** or it will count a score nobody stands behind twice.
+- **Every result write carries a receipt.** `result_operations` is unique over the actor, the operation and the
+  client's own operation id, so a request whose answer was lost is resolved by replaying the identical action rather
+  than by writing a second one; a changed body under the same key conflicts.
+- **Dispute notes live apart from the scoring evidence** in `result_dispute_notes`, so deletion can redact the words
+  without touching the scores, the ratings or the receipts.
 
 ## Typechecking
 
 Nuxt generates four projects — app, server, shared, and node. None of them covers the root config files, so
-`tsconfig.tooling.json` picks up `drizzle.config.ts`, `vitest.config.ts`, and `env.d.ts`. `pnpm typecheck` runs both.
+`tsconfig.tooling.json` picks up `drizzle.config.ts`, `vitest.config.ts`, `env.d.ts`, and everything under
+`scripts/`. It carries the `#shared` and `#utils` aliases so a script can exercise application code, which is why
+the interactive transaction transport takes its connection string as a parameter and
+`useResultTransaction` — the Nuxt-aware wrapper — is what supplies the deployed one. `pnpm typecheck` runs both.

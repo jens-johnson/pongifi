@@ -9,17 +9,40 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * ████████████████████████████████████████████ #server/db/schema/index.ts █████████████████████████████████████████████
+ * ████████████████████████████████████████ #server/utils/results/constants.ts █████████████████████████████████████████
  *
- * Barrel for the database schema; re-exports every table and enum drizzle-kit reads.
+ * The scope, roles and units the result operations work in.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-export * from './enums';
-export * from './games';
-export * from './leagues';
-export * from './notifications';
-export * from './ratings';
-export * from './results';
-export * from './users';
+import { RatingScope } from '#shared/domain';
+
+/**
+ * The one ladder this slice writes. Sub-ratings by format are a later slice, and computing them here would publish a
+ * generation whose shape a later migration has to unpick
+ * @public
+ * @constant
+ */
+export const REPLAYED_SCOPE: RatingScope = RatingScope.OVERALL;
+
+/**
+ * How many milliseconds are in an hour, which is the unit both frozen windows are stated in
+ * @public
+ * @constant
+ */
+export const HOUR_MS: number = 60 * 60 * 1000;
+
+/**
+ * The roles that may record for anybody, amend a disputed result, and see every action a league's results offer
+ * @public
+ * @constant
+ */
+export const ADMIN_ROLES: readonly string[] = ['COMMISSIONER', 'MANAGER'];
+
+/**
+ * The role that may void a result. Deleting a result is a commissioner's, per the pitch's authority table (V.I)
+ * @public
+ * @constant
+ */
+export const VOID_ROLE: string = 'COMMISSIONER';
