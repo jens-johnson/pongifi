@@ -467,6 +467,11 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       const { outcome } = await run(async (transaction): Promise<string> => {
         await transaction.query('SELECT slow').catch((): void => undefined);
+        // The step above was refused by its own expiry timer, and a timer may fire a moment before the clock it was
+        // set against reads past the deadline. Spending a little of the clock here is what makes the next line a
+        // question about the guard rather than about that moment
+        spin(5);
+
         await transaction.query('SELECT after');
 
         return 'recorded';
