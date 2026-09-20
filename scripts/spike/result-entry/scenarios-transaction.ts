@@ -582,7 +582,13 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
         { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
       );
 
-      release.open();
+      // Observed, not assumed: without this the two could simply run in order and the case would pass for the wrong
+      // reason. Released in a `finally`, so a wait that never appears fails the case instead of hanging the harness
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
 
       const first: TResultOutcome = await original;
       const second: TResultOutcome = await retrying;
@@ -636,7 +642,12 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
         { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
       );
 
-      release.open();
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
+
       await original;
 
       const outcome: TResultOutcome = await edited;
