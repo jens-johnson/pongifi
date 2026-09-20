@@ -21,6 +21,7 @@
 
 export * from './constants';
 export * from './enums';
+export * from './http';
 export * from './replay';
 export * from './types';
 export * from './utils';

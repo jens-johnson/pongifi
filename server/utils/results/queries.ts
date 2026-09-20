@@ -16,14 +16,15 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, ne, sql } from 'drizzle-orm';
 
 import { LeagueRole, MembershipStatus, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IResultFormContext } from '#shared/results';
+import type { IResultFormContext, IResultSubmission } from '#shared/results';
+import { canonicalize, DUPLICATE_WINDOW_MINUTES, ResultState } from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 
-import { leagues, memberships, users } from '../../db/schema';
+import { leagues, memberships, resultRevisions, users } from '../../db/schema';
 import { useDatabase } from '../db';
 import { HOUR_MS } from './constants';
 
@@ -34,6 +35,13 @@ import { HOUR_MS } from './constants';
  * @constant
  */
 const RECORDABLE_FORMATS: readonly GameType[] = [GameType.SINGLES, GameType.DOUBLES];
+
+/**
+ * The most candidate matches one duplicate check reads. A warning is worth a bounded look and nothing more
+ * @internal
+ * @constant
+ */
+const DUPLICATE_SCAN_LIMIT: number = 50;
 
 /**
  * How the Record page names who may record, matching the label the settings page already uses
@@ -140,4 +148,98 @@ export async function readFormContext(leagueId: string, userId: string): Promise
       winningMargin: settings.winningMargin,
     },
   };
+}
+
+/**
+ * What a match the person may already have recorded looks like to the page
+ * @public
+ */
+export interface IDuplicateCandidate {
+  /* The match, which is the page it is read at */
+  canonicalMatchId: string;
+
+  /* When it says it was played */
+  playedAt: string;
+}
+
+/**
+ * The identity two entries of the same match would share.
+ *
+ * Seats by account and side, scores in order, the format and how it ended. Guest labels are deliberately absent: a
+ * guest is a label on one match rather than a person, so two matches against "Dave" are not evidence of one match
+ * entered twice (page spec, Probable Duplicates)
+ * @internal
+ * @function
+ * @param submission - The normalized submission
+ * @returns A string two duplicate entries agree on
+ */
+function duplicateKey(submission: IResultSubmission): string {
+  const seats: string[] = submission.seats
+    .map((seat): string => `${seat.seat}:${seat.userId ?? 'guest'}`)
+    .sort((left: string, right: string): number => left.localeCompare(right));
+  const games: string[] = [...submission.games]
+    .sort((left, right): number => left.gameNumber - right.gameNumber)
+    .map((game): string => `${game.gameNumber}:${game.a}-${game.b}`);
+
+  return canonicalize({
+    ending: submission.ending,
+    games,
+    gameType: submission.gameType,
+    seats,
+  });
+}
+
+/**
+ * The matches in this league that look like the one about to be recorded.
+ *
+ * Advisory, and read outside the writing transaction on purpose: this is a warning a person answers, not a rule the
+ * database enforces. Two identical honest matches in one evening are possible and stay possible — the page shows
+ * what it found, and records anyway when told to.
+ *
+ * Bounded by the window and by a row limit, so a league with a busy evening cannot turn one save into an unbounded
+ * scan
+ * @public
+ * @async
+ * @function
+ * @param leagueId - The league the entry belongs to
+ * @param submission - The normalized submission
+ * @returns The candidates, newest first
+ */
+export async function readDuplicateCandidates(
+  leagueId: string,
+  submission: IResultSubmission,
+): Promise<IDuplicateCandidate[]> {
+  const played: Date = new Date(submission.playedAt);
+
+  if (Number.isNaN(played.getTime())) {
+    return [];
+  }
+
+  const window: number = DUPLICATE_WINDOW_MINUTES * 60 * 1000;
+  const rows = await useDatabase()
+    .select({
+      canonicalMatchId: resultRevisions.canonicalMatchId,
+      playedAt: resultRevisions.playedAt,
+      submission: resultRevisions.submission,
+    })
+    .from(resultRevisions)
+    .where(
+      and(
+        eq(resultRevisions.leagueId, leagueId),
+        eq(resultRevisions.isCurrent, true),
+        ne(resultRevisions.state, ResultState.VOID),
+        gte(resultRevisions.playedAt, new Date(played.getTime() - window)),
+        lte(resultRevisions.playedAt, new Date(played.getTime() + window)),
+      ),
+    )
+    .orderBy(desc(resultRevisions.playedAt))
+    .limit(DUPLICATE_SCAN_LIMIT);
+  const key: string = duplicateKey(submission);
+
+  return rows
+    .filter((row: (typeof rows)[number]): boolean => duplicateKey(row.submission) === key)
+    .map((row: (typeof rows)[number]): IDuplicateCandidate => ({
+      canonicalMatchId: row.canonicalMatchId,
+      playedAt: row.playedAt.toISOString(),
+    }));
 }
