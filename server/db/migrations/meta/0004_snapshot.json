@@ -1380,6 +1380,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "rating_before": {
+          "name": "rating_before",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delta": {
+          "name": "delta",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": false
+        },
         "games_played": {
           "name": "games_played",
           "type": "integer",
@@ -2860,7 +2872,8 @@
       "values": [
         "CONFIRMED_BY_ALL",
         "DEADLINE_PASSED",
-        "NO_CONFIRMATION_NEEDED"
+        "NO_CONFIRMATION_NEEDED",
+        "VOIDED"
       ]
     },
     "public.result_state": {

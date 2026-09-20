@@ -27,6 +27,13 @@ proxy stands in front of an ordinary PostgreSQL server rather than Neon's own. L
 behaviour on the hosted service are therefore **not** measured here, and every timing below is a floor rather than a
 forecast.
 
+## What is here and what is in the test suite
+
+Everything that can be proved on one connection is a checked-in unit suite instead: `server/utils/results/utils.test.ts`
+runs the same service functions against the real migrations on PGlite, and covers authorization, receipts, bounds, the
+amendment state rule, the note-redaction rule and route resolution. This harness holds what a single session cannot
+express — two transactions meeting on a lock — plus the transport proof and the cost measurements.
+
 ## Layout
 
 | File                       | What it holds                                                                              |

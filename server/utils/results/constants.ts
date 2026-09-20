@@ -41,6 +41,14 @@ export const HOUR_MS: number = 60 * 60 * 1000;
 export const ADMIN_ROLES: readonly string[] = ['COMMISSIONER', 'MANAGER'];
 
 /**
+ * The most revisions one settlement sweep will accept, so a league nobody has read for a month cannot ask one
+ * transaction to settle more than it has time for. What is left stays due and is picked up by the next run
+ * @public
+ * @constant
+ */
+export const SETTLEMENT_BATCH: number = 50;
+
+/**
  * The role that may void a result. Deleting a result is a commissioner's, per the pitch's authority table (V.I)
  * @public
  * @constant

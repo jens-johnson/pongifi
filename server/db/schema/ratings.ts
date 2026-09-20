@@ -45,6 +45,14 @@ export const ratingSnapshots = pgTable(
     scope: ratingScopeEnum('scope').notNull(),
     /* Elo deltas are fractional, so the rating is stored at full precision rather than rounded for display */
     rating: doublePrecision('rating').notNull(),
+    /**
+     * The rating this game moved from, and by how much, both as the engine computed them. Kept rather than derived,
+     * because the game page states a change (1200 → 1216 (+16)) and subtracting one snapshot from the one before it
+     * would be reading a different generation's arithmetic. Null only on the rows this column was added behind: a
+     * snapshot written before generations existed has no recorded before-value to recover
+     */
+    ratingBefore: doublePrecision('rating_before'),
+    delta: doublePrecision('delta'),
     /* Rated games completed in this scope; a guest game raises games played but writes no snapshot */
     gamesPlayed: integer('games_played').notNull(),
     isProvisional: boolean('is_provisional').notNull(),

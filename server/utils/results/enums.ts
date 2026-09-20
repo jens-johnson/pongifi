@@ -28,6 +28,12 @@ export enum ResultRefusal {
   /* The caller may not take this action in this league, under the role they hold now */
   FORBIDDEN = 'FORBIDDEN',
 
+  /* The body breaks one of the form's own bounds: a score, a seat, a guest label, a note or the stated play time */
+  INVALID_SUBMISSION = 'INVALID_SUBMISSION',
+
+  /* A seat names somebody who is not an active member of this league, or an account that has been deleted */
+  SEAT_NOT_A_MEMBER = 'SEAT_NOT_A_MEMBER',
+
   /* Somebody already answered this revision with this action */
   ALREADY_ANSWERED = 'ALREADY_ANSWERED',
 

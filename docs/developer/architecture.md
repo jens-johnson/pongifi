@@ -58,6 +58,11 @@ generations stay as audit history.
 Ratings are path-dependent, so recomputation has to be deterministic, which is only sound because both the rules
 engine and the rating engine are pure functions over the log.
 
+A recomputation is bounded by four limits, not three. `statement_timeout`, `lock_timeout` and
+`idle_in_transaction_session_timeout` each bound one wait inside the database; a whole-operation budget in
+`withInteractiveTransaction` bounds the sequence, because a replay is hundreds of short statements and no
+database-side limit measures their total.
+
 ## Directory layout
 
 ```text
@@ -110,12 +115,20 @@ Eleven tables model accounts, leagues, games, and ratings. The decisions worth k
   result, with exactly one current per match enforced by a partial unique index, and names the game rows it includes
   through `result_revision_games`. A correction writes new game rows and stamps the old ones `superseded_at`; the old
   rows stay readable and addressable, so **every count, list and ladder predicate must filter `superseded_at IS
-NULL`** or it will count a score nobody stands behind twice.
+NULL`** or it will count a score nobody stands behind twice. A commissioner's void is a different thing entirely and
+  never sets that stamp: it moves the game rows to `VOID`, which every eligibility predicate already excludes.
+- **A match is addressed by revision one's first game id** (`result_revisions.canonical_match_id`), for the whole of
+  its life. That is the page's URL; game two of a best-of-three, and every game row a superseded revision left
+  behind, resolve to it after the same membership check the page itself makes. The service mints the game ids so the
+  revision row can name one before those rows exist.
 - **Every result write carries a receipt.** `result_operations` is unique over the actor, the operation and the
   client's own operation id, so a request whose answer was lost is resolved by replaying the identical action rather
   than by writing a second one; a changed body under the same key conflicts.
 - **Dispute notes live apart from the scoring evidence** in `result_dispute_notes`, so deletion can redact the words
-  without touching the scores, the ratings or the receipts.
+  without touching the scores, the ratings or the receipts. Deletion and note-writing share an account-row locking
+  protocol: the redactor takes the account `FOR UPDATE`, and a note writer takes every account the match names
+  `FOR SHARE` as its last lock and re-reads `deleted_at` under it. A note about a match with an already-deleted
+  participant is stored born-redacted — the row and its stamp, never the words — so the two orders are equivalent.
 
 ## Typechecking
 

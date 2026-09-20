@@ -20,9 +20,17 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { ConfirmationStatus, GameStatus, ParticipantOutcome, RecordingMode, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IReconstructedGame, IReconstruction, IResultPolicySnapshot, IResultSubmission } from '#shared/results';
+import type {
+  IReconstructedGame,
+  IReconstruction,
+  IResultPolicySnapshot,
+  IResultSubmission,
+  SubmissionProblem,
+} from '#shared/results';
 import {
   canonicalize,
+  findNoteProblem,
+  findSubmissionProblem,
   normalizeSubmission,
   reconstructResult,
   ResultAction,
@@ -35,13 +43,14 @@ import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import type { IInteractiveTransaction } from '../db/types';
-import { ADMIN_ROLES, HOUR_MS, VOID_ROLE } from './constants';
+import { ADMIN_ROLES, HOUR_MS, SETTLEMENT_BATCH, VOID_ROLE } from './constants';
 import { ResultRefusal } from './enums';
 import { publishRatingGeneration } from './replay';
 import type {
   IAmendResultRequest,
   IAnswerResultRequest,
   IRecordResultRequest,
+  IResultCurrentState,
   IResultEffect,
   IRevisionRow,
   TResultOutcome,
@@ -80,29 +89,29 @@ function digest(body: unknown): string {
 }
 
 /**
- * Takes the league's lock and samples the database clock underneath it.
+ * Takes the league's lock.
  *
  * Every result write in a league passes through this one row, which is what makes two results settling at the same
- * moment sequential rather than interleaved. The clock is read after the lock rather than when the request arrived:
- * a transaction that waited two seconds for the lock must decide a deadline against the time it actually got it
+ * moment sequential rather than interleaved. It reads no clock: `now()` is fixed when the transaction begins, so a
+ * transaction that then waited two seconds for this lock would decide a deadline against a time it has already left
+ * behind. The clock is sampled separately, once every lock a write needs is held ({@link sampleClock})
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
  * @param leagueId - The league
  * @throws ResultRefusalError when no such league exists
- * @returns The league's settings, its configuration revision, and the database's current time
+ * @returns The league's settings and its configuration revision
  */
 async function lockLeague(
   transaction: IInteractiveTransaction,
   leagueId: string,
-): Promise<{ configurationRevision: number; now: Date; settings: TLeagueSettings }> {
+): Promise<{ configurationRevision: number; settings: TLeagueSettings }> {
   const { rows } = await transaction.query<{
     configuration_revision: number;
-    now: Date;
     settings: TLeagueSettings;
   }>(
-    `SELECT "configuration_revision", "settings", now() AS "now"
+    `SELECT "configuration_revision", "settings"
      FROM "leagues" WHERE "id" = $1 FOR UPDATE`,
     [leagueId],
   );
@@ -114,23 +123,46 @@ async function lockLeague(
 
   return {
     configurationRevision: row.configuration_revision,
-    now: row.now,
     settings: row.settings,
   };
 }
 
 /**
- * Reads the role an account holds in a league right now.
+ * Samples the database's wall clock, after every lock the write needs is already held.
+ *
+ * `clock_timestamp()` rather than `now()`, and its own statement rather than a column on the locking read, because the
+ * two answer different questions: `now()` is the instant the transaction began and never moves, while this is the
+ * instant the statement runs. A dispute whose transaction opened a minute before a deadline and reached the front of
+ * the lock queue a minute after it has to meet the deadline it actually crossed, and only a clock read taken after the
+ * wait can tell it so
+ * @see {@link https://www.postgresql.org/docs/current/functions-datetime.html#FUNCTIONS-DATETIME-CURRENT}
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding every lock the write needs
+ * @returns The database's current wall time
+ */
+async function sampleClock(transaction: IInteractiveTransaction): Promise<Date> {
+  const { rows } = await transaction.query<{ now: Date }>(`SELECT clock_timestamp() AS "now"`);
+
+  return rows[0]!.now;
+}
+
+/**
+ * Reads the access an account has to a league right now: an active membership held by a live account.
  *
  * Read under the league's lock and never taken from the result: a policy freezes at creation, but who may act never
- * does. A demoted manager loses the amendment their old role allowed, and a removed member loses every action
+ * does. A demoted manager loses the amendment their old role allowed, a removed member loses every action, and a
+ * deleted account is nobody, which is why the membership row alone is not the whole question. This is also the check a
+ * receipt is disclosed behind, so the answer has to be current rather than whatever was true when the operation first
+ * ran
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
  * @param leagueId - The league
  * @param userId - The account
- * @returns Their role, or null when they are not an active member
+ * @returns Their role, or null when they hold no active membership or the account is gone
  */
 async function readRole(
   transaction: IInteractiveTransaction,
@@ -138,12 +170,45 @@ async function readRole(
   userId: string,
 ): Promise<string | null> {
   const { rows } = await transaction.query<{ role: string }>(
-    `SELECT "role" FROM "memberships"
-     WHERE "league_id" = $1 AND "user_id" = $2 AND "status" = 'ACTIVE'`,
+    `SELECT m."role" FROM "memberships" m
+     JOIN "users" u ON u."id" = m."user_id"
+     WHERE m."league_id" = $1 AND m."user_id" = $2 AND m."status" = 'ACTIVE' AND u."deleted_at" IS NULL`,
     [leagueId, userId],
   );
 
   return rows[0]?.role ?? null;
+}
+
+/**
+ * Whether every account a submission seats is still a live member of the league.
+ *
+ * A seat naming somebody who has left, or an account that has been deleted, is a body the member picker could not have
+ * produced: the entry is refused rather than recorded against a roster it does not belong to
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding the league's lock
+ * @param leagueId - The league
+ * @param userIds - The accounts the submission seats
+ * @returns Whether every one of them is an active member with a live account
+ */
+async function areLiveMembers(
+  transaction: IInteractiveTransaction,
+  leagueId: string,
+  userIds: string[],
+): Promise<boolean> {
+  if (userIds.length === 0) {
+    return true;
+  }
+
+  const { rows } = await transaction.query<{ live: number }>(
+    `SELECT count(*)::int AS "live" FROM "memberships" m
+     JOIN "users" u ON u."id" = m."user_id"
+     WHERE m."league_id" = $1 AND m."user_id" = ANY($2::uuid[]) AND m."status" = 'ACTIVE' AND u."deleted_at" IS NULL`,
+    [leagueId, userIds],
+  );
+
+  return (rows[0]?.live ?? 0) === userIds.length;
 }
 
 /**
@@ -206,10 +271,27 @@ function requiredAnswerers(submission: IResultSubmission, recorderId: string): s
 }
 
 /**
+ * The registered accounts a submission seats, guests dropped
+ * @internal
+ * @function
+ * @param submission - The normalized submission
+ * @returns The account ids in seat order
+ */
+function seatedMembers(submission: IResultSubmission): string[] {
+  return submission.seats
+    .map((seat): string | null => seat.userId)
+    .filter((userId): userId is string => userId !== null);
+}
+
+/**
  * Writes a revision's game rows, seats and reconstructed events.
  *
  * Each revision owns its own rows outright: a correction that turns two games into three writes three new ones and
- * marks the old two superseded, rather than rewriting rows an earlier revision's audit still points at
+ * marks the old two superseded, rather than rewriting rows an earlier revision's audit still points at.
+ *
+ * The ids are minted by the caller rather than by the column's default, because revision one's first game id is the
+ * match's canonical identity and the revision row has to name it before these rows exist. `matchId` groups a best-of-N
+ * and is null for a one-game match, which is what the games table means by a standalone game
  * @internal
  * @async
  * @function
@@ -221,7 +303,10 @@ async function writeProjection(
   transaction: IInteractiveTransaction,
   context: {
     confirmationStatus: ConfirmationStatus;
+    confirmedAt: Date | null;
+    gameIds: string[];
     leagueId: string;
+    matchId: string | null;
     playedAt: Date;
     reconstruction: IReconstruction;
     recorderId: string;
@@ -230,24 +315,24 @@ async function writeProjection(
     submission: IResultSubmission;
   },
 ): Promise<string[]> {
-  const matchId: string = randomUUID();
-  const ids: string[] = [];
-
-  for (const game of context.reconstruction.games) {
+  for (const [index, game] of context.reconstruction.games.entries()) {
     const status: GameStatus = game.isComplete ? GameStatus.COMPLETE : GameStatus.RETIRED;
-    const { rows } = await transaction.query<{ id: string }>(
-      `INSERT INTO "games" ("league_id", "match_id", "game_number", "type", "status", "confirmation_status",
+    const gameId: string = context.gameIds[index]!;
+
+    await transaction.query(
+      `INSERT INTO "games" ("id", "league_id", "match_id", "game_number", "type", "status", "confirmation_status",
          "confirmed_at", "recording_mode", "settings_snapshot", "created_by", "recorder_user_id", "ended_at",
          "result_revision_id")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11, $12) RETURNING "id"`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12, $13)`,
       [
+        gameId,
         context.leagueId,
-        matchId,
+        context.matchId,
         game.gameNumber,
         context.settings.gameType,
         status,
         context.confirmationStatus,
-        context.confirmationStatus === ConfirmationStatus.CONFIRMED ? context.playedAt : null,
+        context.confirmedAt,
         RecordingMode.RETROACTIVE,
         JSON.stringify(context.settings),
         context.recorderId,
@@ -255,9 +340,6 @@ async function writeProjection(
         context.revisionId,
       ],
     );
-    const gameId: string = rows[0]!.id;
-
-    ids.push(gameId);
     await writeSeats(transaction, gameId, context.revisionId, context.submission, game);
     await writeEvents(transaction, gameId, context.revisionId, context.playedAt, game);
     await transaction.query(
@@ -266,7 +348,7 @@ async function writeProjection(
     );
   }
 
-  return ids;
+  return context.gameIds;
 }
 
 /**
@@ -464,9 +546,12 @@ function mayRecord(policy: IResultPolicySnapshot, role: string | null, isSeated:
 /**
  * Runs the part of a write that may be refused, keeping anything the transaction already committed to.
  *
- * The savepoint is taken after settlement and before authority, so a refusal unwinds the action and nothing else. A
- * refusal is then answered as a value, which lets the transaction commit the settlement it did on the way in; only an
- * unexpected failure still unwinds the whole thing
+ * The savepoint is taken after settlement and authority, so a refusal unwinds the action and nothing else. A refusal is
+ * then answered as a value, which lets the transaction commit the settlement it did on the way in; only an unexpected
+ * failure still unwinds the whole thing.
+ *
+ * A success reports where the match stands afterwards as well as what the action did. They are read separately rather
+ * than assumed equal, because the two differ on every replay and the caller has no way to tell from the effect alone
  * @internal
  * @async
  * @function
@@ -474,7 +559,7 @@ function mayRecord(policy: IResultPolicySnapshot, role: string | null, isSeated:
  * @param body - The part that may be refused
  * @param state - The state to report alongside a refusal
  * @throws Whatever the body throws that is not a refusal
- * @returns What the body did, or why it was refused
+ * @returns What the body did and where the match stands, or why it was refused
  */
 async function refusable(
   transaction: IInteractiveTransaction,
@@ -484,7 +569,14 @@ async function refusable(
   await transaction.query('SAVEPOINT result_action');
 
   try {
-    return { ok: true, value: await body() };
+    const value: IResultEffect = await body();
+
+    return {
+      current: await readCurrentState(transaction, value.canonicalMatchId),
+      ok: true,
+      replayed: false,
+      value,
+    };
   } catch (error: unknown) {
     if (!(error instanceof ResultRefusalError)) {
       throw error;
@@ -501,19 +593,74 @@ async function refusable(
 }
 
 /**
- * Records a result and publishes the ladder it changes, in one transaction.
+ * Reads where a match stands now: its current revision and that revision's state.
  *
- * Order matters and is fixed: the league's lock first, so two results in one league are sequential; the receipt next,
- * so a retry is answered rather than written twice; the league's configuration revision under the lock, so a form
- * drawn against rules that have since moved is refused rather than quietly recorded under the new ones; then the
- * reconstruction, which is what proves the entered scores describe a match these rules could produce; then the
- * revision, its rows, and the ladder
- * @public
+ * Called after the caller's access to the league has been established, never before, and read under the same locks the
+ * write holds. It is what a retry is told alongside the receipt it asked for, which is the only way a person whose
+ * answer was lost learns both that their confirmation landed and that somebody has amended the result since
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param canonicalMatchId - The match
+ * @throws ResultRefusalError when the match has no current revision
+ * @returns The current revision and its state
+ */
+async function readCurrentState(
+  transaction: IInteractiveTransaction,
+  canonicalMatchId: string,
+): Promise<IResultCurrentState> {
+  const { rows } = await transaction.query<{
+    canonical_match_id: string;
+    id: string;
+    revision: number;
+    state: ResultState;
+  }>(
+    `SELECT "id", "canonical_match_id", "revision", "state" FROM "result_revisions"
+     WHERE "canonical_match_id" = $1 AND "is_current"`,
+    [canonicalMatchId],
+  );
+  const row = rows[0];
+
+  if (!row) {
+    throw new ResultRefusalError(ResultRefusal.NOT_FOUND);
+  }
+
+  return {
+    canonicalMatchId: row.canonical_match_id,
+    revision: row.revision,
+    resultRevisionId: row.id,
+    state: row.state,
+  };
+}
+
+/**
+ * Answers a retry from its receipt, with where the match stands now beside it
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param effect - The effect the committed operation had
+ * @returns The receipt and the current state
+ */
+async function replayed(transaction: IInteractiveTransaction, effect: IResultEffect): Promise<TResultOutcome> {
+  return {
+    current: await readCurrentState(transaction, effect.canonicalMatchId),
+    ok: true,
+    replayed: true,
+    value: effect,
+  };
+}
+
+/**
+ * Writes the result, its rows and the ladder it changes, once access and the operation's identity are established
+ * @internal
  * @async
  * @function
  * @param transaction - The open transaction
  * @param actorId - The account recording it
  * @param request - The submission and the operation's identity
+ * @param context - The locked league, the sampled clock, the actor's current role and the normalized submission
  * @throws ResultRefusalError when the recording is refused
  * @returns What the operation did
  */
@@ -521,45 +668,57 @@ async function applyRecordResult(
   transaction: IInteractiveTransaction,
   actorId: string,
   request: IRecordResultRequest,
+  context: {
+    league: { configurationRevision: number; settings: TLeagueSettings };
+    now: Date;
+    requestDigest: string;
+    role: string;
+    submission: IResultSubmission;
+  },
 ): Promise<IResultEffect> {
-  const requestDigest: string = digest(request);
-  const league = await lockLeague(transaction, request.leagueId);
+  const policy: IResultPolicySnapshot = toPolicySnapshot(context.league.settings);
 
-  // Checked under the lock, not before it: two identical creates that arrived together both find no receipt outside
-  // it, and the one that waits has to see the other's before it writes a second result
-  const replayed: IResultEffect | null = await replayOperation(transaction, {
-    actorId,
-    clientOperationId: request.clientOperationId,
-    operation: 'CREATE',
-    requestDigest,
+  // Checked over the body as it arrived rather than the normalized copy: normalization trims and truncates, and a
+  // guest label the form would have had to cut down is one nobody typed
+  const problem: SubmissionProblem | null = findSubmissionProblem(request.submission, {
+    earliest: context.now.getTime() - policy.resultAmendmentWindow * HOUR_MS,
+    now: context.now.getTime(),
   });
 
-  if (replayed) {
-    return replayed;
+  if (problem) {
+    throw new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
   }
 
-  const submission: IResultSubmission = normalizeSubmission(request.submission);
-  const role: string | null = await readRole(transaction, request.leagueId, actorId);
-  const policy: IResultPolicySnapshot = toPolicySnapshot(league.settings);
+  const submission: IResultSubmission = context.submission;
   const isSeated: boolean = submission.seats.some((seat): boolean => seat.userId === actorId);
 
-  if (!mayRecord(policy, role, isSeated)) {
-    throw new ResultRefusalError(role === null ? ResultRefusal.NOT_FOUND : ResultRefusal.FORBIDDEN);
+  if (!mayRecord(policy, context.role, isSeated)) {
+    throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
   }
 
-  if (league.configurationRevision !== request.expectedLeagueRevision) {
+  if (context.league.configurationRevision !== request.expectedLeagueRevision) {
     throw new ResultRefusalError(ResultRefusal.STALE_LEAGUE_RULES);
   }
 
-  const settings: IMatchSettings = toMatchSettings(league.settings, submission.gameType);
+  if (!(await areLiveMembers(transaction, request.leagueId, seatedMembers(submission)))) {
+    throw new ResultRefusalError(ResultRefusal.SEAT_NOT_A_MEMBER);
+  }
+
+  const settings: IMatchSettings = toMatchSettings(context.league.settings, submission.gameType);
   const reconstruction: IReconstruction = reconstruct(settings, submission);
   const answerers: string[] = requiredAnswerers(submission, actorId);
   const birth = birthState(policy, answerers);
   const playedAt: Date = new Date(submission.playedAt);
   const revisionId: string = randomUUID();
+
+  // Minted here so the revision can name its canonical id: the match is addressed by revision one's first game for
+  // the whole of its life, which is the URL the game page lives at and the id every later revision keeps
+  const gameIds: string[] = reconstruction.games.map((): string => randomUUID());
+  const canonicalMatchId: string = gameIds[0]!;
+  const settledAt: Date | null = birth.reason ? context.now : null;
   const deadline: Date | null =
     birth.state === ResultState.UNCONFIRMED
-      ? new Date(league.now.getTime() + policy.resultConfirmationWindow * HOUR_MS)
+      ? new Date(context.now.getTime() + policy.resultConfirmationWindow * HOUR_MS)
       : null;
 
   await transaction.query(
@@ -567,24 +726,25 @@ async function applyRecordResult(
        "game_type", "settings_snapshot", "policy_snapshot", "league_configuration_revision", "submission",
        "reconstruction", "reconstruction_version", "submission_digest", "played_at", "original_played_at",
        "submitted_at", "confirmation_deadline", "settled_at", "settled_reason", "recorded_by")
-     VALUES ($1, $1, $2, 1, true, $3::result_state, $4::game_type, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13, $14,
-       $15, $16::result_settle_reason, $17)`,
+     VALUES ($1, $2, $3, 1, true, $4::result_state, $5::game_type, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15,
+       $16, $17::result_settle_reason, $18)`,
     [
       revisionId,
+      canonicalMatchId,
       request.leagueId,
       birth.state,
       submission.gameType,
       JSON.stringify(settings),
       JSON.stringify(policy),
-      league.configurationRevision,
+      context.league.configurationRevision,
       JSON.stringify(submission),
       JSON.stringify(reconstruction),
       reconstruction.version,
       digest(submission),
       playedAt,
-      league.now,
+      context.now,
       deadline,
-      birth.reason ? league.now : null,
+      settledAt,
       birth.reason,
       actorId,
     ],
@@ -594,7 +754,11 @@ async function applyRecordResult(
   await writeProjection(transaction, {
     confirmationStatus:
       birth.state === ResultState.CONFIRMED ? ConfirmationStatus.CONFIRMED : ConfirmationStatus.UNCONFIRMED,
+    // The moment the result was accepted, which is this submission, not the moment the match was played
+    confirmedAt: birth.state === ResultState.CONFIRMED ? context.now : null,
+    gameIds,
     leagueId: request.leagueId,
+    matchId: gameIds.length > 1 ? canonicalMatchId : null,
     playedAt,
     reconstruction,
     recorderId: actorId,
@@ -606,7 +770,7 @@ async function applyRecordResult(
   await publishRatingGeneration(transaction, request.leagueId, revisionId);
 
   const effect: IResultEffect = {
-    canonicalMatchId: revisionId,
+    canonicalMatchId,
     revision: 1,
     resultRevisionId: revisionId,
     state: birth.state,
@@ -614,11 +778,11 @@ async function applyRecordResult(
 
   await writeReceipt(transaction, {
     actorId,
-    canonicalMatchId: revisionId,
+    canonicalMatchId,
     clientOperationId: request.clientOperationId,
     effect,
     operation: 'CREATE',
-    requestDigest,
+    requestDigest: context.requestDigest,
     revisionId,
   });
 
@@ -626,21 +790,75 @@ async function applyRecordResult(
 }
 
 /**
- * Records a result, answering with what it did or why it was refused
+ * Records a result, answering with what it did or why it was refused.
+ *
+ * The order is fixed and every step of it is load-bearing. The league's lock first, so two results in one league are
+ * sequential. The database's clock next, sampled under that lock rather than at the transaction's start. Then the
+ * caller's current access to the league, because a receipt is a private fact about a result and belongs only to
+ * somebody who may read that result today. Then the receipt, so a retry is answered rather than written twice, and
+ * answered before any check about whether the request would be accepted afresh — the person is asking what their
+ * action did, not asking to do it again. Only then the bounds, the authority, the league's configuration revision, the
+ * reconstruction, and the write
  * @public
  * @async
  * @function
  * @param transaction - The open transaction
  * @param actorId - The account recording it
  * @param request - The submission and the operation's identity
- * @returns What the operation did, or the refusal
+ * @returns What the operation did and where the match stands, or the refusal
  */
 export async function recordResult(
   transaction: IInteractiveTransaction,
   actorId: string,
   request: IRecordResultRequest,
 ): Promise<TResultOutcome> {
-  return refusable(transaction, (): Promise<IResultEffect> => applyRecordResult(transaction, actorId, request), null);
+  try {
+    const submission: IResultSubmission = normalizeSubmission(request.submission);
+    const requestDigest: string = digest({ ...request, submission });
+    const league = await lockLeague(transaction, request.leagueId);
+    const now: Date = await sampleClock(transaction);
+    const role: string | null = await readRole(transaction, request.leagueId, actorId);
+
+    if (role === null) {
+      throw new ResultRefusalError(ResultRefusal.NOT_FOUND);
+    }
+
+    // Checked under the lock, not before it: two identical creates that arrived together both find no receipt outside
+    // it, and the one that waits has to see the other's before it writes a second result
+    const receipt: IResultEffect | null = await replayOperation(transaction, {
+      actorId,
+      clientOperationId: request.clientOperationId,
+      operation: 'CREATE',
+      requestDigest,
+    });
+
+    if (receipt) {
+      return await replayed(transaction, receipt);
+    }
+
+    return await refusable(
+      transaction,
+      (): Promise<IResultEffect> =>
+        applyRecordResult(transaction, actorId, request, {
+          league,
+          now,
+          requestDigest,
+          role,
+          submission,
+        }),
+      null,
+    );
+  } catch (error: unknown) {
+    if (error instanceof ResultRefusalError) {
+      return {
+        ok: false,
+        refusal: error.refusal,
+        state: null,
+      };
+    }
+
+    throw error;
+  }
 }
 
 /**
@@ -840,21 +1058,31 @@ async function settleIfDue(transaction: IInteractiveTransaction, revision: IRevi
  * @function
  * @param transaction - The open transaction
  * @param leagueId - The league to settle
+ * @param batch - The most revisions one run will settle, so a neglected league cannot outgrow one transaction
  * @returns How many revisions settled
  */
-export async function settleDueResults(transaction: IInteractiveTransaction, leagueId: string): Promise<number> {
-  const league = await lockLeague(transaction, leagueId);
+export async function settleDueResults(
+  transaction: IInteractiveTransaction,
+  leagueId: string,
+  batch: number = SETTLEMENT_BATCH,
+): Promise<number> {
+  await lockLeague(transaction, leagueId);
+
+  // Sampled under the league's lock, which every result write in the league passes through, so no revision this sweep
+  // is about to read can move between the clock read and the row locks
+  const now: Date = await sampleClock(transaction);
   const { rows } = await transaction.query<{ id: string }>(
     `SELECT "id" FROM "result_revisions"
      WHERE "league_id" = $1 AND "is_current" AND "state" = 'UNCONFIRMED'
        AND "confirmation_deadline" IS NOT NULL AND "confirmation_deadline" <= $2
      ORDER BY "confirmation_deadline"
+     LIMIT $3
      FOR UPDATE`,
-    [leagueId, league.now],
+    [leagueId, now, batch],
   );
 
   for (const row of rows) {
-    await settleRevision(transaction, row.id, ResultState.CONFIRMED, ResultSettleReason.DEADLINE_PASSED, league.now);
+    await settleRevision(transaction, row.id, ResultState.CONFIRMED, ResultSettleReason.DEADLINE_PASSED, now);
   }
 
   if (rows.length > 0) {
@@ -891,20 +1119,119 @@ async function isFullyConfirmed(transaction: IInteractiveTransaction, revisionId
 }
 
 /**
+ * Whether an account is one of the registered participants this revision is waiting on.
+ *
+ * Confirming is that set's alone: it was frozen when the revision was born, it excludes guests and the recorder, and a
+ * confirmation from anybody else would be a vote nobody asked for on a result that does not need it. Disputing is
+ * wider by design, and checked separately
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param revisionId - The revision
+ * @param userId - The account
+ * @returns Whether the revision is waiting on them
+ */
+async function isRequiredAnswerer(
+  transaction: IInteractiveTransaction,
+  revisionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { rows } = await transaction.query<{ required: number }>(
+    `SELECT count(*)::int AS "required" FROM "result_required_answerers"
+     WHERE "result_revision_id" = $1 AND "user_id" = $2`,
+    [revisionId, userId],
+  );
+
+  return (rows[0]?.required ?? 0) > 0;
+}
+
+/**
+ * Locks every account the match names, and reports whether any of them is gone.
+ *
+ * This is one half of the protocol a deletion and a new note share; {@link redactNotesForAccount} is the other. A note
+ * can name whoever wrote it and whoever played in any revision of the match it belongs to, so those are the rows a
+ * note writer holds while it decides whether words may be stored: a deletion that has already committed is seen here,
+ * and a deletion that has not yet run has to wait behind this lock and will find the new note when it scans.
+ *
+ * The accounts are locked last, after the league and the revision, and read in id order. The league's lock is what
+ * actually serializes two note writers in one league; the ordering is there so nothing in a later slice can make a
+ * cycle out of these two by accident
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding the league and revision locks
+ * @param canonicalMatchId - The match whose participants a note could name
+ * @param actorId - The account writing the note
+ * @returns Whether any account the note could identify has been deleted
+ */
+async function lockAccountsOfMatch(
+  transaction: IInteractiveTransaction,
+  canonicalMatchId: string,
+  actorId: string,
+): Promise<boolean> {
+  const { rows: participants } = await transaction.query<{ user_id: string }>(
+    `SELECT DISTINCT p."user_id" FROM "game_participants" p
+     JOIN "result_revisions" r ON r."id" = p."result_revision_id"
+     WHERE r."canonical_match_id" = $1 AND p."user_id" IS NOT NULL`,
+    [canonicalMatchId],
+  );
+  const named: string[] = [...new Set([actorId, ...participants.map((row): string => row.user_id)])];
+  const { rows: locked } = await transaction.query<{ deleted_at: Date | null }>(
+    `SELECT "deleted_at" FROM "users" WHERE "id" = ANY($1::uuid[]) ORDER BY "id" FOR SHARE`,
+    [named],
+  );
+
+  return locked.some((row): boolean => row.deleted_at !== null);
+}
+
+/**
+ * Stores a dispute's words, or the fact that there were words, when somebody the note could name has been deleted.
+ *
+ * A deleted participant does not cost a live player their dispute: the action is recorded either way. What changes is
+ * that the words are never written, and the row is born carrying the same redaction stamp a later deletion would have
+ * left on it, so the audit reads identically whichever order the two events arrived in
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param context - The action the note hangs off, the match it names, its author, its words and the database clock
+ * @returns Whether the note was born redacted
+ */
+async function writeDisputeNote(
+  transaction: IInteractiveTransaction,
+  context: { actionId: string; actorId: string; canonicalMatchId: string; note: string; now: Date },
+): Promise<boolean> {
+  const deleted: boolean = await lockAccountsOfMatch(transaction, context.canonicalMatchId, context.actorId);
+
+  await transaction.query(
+    `INSERT INTO "result_dispute_notes" ("result_action_id", "body", "redacted_at") VALUES ($1, $2, $3)`,
+    [context.actionId, deleted ? null : context.note, deleted ? context.now : null],
+  );
+
+  return deleted;
+}
+
+/**
  * Confirms, disputes or voids a revision.
  *
- * Every one of them is the same shape: settle an overdue revision first, re-read authority under the lock, refuse an
- * action aimed at a revision that has moved, then record a durable action row rather than a flag. A confirmation is
- * one row per person per revision, so a repeat is a unique-key conflict rather than a second vote, and a person who
- * confirmed may still dispute while the revision is pending. A dispute stops the deadline from settling it; a void is
- * a commissioner's and takes the result out of every count and ladder
+ * Every one of them is the same shape, and the order is the same one every result write uses: the league's lock, the
+ * revision's lock, the database's clock sampled underneath both of them, the caller's current access to the league,
+ * and only then the receipt. A retry is answered from that receipt before anything is asked about whether the action
+ * would be accepted afresh, and the answer carries where the match stands now beside what the action originally did.
+ *
+ * After that, an overdue revision is settled first, and the action meets the state it actually finds. A confirmation is
+ * one row per person per revision, so a repeat is a unique-key conflict rather than a second vote, and only a
+ * participant the revision is waiting on may cast one. A seated participant may dispute a pending revision even having
+ * confirmed it, or having recorded it. A dispute stops the deadline from settling it; a void is a commissioner's and
+ * takes the result out of every count and ladder
  * @public
  * @async
  * @function
  * @param transaction - The open transaction
  * @param actorId - The account acting
  * @param request - The action and the operation's identity
- * @returns What the operation did, or the refusal alongside the state the result is actually in
+ * @returns What the operation did and where the match stands, or the refusal alongside the state the result is in
  */
 export async function answerResult(
   transaction: IInteractiveTransaction,
@@ -913,37 +1240,42 @@ export async function answerResult(
 ): Promise<TResultOutcome> {
   try {
     const requestDigest: string = digest(request);
-    const league = await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
+
+    await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
+
     const revision: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
-
-    // Under the locks, so a retry that raced its own original sees the receipt rather than writing a second action
-    const replayed: IResultEffect | null = await replayOperation(transaction, {
-      actorId,
-      clientOperationId: request.clientOperationId,
-      operation: request.action,
-      requestDigest,
-    });
-
-    if (replayed) {
-      return { ok: true, value: replayed };
-    }
-
+    const now: Date = await sampleClock(transaction);
     const role: string | null = await readRole(transaction, revision.leagueId, actorId);
 
     if (role === null) {
       throw new ResultRefusalError(ResultRefusal.NOT_FOUND);
     }
 
+    // Under the locks, so a retry that raced its own original sees the receipt rather than writing a second action
+    const receipt: IResultEffect | null = await replayOperation(transaction, {
+      actorId,
+      clientOperationId: request.clientOperationId,
+      operation: request.action,
+      requestDigest,
+    });
+
+    if (receipt) {
+      return await replayed(transaction, receipt);
+    }
+
+    if (findNoteProblem(request.note, request.action === ResultAction.DISPUTE)) {
+      throw new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
+    }
+
     // Settled before the action is judged, and outside the savepoint the action unwinds to: a result that reached its
     // deadline reached it, whether or not the action that noticed is one this league will accept
-    await settleIfDue(transaction, revision, league.now);
+    await settleIfDue(transaction, revision, now);
 
     const current: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
 
     return await refusable(
       transaction,
-      (): Promise<IResultEffect> =>
-        applyAnswerAction(transaction, actorId, request, current, league.now, role, requestDigest),
+      (): Promise<IResultEffect> => applyAnswerAction(transaction, actorId, request, current, now, role, requestDigest),
       current.state,
     );
   } catch (error: unknown) {
@@ -960,11 +1292,7 @@ export async function answerResult(
 }
 
 /**
- * Records the action itself, once settlement and authority have been established.
- *
- * A confirmation is one row per person per revision, so a repeat is a unique-key conflict rather than a second vote,
- * and a person who confirmed may still dispute while the revision is pending. A dispute stops the deadline from
- * settling it; a void is a commissioner's and takes the result out of every count and ladder
+ * Records the action itself, once settlement and authority have been established
  * @internal
  * @async
  * @function
@@ -991,16 +1319,23 @@ async function applyAnswerAction(
     throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
   }
 
-  const seated: boolean = current.submission.seats.some((seat): boolean => seat.userId === actorId);
-
   if (request.action === ResultAction.VOID) {
     if (role !== VOID_ROLE) {
       throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
     }
-  } else if (!seated) {
-    throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
+
+    // A commissioner may void a result in any state but the one it is already in; a second void is not a second ruling
+    if (current.state === ResultState.VOID) {
+      throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+    }
   } else if (current.state !== ResultState.UNCONFIRMED) {
     throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+  } else if (request.action === ResultAction.CONFIRM) {
+    if (!(await isRequiredAnswerer(transaction, current.id, actorId))) {
+      throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
+    }
+  } else if (!current.submission.seats.some((seat): boolean => seat.userId === actorId)) {
+    throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
   }
 
   const { rows: actions } = await transaction.query<{ id: string }>(
@@ -1016,10 +1351,13 @@ async function applyAnswerAction(
   }
 
   if (request.action === ResultAction.DISPUTE && request.note !== null) {
-    await transaction.query(`INSERT INTO "result_dispute_notes" ("result_action_id", "body") VALUES ($1, $2)`, [
-      actions[0]!.id,
-      request.note,
-    ]);
+    await writeDisputeNote(transaction, {
+      actionId: actions[0]!.id,
+      actorId,
+      canonicalMatchId: current.canonicalMatchId,
+      note: request.note,
+      now,
+    });
   }
 
   const state: ResultState = await applyAnswer(transaction, current, request.action, now);
@@ -1063,14 +1401,16 @@ async function applyAnswer(
 ): Promise<ResultState> {
   if (action === ResultAction.VOID) {
     await transaction.query(
-      `UPDATE "result_revisions" SET "state" = 'VOID', "settled_at" = $2, "settled_reason" = 'CONFIRMED_BY_ALL'
+      `UPDATE "result_revisions" SET "state" = 'VOID', "settled_at" = $2, "settled_reason" = 'VOIDED'
        WHERE "id" = $1`,
       [revision.id, now],
     );
-    // A voided result leaves every count and every ladder, and keeps its rows addressable for the audit that follows
+    // A voided result leaves every count and every ladder on its status alone, and keeps its rows addressable for the
+    // audit that follows. It is not stamped superseded: that mark means a later revision replaced these rows, and
+    // reading the two as one thing would make a commissioner's ruling indistinguishable from a correction
     await transaction.query(
-      `UPDATE "games" SET "status" = 'VOID', "superseded_at" = $2, "updated_at" = now() WHERE "result_revision_id" = $1`,
-      [revision.id, now],
+      `UPDATE "games" SET "status" = 'VOID', "updated_at" = now() WHERE "result_revision_id" = $1`,
+      [revision.id],
     );
     await publishRatingGeneration(transaction, revision.leagueId, revision.id);
 
@@ -1100,6 +1440,11 @@ async function applyAnswer(
 /**
  * Corrects a result by appending a revision.
  *
+ * Only a disputed result is corrected in this slice. The mechanism is the same one a confirmed result's correction will
+ * use, but the entry point is not approved yet, and a service that accepted any state would let a manager rewrite an
+ * accepted score with nobody having questioned it. A wrong accepted result is voided by a commissioner and re-entered
+ * until that follow-up ships.
+ *
  * The correction keeps the original's frozen format, scoring rules and policy: a league that changed its rules since
  * the match was played must not pull the correction onto the new ones, and the amendment window is measured from the
  * play time the first revision stated, so editing the time cannot revive an expired window. Everything else is born
@@ -1111,8 +1456,7 @@ async function applyAnswer(
  * @param transaction - The open transaction
  * @param actorId - The account correcting it
  * @param request - The corrected submission and the operation's identity
- * @throws ResultRefusalError when the correction is refused
- * @returns What the operation did
+ * @returns What the operation did and where the match stands, or the refusal
  */
 export async function amendResult(
   transaction: IInteractiveTransaction,
@@ -1120,26 +1464,27 @@ export async function amendResult(
   request: IAmendResultRequest,
 ): Promise<TResultOutcome> {
   try {
-    const requestDigest: string = digest(request);
+    const submission: IResultSubmission = normalizeSubmission(request.submission);
+    const requestDigest: string = digest({ ...request, submission });
     const league = await lockLeague(transaction, await readLeagueOfMatch(transaction, request.canonicalMatchId));
     const previous: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
+    const now: Date = await sampleClock(transaction);
+    const role: string | null = await readRole(transaction, previous.leagueId, actorId);
+
+    if (role === null) {
+      throw new ResultRefusalError(ResultRefusal.NOT_FOUND);
+    }
 
     // Under the locks, so a retry that raced its own original is answered from the receipt rather than amending twice
-    const replayed: IResultEffect | null = await replayOperation(transaction, {
+    const receipt: IResultEffect | null = await replayOperation(transaction, {
       actorId,
       clientOperationId: request.clientOperationId,
       operation: 'AMEND',
       requestDigest,
     });
 
-    if (replayed) {
-      return { ok: true, value: replayed };
-    }
-
-    const role: string | null = await readRole(transaction, previous.leagueId, actorId);
-
-    if (role === null) {
-      throw new ResultRefusalError(ResultRefusal.NOT_FOUND);
+    if (receipt) {
+      return await replayed(transaction, receipt);
     }
 
     // Recording a result grants no amendment right of its own; an active manager or commissioner amends under the role
@@ -1147,13 +1492,19 @@ export async function amendResult(
       throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
     }
 
-    await settleIfDue(transaction, previous, league.now);
+    await settleIfDue(transaction, previous, now);
 
     const current: IRevisionRow = await lockCurrentRevision(transaction, request.canonicalMatchId);
 
     return await refusable(
       transaction,
-      (): Promise<IResultEffect> => applyAmendment(transaction, actorId, request, current, league, requestDigest),
+      (): Promise<IResultEffect> =>
+        applyAmendment(transaction, actorId, request, current, {
+          configurationRevision: league.configurationRevision,
+          now,
+          requestDigest,
+          submission,
+        }),
       current.state,
     );
   } catch (error: unknown) {
@@ -1178,8 +1529,7 @@ export async function amendResult(
  * @param actorId - The account correcting it
  * @param request - The corrected submission and the operation's identity
  * @param current - The current revision, locked and settled if it was due
- * @param league - The locked league, its configuration revision and the database clock
- * @param requestDigest - The digest the receipt is keyed by
+ * @param context - The league's configuration revision, the sampled clock, the digest and the normalized submission
  * @throws ResultRefusalError when the correction is refused
  * @returns What the correction did
  */
@@ -1188,38 +1538,61 @@ async function applyAmendment(
   actorId: string,
   request: IAmendResultRequest,
   current: IRevisionRow,
-  league: { configurationRevision: number; now: Date },
-  requestDigest: string,
+  context: { configurationRevision: number; now: Date; requestDigest: string; submission: IResultSubmission },
 ): Promise<IResultEffect> {
-  if (current.revision !== request.expectedRevision || current.state === ResultState.VOID) {
+  if (current.revision !== request.expectedRevision) {
     throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
   }
 
-  const bound: number = current.originalPlayedAt.getTime() + current.policySnapshot.resultAmendmentWindow * HOUR_MS;
-
-  if (league.now.getTime() > bound) {
+  // The approved slice corrects a disputed result and nothing else: an unconfirmed result is still being answered, an
+  // accepted one is a void and a re-entry, and a voided one is finished
+  if (current.state !== ResultState.DISPUTED) {
     throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+  }
+
+  const window: number = current.policySnapshot.resultAmendmentWindow * HOUR_MS;
+  const bound: number = current.originalPlayedAt.getTime() + window;
+
+  if (context.now.getTime() > bound) {
+    throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
+  }
+
+  // The corrected play time is bounded by the window measured from the time the first revision stated, not from now: a
+  // correction may move the time within the window the match was entered under, and cannot push it into the future
+  const problem: SubmissionProblem | null = findSubmissionProblem(request.submission, {
+    earliest: current.originalPlayedAt.getTime() - window,
+    now: context.now.getTime(),
+  });
+
+  if (problem) {
+    throw new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
   }
 
   // The frozen format wins over whatever the corrected body claims: a correction is not a way onto other rules
   const submission: IResultSubmission = normalizeSubmission({
-    ...request.submission,
+    ...context.submission,
     gameType: current.settingsSnapshot.gameType,
   });
+
+  if (!(await areLiveMembers(transaction, current.leagueId, seatedMembers(submission)))) {
+    throw new ResultRefusalError(ResultRefusal.SEAT_NOT_A_MEMBER);
+  }
+
   const reconstruction: IReconstruction = reconstruct(current.settingsSnapshot, submission);
   const answerers: string[] = requiredAnswerers(submission, actorId);
   const birth = birthState(current.policySnapshot, answerers);
   const playedAt: Date = new Date(submission.playedAt);
   const revisionId: string = randomUUID();
+  const gameIds: string[] = reconstruction.games.map((): string => randomUUID());
   const deadline: Date | null =
     birth.state === ResultState.UNCONFIRMED
-      ? new Date(league.now.getTime() + current.policySnapshot.resultConfirmationWindow * HOUR_MS)
+      ? new Date(context.now.getTime() + current.policySnapshot.resultConfirmationWindow * HOUR_MS)
       : null;
 
   await transaction.query(`UPDATE "result_revisions" SET "is_current" = NULL WHERE "id" = $1`, [current.id]);
   await transaction.query(
     `UPDATE "games" SET "superseded_at" = $2, "updated_at" = now() WHERE "result_revision_id" = $1`,
-    [current.id, league.now],
+    [current.id, context.now],
   );
 
   await transaction.query(
@@ -1238,16 +1611,16 @@ async function applyAmendment(
       current.settingsSnapshot.gameType,
       JSON.stringify(current.settingsSnapshot),
       JSON.stringify(current.policySnapshot),
-      league.configurationRevision,
+      context.configurationRevision,
       JSON.stringify(submission),
       JSON.stringify(reconstruction),
       reconstruction.version,
       digest(submission),
       playedAt,
       current.originalPlayedAt,
-      league.now,
+      context.now,
       deadline,
-      birth.reason ? league.now : null,
+      birth.reason ? context.now : null,
       birth.reason,
       current.recordedBy,
       actorId,
@@ -1258,7 +1631,11 @@ async function applyAmendment(
   await writeProjection(transaction, {
     confirmationStatus:
       birth.state === ResultState.CONFIRMED ? ConfirmationStatus.CONFIRMED : ConfirmationStatus.UNCONFIRMED,
+    confirmedAt: birth.state === ResultState.CONFIRMED ? context.now : null,
+    gameIds,
     leagueId: current.leagueId,
+    // The match keeps the identity revision one gave it, and a correction down to a single game is a standalone row
+    matchId: gameIds.length > 1 ? current.canonicalMatchId : null,
     playedAt,
     reconstruction,
     recorderId: current.recordedBy,
@@ -1282,11 +1659,48 @@ async function applyAmendment(
     clientOperationId: request.clientOperationId,
     effect,
     operation: 'AMEND',
-    requestDigest,
+    requestDigest: context.requestDigest,
     revisionId,
   });
 
   return effect;
+}
+
+/**
+ * Resolves any game id of a match to the page that match lives at, for a caller who may read it.
+ *
+ * A match is addressed by revision one's first game id for the whole of its life. Game two of a best-of-three, and
+ * every game row a superseded revision left behind, have no page of their own and resolve here instead. Access is
+ * checked before anything is resolved, and a caller who is not an active member of the league named in the URL is told
+ * the same thing about a real match as about an imaginary one
+ * @public
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param actorId - The account asking
+ * @param leagueId - The league the URL names
+ * @param gameId - The game id the URL names
+ * @returns The canonical match id, or null when the caller may not read it or it does not exist
+ */
+export async function resolveMatchRoute(
+  transaction: IInteractiveTransaction,
+  actorId: string,
+  leagueId: string,
+  gameId: string,
+): Promise<string | null> {
+  if ((await readRole(transaction, leagueId, actorId)) === null) {
+    return null;
+  }
+
+  const { rows } = await transaction.query<{ canonical_match_id: string }>(
+    `SELECT r."canonical_match_id" FROM "result_revision_games" rg
+     JOIN "result_revisions" r ON r."id" = rg."result_revision_id"
+     WHERE rg."game_id" = $1 AND r."league_id" = $2
+     LIMIT 1`,
+    [gameId, leagueId],
+  );
+
+  return rows[0]?.canonical_match_id ?? null;
 }
 
 /**
@@ -1295,6 +1709,10 @@ async function applyAmendment(
  * Two people are covered, because a note can name either: whoever wrote it, and anybody seated in any revision of the
  * match it belongs to. The words go and the row stays, so history still shows that a note was written and then
  * removed, and every score, rating and receipt the result rests on is untouched.
+ *
+ * A note written after the deletion has no words to remove: the writer finds the deleted participant under the shared
+ * account lock and stores the row already redacted ({@link writeDisputeNote}), which is why calling this from account
+ * deletion is only half of the requirement.
  *
  * What this cannot do is find a third party named inside somebody else's sentence. Free text is not an index of
  * people, and pretending otherwise would be a promise nothing here keeps; that limit belongs in the deletion copy
@@ -1307,6 +1725,11 @@ async function applyAmendment(
  * @returns How many notes were redacted
  */
 export async function redactNotesForAccount(transaction: IInteractiveTransaction, userId: string): Promise<number> {
+  // The other half of the protocol {@link lockAccountsOfMatch} describes. Taking the account row first is what makes
+  // the two orders equivalent: a note writer that got here first holds this row until it commits, so the scan below
+  // sees its note; one that arrives later finds the deletion this transaction is part of and never writes the words
+  await transaction.query(`SELECT "id" FROM "users" WHERE "id" = $1 FOR UPDATE`, [userId]);
+
   const { rows } = await transaction.query<{ id: string }>(
     `UPDATE "result_dispute_notes" AS n
      SET "body" = NULL, "redacted_at" = now()
@@ -1350,6 +1773,11 @@ defineSymbol(answerResult, {
 defineSymbol(redactNotesForAccount, {
   name: 'Redact Notes For Account',
   description: 'Redacts every dispute note a deleted account is identified by, across all revisions.',
+});
+
+defineSymbol(resolveMatchRoute, {
+  name: 'Resolve Match Route',
+  description: 'Resolves any game id of a match to the canonical page, for a caller who may read it.',
 });
 
 defineSymbol(settleDueResults, {

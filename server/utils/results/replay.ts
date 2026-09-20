@@ -27,6 +27,7 @@ import { defineSymbol } from '#shared/utils/symbol';
 
 import type { IInteractiveTransaction } from '../db/types';
 import { REPLAYED_SCOPE } from './constants';
+import type { IPublishedGeneration } from './types';
 
 /**
  * One game row of a league's ladder, with the seats and the frozen policy that decide what it feeds
@@ -157,33 +158,42 @@ function toRatableGame(row: ILadderRow): IRatableGame {
  * @param transaction - The open transaction, already holding the league's lock
  * @param leagueId - The league to recompute
  * @param causedByRevisionId - The revision whose transition caused this, for the audit trail
- * @returns The published generation's id and how many game rows it consumed
+ * @returns The published generation, how many game rows it actually rated, and where the time went
  */
 export async function publishRatingGeneration(
   transaction: IInteractiveTransaction,
   leagueId: string,
   causedByRevisionId: string | null,
-): Promise<{ generationId: string; ratedGameCount: number }> {
+): Promise<IPublishedGeneration> {
+  const readStarted: number = performance.now();
   const rows: ILadderRow[] = await readLadderRows(transaction, leagueId);
+  const engineStarted: number = performance.now();
   const ordered: ILadderRow[] = [...rows].sort((left, right): number =>
     compareForReplay(toOrdered(left), toOrdered(right)),
   );
   const drafts: IRatingSnapshotDraft[] = replayRatings(ordered.map(toRatableGame), REPLAYED_SCOPE);
+  const insertStarted: number = performance.now();
 
+  // What the generation counts is the games that rated somebody, not the rows the pass read: a league of guest games
+  // scans plenty and rates none, and a count of scanned rows would describe that league as fully rated
+  const ratedGameCount: number = new Set(drafts.map((draft: IRatingSnapshotDraft): string => draft.gameId)).size;
   const { rows: created } = await transaction.query<{ id: string }>(
     `INSERT INTO "rating_generations" ("league_id", "caused_by_revision_id", "rated_game_count")
      VALUES ($1, $2, $3) RETURNING "id"`,
-    [leagueId, causedByRevisionId, ordered.length],
+    [leagueId, causedByRevisionId, ratedGameCount],
   );
   const generationId: string = created[0]!.id;
 
   if (drafts.length > 0) {
     await transaction.query(
       `INSERT INTO "rating_snapshots"
-         ("league_id", "user_id", "scope", "rating", "games_played", "is_provisional", "game_id", "rating_generation_id")
-       SELECT $1, d."user_id", $2::rating_scope, d."rating", d."games_played", d."is_provisional", d."game_id", $3
+         ("league_id", "user_id", "scope", "rating", "rating_before", "delta", "games_played", "is_provisional",
+          "game_id", "rating_generation_id")
+       SELECT $1, d."user_id", $2::rating_scope, d."rating", d."rating_before", d."delta", d."games_played",
+              d."is_provisional", d."game_id", $3
        FROM json_to_recordset($4::json) AS d(
-         "user_id" uuid, "rating" double precision, "games_played" int, "is_provisional" boolean, "game_id" uuid
+         "user_id" uuid, "rating" double precision, "rating_before" double precision, "delta" double precision,
+         "games_played" int, "is_provisional" boolean, "game_id" uuid
        )`,
       [
         leagueId,
@@ -191,10 +201,12 @@ export async function publishRatingGeneration(
         generationId,
         JSON.stringify(
           drafts.map((draft): Record<string, unknown> => ({
+            delta: draft.delta,
             game_id: draft.gameId,
             games_played: draft.gamesPlayed,
             is_provisional: draft.isProvisional,
             rating: draft.ratingAfter,
+            rating_before: draft.ratingBefore,
             user_id: draft.participantId,
           })),
         ),
@@ -211,7 +223,15 @@ export async function publishRatingGeneration(
     [leagueId, generationId],
   );
 
-  return { generationId, ratedGameCount: ordered.length };
+  return {
+    generationId,
+    ratedGameCount,
+    timings: {
+      engineMs: insertStarted - engineStarted,
+      insertMs: performance.now() - insertStarted,
+      readMs: engineStarted - readStarted,
+    },
+  };
 }
 
 /**

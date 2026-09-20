@@ -58,6 +58,14 @@ export const MAX_GAME_ROWS: number = 7;
 export const MAX_ENTERED_SCORE: number = 99;
 
 /**
+ * The shortest a guest's label may be once trimmed. A nameless guest is a seat nobody can read back, so an empty
+ * label is refused rather than stored
+ * @public
+ * @constant
+ */
+export const MIN_GUEST_NAME_LENGTH: number = 1;
+
+/**
  * The longest a guest's label may be
  * @public
  * @constant

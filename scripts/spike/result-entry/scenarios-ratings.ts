@@ -20,10 +20,11 @@ import { randomUUID } from 'node:crypto';
 
 import { ResultAction } from '#shared/results';
 import { withInteractiveTransaction } from '#utils/db/transaction';
-import { answerResult, settleDueResults } from '#utils/results';
+import type { TResultOutcome } from '#utils/results';
+import { answerResult, ResultRefusalError, settleDueResults } from '#utils/results';
 
 import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
-import { amendOrThrow, recordOrThrow, singles } from './scenarios-schema';
+import { recordOrThrow, singles } from './scenarios-schema';
 import { latch } from './scenarios-transaction';
 import type { IScenario, IScenarioResult } from './types';
 import { PACKAGES } from './types';
@@ -81,6 +82,43 @@ async function played(
 }
 
 /**
+ * Voids a match as its commissioner, which is how an accepted result is taken back in this slice
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param commissionerId - The commissioner
+ * @param canonicalMatchId - The match
+ * @param expectedRevision - The revision being voided
+ * @throws ResultRefusalError when the void is refused
+ */
+async function voidOne(
+  connectionString: string,
+  commissionerId: string,
+  canonicalMatchId: string,
+  expectedRevision: number = 1,
+): Promise<void> {
+  await withInteractiveTransaction(
+    async (transaction) => {
+      const outcome: TResultOutcome = await answerResult(transaction, commissionerId, {
+        action: ResultAction.VOID,
+        canonicalMatchId,
+        clientOperationId: randomUUID(),
+        expectedRevision,
+        note: null,
+      });
+
+      if (!outcome.ok) {
+        throw new ResultRefusalError(outcome.refusal);
+      }
+
+      return outcome;
+    },
+    { connectionString },
+  );
+}
+
+/**
  * Reads the active ladder as a name-to-rating map, which is what two runs are compared on.
  *
  * The ordering is the replay's own total order read backwards, not the newest row by id: a player with two games at
@@ -116,7 +154,7 @@ async function ladder(connectionString: string): Promise<Record<string, number>>
 export const RATING_SCENARIOS: readonly IScenario[] = [
   {
     package: PACKAGES.RATINGS,
-    name: 'correcting the first match in a chain moves a player who was never in it',
+    name: 'replacing the first match in a chain moves a player who was never in it',
     run: async (connectionString: string): Promise<IScenarioResult> => {
       await resetDatabase(connectionString);
 
@@ -133,17 +171,10 @@ export const RATING_SCENARIOS: readonly IScenario[] = [
 
       const before: Record<string, number> = await ladder(connectionString);
 
-      // Reverse the very first result: Ben beat Ada after all
-      await withInteractiveTransaction(
-        (transaction) =>
-          amendOrThrow(transaction, ids.Ada!, {
-            canonicalMatchId: first,
-            clientOperationId: randomUUID(),
-            expectedRevision: 1,
-            submission: singles([[4, 11]], [ids.Ada!, ids.Ben!], { playedAt: firstPlayedAt }),
-          }),
-        { connectionString },
-      );
+      // Reverse the very first result: Ben beat Ada after all. An accepted result is not amended in this slice, so the
+      // route is the one the page offers — a commissioner voids it and it is entered again at the time it was played
+      await voidOne(connectionString, ids.Ada!, first);
+      await played(connectionString, ids.Ada!, ids.Ben!, ids.Ada!, firstPlayedAt);
 
       const after: Record<string, number> = await ladder(connectionString);
       const moved: string[] = Object.keys(before).filter((name) => before[name] !== after[name]);
@@ -213,23 +244,17 @@ export const RATING_SCENARIOS: readonly IScenario[] = [
 
       const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara'], NO_CONFIRMATION);
       const tied: string = hoursAgo(1);
-      const first: string = await played(connectionString, ids.Ada!, ids.Ada!, ids.Ben!, tied);
 
+      await played(connectionString, ids.Ada!, ids.Ada!, ids.Ben!, tied);
       await played(connectionString, ids.Ada!, ids.Ben!, ids.Cara!, tied);
 
       const before: Record<string, number> = await ladder(connectionString);
 
-      // An amendment to the same scores changes nothing but forces the whole league to be replayed again
-      await withInteractiveTransaction(
-        (transaction) =>
-          amendOrThrow(transaction, ids.Ada!, {
-            canonicalMatchId: first,
-            clientOperationId: randomUUID(),
-            expectedRevision: 1,
-            submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: tied }),
-          }),
-        { connectionString },
-      );
+      // A later result and its void change nothing about the tied pair, but each forces the whole league to be sorted
+      // and replayed again: were the tie-break not total, the two publications would disagree about that pair
+      const later: string = await played(connectionString, ids.Ada!, ids.Cara!, ids.Ada!, hoursAgo(0.5));
+
+      await voidOne(connectionString, ids.Ada!, later);
 
       const after: Record<string, number> = await ladder(connectionString);
       const [generations] = await read<{ n: number }>(
@@ -239,7 +264,7 @@ export const RATING_SCENARIOS: readonly IScenario[] = [
 
       return {
         detail: `${generations!.n} generations; ${JSON.stringify(before)} then ${JSON.stringify(after)}`,
-        passed: JSON.stringify(before) === JSON.stringify(after) && generations!.n === 3,
+        passed: JSON.stringify(before) === JSON.stringify(after) && generations!.n === 4,
       };
     },
   },

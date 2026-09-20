@@ -18,8 +18,10 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { withInteractiveTransaction } from '#utils/db/transaction';
-import { settleDueResults } from '#utils/results';
+import { DEFAULT_TRANSACTION_LIMITS } from '#utils/db/constants';
+import { TransactionBudgetError, withInteractiveTransaction } from '#utils/db/transaction';
+import type { IPublishedGeneration } from '#utils/results';
+import { publishRatingGeneration, settleDueResults } from '#utils/results';
 
 import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
 import { recordOrThrow, singles } from './scenarios-schema';
@@ -157,11 +159,13 @@ async function generationBytes(connectionString: string): Promise<number> {
  * @param count - How many game rows the league already has
  * @returns A line of measurements
  */
-async function measure(connectionString: string, count: number): Promise<string> {
+async function measure(connectionString: string, count: number): Promise<{ detail: string; withinBudget: boolean }> {
   const ids: Record<string, string> = await seedLadder(connectionString, count);
   const before: number = await generationBytes(connectionString);
   const started: number = performance.now();
 
+  // The deployed limits, not raised ones: a measurement taken under a two-minute ceiling says nothing about whether the
+  // operation fits the budget the application will actually run it under
   await withInteractiveTransaction(
     (transaction) =>
       recordOrThrow(transaction, ids.Ada!, {
@@ -170,14 +174,7 @@ async function measure(connectionString: string, count: number): Promise<string>
         leagueId: LEAGUE_ID,
         submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
       }),
-    {
-      connectionString,
-      limits: {
-        idleTimeoutMs: 120000,
-        lockTimeoutMs: 120000,
-        statementTimeoutMs: 120000,
-      },
-    },
+    { connectionString },
   );
 
   const elapsed: number = performance.now() - started;
@@ -188,7 +185,22 @@ async function measure(connectionString: string, count: number): Promise<string>
   );
   const after: number = await generationBytes(connectionString);
 
-  return `${count} rows → ${elapsed.toFixed(0)}ms for the whole transaction, ${written!.snapshots} snapshots in ${written!.generations} generation, ${(((after - before) / 1024 / 1024) * 1).toFixed(2)} MB of generation storage`;
+  // A second publication on the same league, for the split the transition's own figure cannot give: the whole
+  // transaction above also writes a revision, its game rows and its events
+  const published: IPublishedGeneration = await withInteractiveTransaction(
+    (transaction) => publishRatingGeneration(transaction, LEAGUE_ID, null),
+    { connectionString },
+  );
+  const { engineMs, insertMs, readMs } = published.timings;
+
+  return {
+    detail:
+      `${count} rows → ${elapsed.toFixed(0)}ms for the whole transaction ` +
+      `(read ${readMs.toFixed(0)}ms, engine ${engineMs.toFixed(0)}ms, snapshot write ${insertMs.toFixed(0)}ms), ` +
+      `${written!.snapshots} snapshots in ${written!.generations} generation, ` +
+      `${((after - before) / 1024 / 1024).toFixed(2)} MB of generation storage`,
+    withinBudget: elapsed < DEFAULT_TRANSACTION_LIMITS.operationTimeoutMs,
+  };
 }
 
 /**
@@ -199,15 +211,18 @@ async function measure(connectionString: string, count: number): Promise<string>
 export const BUDGET_SCENARIOS: readonly IScenario[] = [
   {
     package: PACKAGES.BUDGET,
-    name: 'one transition, measured at 100, 1,000 and 10,000 eligible game rows',
+    name: 'one transition under the deployed limits, at 100, 1,000 and 10,000 eligible game rows',
     run: async (connectionString: string): Promise<IScenarioResult> => {
-      const lines: string[] = [];
+      const measurements: { detail: string; withinBudget: boolean }[] = [];
 
       for (const size of SIZES) {
-        lines.push(await measure(connectionString, size));
+        measurements.push(await measure(connectionString, size));
       }
 
-      return { detail: lines.join('\n        '), passed: lines.length === SIZES.length };
+      return {
+        detail: measurements.map((measurement): string => measurement.detail).join('\n        '),
+        passed: measurements.every((measurement): boolean => measurement.withinBudget),
+      };
     },
   },
   {
@@ -231,14 +246,7 @@ export const BUDGET_SCENARIOS: readonly IScenario[] = [
       const started: number = performance.now();
       const settled: number = await withInteractiveTransaction(
         (transaction) => settleDueResults(transaction, LEAGUE_ID),
-        {
-          connectionString,
-          limits: {
-            idleTimeoutMs: 120000,
-            lockTimeoutMs: 120000,
-            statementTimeoutMs: 120000,
-          },
-        },
+        { connectionString },
       );
       const elapsed: number = performance.now() - started;
 
@@ -264,14 +272,7 @@ export const BUDGET_SCENARIOS: readonly IScenario[] = [
               leagueId: LEAGUE_ID,
               submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
             }),
-          {
-            connectionString,
-            limits: {
-              idleTimeoutMs: 120000,
-              lockTimeoutMs: 120000,
-              statementTimeoutMs: 120000,
-            },
-          },
+          { connectionString },
         ).then((): { elapsed: number } => ({ elapsed: performance.now() - started }));
       };
       const [first, second] = await Promise.all([record(), record()]);
@@ -284,6 +285,44 @@ export const BUDGET_SCENARIOS: readonly IScenario[] = [
       return {
         detail: `two concurrent writers took ${first!.elapsed.toFixed(0)}ms and ${second!.elapsed.toFixed(0)}ms; ${counts!.generations} generations published, ${counts!.pointers} active pointer`,
         passed: counts!.generations === 2 && counts!.pointers === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.BUDGET,
+    name: 'a sequence of short statements that outruns the whole-operation budget writes nothing',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+      await seedLeague(connectionString, ['Ada', 'Ben']);
+
+      let thrown: string = 'nothing';
+      const started: number = performance.now();
+
+      try {
+        await withInteractiveTransaction(
+          async (transaction) => {
+            await transaction.query(`UPDATE "leagues" SET "name" = 'renamed' WHERE "id" = $1`, [LEAGUE_ID]);
+
+            // Ten statements, each of them well inside the statement limit and none of them waiting for a lock: the
+            // shape a long rating replay has, and the one no database-side limit refuses
+            for (let index = 0; index < 10; index += 1) {
+              await transaction.query('SELECT pg_sleep(0.2)');
+            }
+          },
+          { connectionString, limits: { operationTimeoutMs: 800, statementTimeoutMs: 5000 } },
+        );
+      } catch (error: unknown) {
+        thrown = error instanceof TransactionBudgetError ? 'the operation budget' : String(error);
+      }
+
+      const elapsed: number = performance.now() - started;
+      const [league] = await read<{ name: string }>(connectionString, `SELECT "name" FROM "leagues" WHERE "id" = $1`, [
+        LEAGUE_ID,
+      ]);
+
+      return {
+        detail: `refused by ${thrown} after ${elapsed.toFixed(0)}ms; league name is still "${league!.name}"`,
+        passed: thrown === 'the operation budget' && league!.name === 'Spike League' && elapsed < 1500,
       };
     },
   },

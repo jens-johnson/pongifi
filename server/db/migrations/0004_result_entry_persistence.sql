@@ -1,6 +1,6 @@
 CREATE TYPE "public"."result_action" AS ENUM('CONFIRM', 'DISPUTE', 'VOID');--> statement-breakpoint
 CREATE TYPE "public"."result_operation" AS ENUM('AMEND', 'CONFIRM', 'CREATE', 'DISPUTE', 'VOID');--> statement-breakpoint
-CREATE TYPE "public"."result_settle_reason" AS ENUM('CONFIRMED_BY_ALL', 'DEADLINE_PASSED', 'NO_CONFIRMATION_NEEDED');--> statement-breakpoint
+CREATE TYPE "public"."result_settle_reason" AS ENUM('CONFIRMED_BY_ALL', 'DEADLINE_PASSED', 'NO_CONFIRMATION_NEEDED', 'VOIDED');--> statement-breakpoint
 CREATE TYPE "public"."result_state" AS ENUM('CONFIRMED', 'DISPUTED', 'UNCONFIRMED', 'VOID');--> statement-breakpoint
 CREATE TABLE "active_rating_generations" (
 	"league_id" uuid PRIMARY KEY NOT NULL,
@@ -88,6 +88,8 @@ ALTER TABLE "game_participants" ADD COLUMN "result_revision_id" uuid;--> stateme
 ALTER TABLE "game_participants" ADD COLUMN "seat" text;--> statement-breakpoint
 ALTER TABLE "games" ADD COLUMN "result_revision_id" uuid;--> statement-breakpoint
 ALTER TABLE "games" ADD COLUMN "superseded_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "rating_snapshots" ADD COLUMN "rating_before" double precision;--> statement-breakpoint
+ALTER TABLE "rating_snapshots" ADD COLUMN "delta" double precision;--> statement-breakpoint
 ALTER TABLE "rating_snapshots" ADD COLUMN "rating_generation_id" uuid;--> statement-breakpoint
 -- Every snapshot written before generations existed belongs to one generation per league: the ladder as it stood at
 -- this migration. Added nullable and backfilled first, because a NOT NULL column cannot be added to a table that

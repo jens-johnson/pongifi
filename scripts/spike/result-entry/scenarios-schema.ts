@@ -19,15 +19,15 @@
 import { randomUUID } from 'node:crypto';
 
 import type { IResultSubmission } from '#shared/results';
-import { ResultEnding, ResultState, Seat } from '#shared/results';
+import { ResultAction, ResultEnding, ResultState, Seat } from '#shared/results';
 import type { IMatchSettings, TMatchEvent } from '#shared/rules-engine';
 import { GameType, replayMatch } from '#shared/rules-engine';
 import { withInteractiveTransaction } from '#utils/db/transaction';
 import type { IInteractiveTransaction } from '#utils/db/types';
 import type { IResultEffect, TResultOutcome } from '#utils/results';
-import { amendResult, recordResult, ResultRefusalError } from '#utils/results';
+import { amendResult, answerResult, recordResult, ResultRefusalError } from '#utils/results';
 
-import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
+import { HOUR_MS, LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
 import type { IScenario, IScenarioResult } from './types';
 import { PACKAGES } from './types';
 
@@ -84,7 +84,50 @@ export async function amendOrThrow(
 }
 
 /**
- * A singles submission from per-game scores
+ * Disputes a revision on its own connection.
+ *
+ * Every correction fixture goes through this first: the approved slice amends a disputed result and nothing else, so a
+ * scenario that recorded a result and corrected it straight away would be testing a path the service refuses
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param actorId - The seated participant disputing it
+ * @param canonicalMatchId - The match
+ * @param expectedRevision - The revision being disputed
+ * @throws ResultRefusalError when the dispute is refused
+ */
+export async function disputeOne(
+  connectionString: string,
+  actorId: string,
+  canonicalMatchId: string,
+  expectedRevision: number = 1,
+): Promise<void> {
+  await withInteractiveTransaction(
+    async (transaction) => {
+      const outcome: TResultOutcome = await answerResult(transaction, actorId, {
+        action: ResultAction.DISPUTE,
+        canonicalMatchId,
+        clientOperationId: randomUUID(),
+        expectedRevision,
+        note: null,
+      });
+
+      if (!outcome.ok) {
+        throw new ResultRefusalError(outcome.refusal);
+      }
+
+      return outcome;
+    },
+    { connectionString },
+  );
+}
+
+/**
+ * A singles submission from per-game scores.
+ *
+ * The default play time is an hour ago rather than a fixed instant, because the service refuses an entry older than the
+ * league's amendment window: a checked-in date would quietly turn every fixture stale a few days after it was written
  * @internal
  * @function
  * @param rows - The scores, as `[a, b]` pairs
@@ -105,7 +148,7 @@ export function singles(
       b,
       gameNumber: index + 1,
     })),
-    playedAt: '2026-09-18T18:00:00.000Z',
+    playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
     retiredSeat: null,
     seats: [
       {
@@ -217,7 +260,7 @@ export const SCHEMA_SCENARIOS: readonly IScenario[] = [
       const ids: Record<string, string> = await seedLeague(
         connectionString,
         ['Ada', 'Ben'],
-        settingsFixture({ matchFormat: 3, requireConfirmation: false }),
+        settingsFixture({ matchFormat: 3 }),
       );
       const created = await withInteractiveTransaction(
         (transaction) =>
@@ -236,6 +279,7 @@ export const SCHEMA_SCENARIOS: readonly IScenario[] = [
         { connectionString },
       );
 
+      await disputeOne(connectionString, ids.Ben!, created.canonicalMatchId);
       await withInteractiveTransaction(
         (transaction) =>
           amendOrThrow(transaction, ids.Ada!, {
@@ -254,6 +298,7 @@ export const SCHEMA_SCENARIOS: readonly IScenario[] = [
         { connectionString },
       );
 
+      await disputeOne(connectionString, ids.Ben!, created.canonicalMatchId, 2);
       await withInteractiveTransaction(
         (transaction) =>
           amendOrThrow(transaction, ids.Ada!, {
@@ -400,7 +445,7 @@ export const SCHEMA_SCENARIOS: readonly IScenario[] = [
       const ids: Record<string, string> = await seedLeague(
         connectionString,
         ['Ada', 'Ben'],
-        settingsFixture({ matchFormat: 3, requireConfirmation: false }),
+        settingsFixture({ matchFormat: 3 }),
       );
       const created = await withInteractiveTransaction(
         (transaction) =>
@@ -419,6 +464,7 @@ export const SCHEMA_SCENARIOS: readonly IScenario[] = [
         { connectionString },
       );
 
+      await disputeOne(connectionString, ids.Ben!, created.canonicalMatchId);
       await read(
         connectionString,
         `UPDATE "leagues" SET "settings" = jsonb_set("settings", '{targetScore,SINGLES}', '21'),

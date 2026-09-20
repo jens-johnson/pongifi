@@ -60,6 +60,9 @@ export enum ResultSettleReason {
 
   /* Confirmation is off in this league, or nobody but the recorder was seated */
   NO_CONFIRMATION_NEEDED = 'NO_CONFIRMATION_NEEDED',
+
+  /* A commissioner took the result out of every count and every ladder; no vote and no deadline is implied by it */
+  VOIDED = 'VOIDED',
 }
 
 /**

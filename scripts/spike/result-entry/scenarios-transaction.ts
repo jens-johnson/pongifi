@@ -20,11 +20,11 @@ import { randomUUID } from 'node:crypto';
 
 import { ResultAction, ResultState } from '#shared/results';
 import { withInteractiveTransaction } from '#utils/db/transaction';
-import type { IResultEffect } from '#utils/results';
+import type { IResultEffect, TResultOutcome } from '#utils/results';
 import { answerResult, ResultRefusalError, settleDueResults } from '#utils/results';
 
 import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
-import { amendOrThrow, ok, recordOrThrow, singles } from './scenarios-schema';
+import { amendOrThrow, disputeOne, ok, recordOrThrow, singles } from './scenarios-schema';
 import type { IScenario, IScenarioResult } from './types';
 import { PACKAGES } from './types';
 
@@ -583,6 +583,92 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
   },
   {
     package: PACKAGES.CONCURRENCY,
+    name: 'a dispute that crossed the deadline while queued behind the league lock is late, not early',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Ben!, ids.Cara!]);
+      const [revision] = await read<{ deadline: Date }>(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = clock_timestamp() + interval '600 milliseconds'
+         WHERE "id" = $1 RETURNING "confirmation_deadline" AS deadline`,
+        [created.resultRevisionId],
+      );
+      const holding = latch();
+      const release = latch();
+
+      // A third party holds the league's lock, which is the row every result write in the league has to pass through
+      const blocker: Promise<void> = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query(`SELECT "id" FROM "leagues" WHERE "id" = $1 FOR UPDATE`, [LEAGUE_ID]);
+          holding.open();
+          await release.reached;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // Begins now, comfortably inside the confirmation window, and will not see the lock for another second
+      const disputing = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await answerResult(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'I disagree',
+          });
+          const { rows } = await transaction.query<{ crossed: boolean; started: boolean }>(
+            `SELECT now() < $1::timestamptz AS "started", clock_timestamp() > $1::timestamptz AS "crossed"`,
+            [revision!.deadline],
+          );
+
+          return { clock: rows[0]!, outcome };
+        },
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 10000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 10000,
+          },
+        },
+      );
+
+      // The deadline passes while the dispute is still queued
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 1000);
+      });
+
+      release.open();
+      await blocker;
+
+      const { clock, outcome } = await disputing;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const [state] = await read<{ disputes: number; reason: string; state: string }>(
+        connectionString,
+        `SELECT "state", "settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'DISPUTE') AS disputes
+         FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `the transaction began ${clock.started ? 'before' : 'after'} the deadline and held its locks ${clock.crossed ? 'after' : 'before'} it; the dispute was refused as ${refusal} and wrote ${state!.disputes} rows, leaving ${state!.state} by ${state!.reason}`,
+        passed:
+          clock.started &&
+          clock.crossed &&
+          refusal === 'STALE_RESULT' &&
+          state!.disputes === 0 &&
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'DEADLINE_PASSED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
     name: 'a dispute committed before the deadline stops the deadline settling it, even across a held transaction',
     run: async (connectionString: string): Promise<IScenarioResult> => {
       await resetDatabase(connectionString);
@@ -671,6 +757,7 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
         { connectionString },
       );
 
+      await disputeOne(connectionString, ids.Ben!, created.canonicalMatchId);
       await withInteractiveTransaction(
         (transaction) =>
           amendOrThrow(transaction, ids.Ada!, {
@@ -687,7 +774,7 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       try {
         await withInteractiveTransaction(
           (transaction) =>
-            answerOrThrow(transaction, ids.Ben!, {
+            answerOrThrow(transaction, ids.Cara!, {
               action: ResultAction.CONFIRM,
               canonicalMatchId: created.canonicalMatchId,
               clientOperationId: randomUUID(),

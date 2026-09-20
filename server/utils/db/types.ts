@@ -48,6 +48,13 @@ export interface ITransactionLimits {
   /* How long the transaction may sit between statements before the database ends it */
   idleTimeoutMs: number;
 
+  /**
+   * How long the whole operation may take, from the first statement to the commit. The three database limits below
+   * each bound one wait; a long enough sequence of statements that never breaks any of them can still outlive the
+   * function holding the connection, which is what this one refuses
+   */
+  operationTimeoutMs: number;
+
   /* How long a statement may wait for a lock before it is refused */
   lockTimeoutMs: number;
 

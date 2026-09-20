@@ -33,6 +33,13 @@ import { GameType } from '#shared/rules-engine';
 const MIGRATIONS: URL = new URL('../../../server/db/migrations/', import.meta.url);
 
 /**
+ * How many milliseconds are in an hour, which is the unit every window in a league's settings is stated in
+ * @public
+ * @constant
+ */
+export const HOUR_MS: number = 60 * 60 * 1000;
+
+/**
  * The league every fixture is built in
  * @public
  * @constant
