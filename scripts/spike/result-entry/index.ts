@@ -65,12 +65,20 @@ function isTransportFailure(error: unknown): boolean {
 }
 
 /**
- * Brings the disposable stack back up
+ * Brings the disposable stack back up, when there is one to bring back.
+ *
+ * The stack is the local PostgreSQL and the WebSocket proxy in front of it, and it exists only for a run configured
+ * to use that proxy. A run pointed at hosted Neon has no local stack to restart, and starting one would leave a
+ * container running on behalf of a run that never dialled it
  * @internal
  * @async
  * @function
  */
 async function restartStack(): Promise<void> {
+  if (!process.env.SPIKE_WS_PROXY) {
+    return;
+  }
+
   await promisify(execFile)(fileURLToPath(new URL('stack.sh', import.meta.url)));
 }
 

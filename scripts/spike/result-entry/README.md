@@ -44,3 +44,4 @@ express — two transactions meeting on a lock — plus the transport proof and 
 | `scenarios-ratings.ts`     | Full-league replay, void equivalence, consistent reads, the public predicate               |
 | `scenarios-privacy.ts`     | Dispute-note isolation and redaction                                                       |
 | `scenarios-budget.ts`      | Runtime and storage measurements at 100, 1,000 and 10,000 eligible game rows               |
+| `measure.ts`               | The sampled sweep: distributions, the same-operation breakdown, and where it stopped       |

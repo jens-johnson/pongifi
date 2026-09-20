@@ -20,7 +20,7 @@ import type { PoolClient, QueryResult, QueryResultRow } from '@neondatabase/serv
 import { DatabaseError, Pool } from '@neondatabase/serverless';
 
 import { DEFAULT_TRANSACTION_LIMITS } from './constants';
-import type { IInteractiveTransaction, IOperationBudget, ITransactionLimits } from './types';
+import type { IInteractiveTransaction, IOperationBudget, ITransactionLimits, ITransactionPhases } from './types';
 
 /**
  * Thrown when an operation outruns the whole-operation budget rather than any single database limit.
@@ -205,6 +205,76 @@ async function commitWithin(client: PoolClient, budget: IOperationBudget): Promi
 }
 
 /**
+ * When each phase of one operation finished, as the clock the helper measures with read it.
+ *
+ * Undefined means the operation never reached that phase, which is a different fact from a phase that took no time:
+ * a transaction refused while dialling has no preamble, and reporting one of zero would describe a round trip that
+ * never happened
+ * @internal
+ */
+interface IPhaseMarks {
+  /* When the connection was in hand */
+  connectedAt: number | undefined;
+
+  /* When the operation stopped, whether by a commit being answered or by whatever ended it instead */
+  endedAt: number | undefined;
+
+  /* When `BEGIN` and the three limits had been set */
+  preambleAt: number | undefined;
+
+  /* When the body returned its value */
+  workedAt: number | undefined;
+}
+
+/**
+ * Turns the instants one operation passed through into the durations between them.
+ *
+ * A phase the operation never reached is reported as zero rather than as a negative interval against a mark that was
+ * never taken: the observer is handed what was measured, and `committed` says whether the operation got far enough
+ * for the figures to describe a whole transaction
+ * @internal
+ * @function
+ * @param startedAt - When the operation began, before the dial
+ * @param marks - When each phase finished
+ * @param committed - Whether the commit was answered
+ * @returns Where the time went
+ */
+function phasesFrom(startedAt: number, marks: IPhaseMarks, committed: boolean): ITransactionPhases {
+  const endedAt: number = marks.endedAt ?? startedAt;
+  const connectedAt: number | undefined = marks.connectedAt;
+  const preambleAt: number | undefined = marks.preambleAt;
+  const workedAt: number | undefined = marks.workedAt;
+
+  return {
+    bodyMs: workedAt === undefined || preambleAt === undefined ? 0 : workedAt - preambleAt,
+    cleanupMs: performance.now() - endedAt,
+    commitMs: workedAt === undefined ? 0 : endedAt - workedAt,
+    committed,
+    connectMs: connectedAt === undefined ? 0 : connectedAt - startedAt,
+    operationMs: endedAt - startedAt,
+    preambleMs: preambleAt === undefined || connectedAt === undefined ? 0 : preambleAt - connectedAt,
+  };
+}
+
+/**
+ * Hands the measurement to whoever asked for it, without letting it change what the operation did.
+ *
+ * An observer is instrumentation, and instrumentation that throws from a `finally` would replace the reason a
+ * transaction ended with a complaint about the thing watching it
+ * @internal
+ * @function
+ * @param observer - Who asked, if anybody did
+ * @param phases - Where the time went
+ */
+function report(observer: ((phases: ITransactionPhases) => void) | undefined, phases: ITransactionPhases): void {
+  try {
+    observer?.(phases);
+  } catch {
+    // Deliberately swallowed: see above
+  }
+}
+
+/**
  * Runs one interactive transaction and hands back whatever the body returns.
  *
  * The application's ordinary reads stay on Neon's HTTP driver, which cannot hold a transaction open across statements:
@@ -237,7 +307,8 @@ async function commitWithin(client: PoolClient, budget: IOperationBudget): Promi
  * @async
  * @function
  * @param body - What to run inside the transaction
- * @param options - The connection string to dial and the limits to bound it by
+ * @param options - The connection string to dial, the limits to bound it by, and an optional observer for where the
+ *   operation's time went
  * @throws TransactionBudgetError when the operation outruns its budget before the commit is sent, in which case
  *   nothing it attempted is durable
  * @throws TransactionOutcomeUnknownError when the commit was sent and its answer never arrived, whether the budget
@@ -247,14 +318,26 @@ async function commitWithin(client: PoolClient, budget: IOperationBudget): Promi
  */
 export async function withInteractiveTransaction<TResult>(
   body: (transaction: IInteractiveTransaction) => Promise<TResult>,
-  options: { connectionString: string; limits?: Partial<ITransactionLimits> },
+  options: {
+    connectionString: string;
+    limits?: Partial<ITransactionLimits>;
+    onPhases?: (phases: ITransactionPhases) => void;
+  },
 ): Promise<TResult> {
   const limits: ITransactionLimits = { ...DEFAULT_TRANSACTION_LIMITS, ...options.limits };
   const budget: IOperationBudget = {
     budgetMs: limits.operationTimeoutMs,
     deadline: Date.now() + limits.operationTimeoutMs,
   };
+  const startedAt: number = performance.now();
+  const marks: IPhaseMarks = {
+    connectedAt: undefined,
+    endedAt: undefined,
+    preambleAt: undefined,
+    workedAt: undefined,
+  };
   const pool: Pool = new Pool({ connectionString: options.connectionString });
+  let committed: boolean = false;
 
   try {
     // Inside the budget, because dialling the database is a network round trip and a request that spent its whole
@@ -266,6 +349,9 @@ export async function withInteractiveTransaction<TResult>(
       // returned to a pool that is already shutting down
       (late: PoolClient): void => late.release(new TransactionBudgetError(limits.operationTimeoutMs)),
     );
+
+    marks.connectedAt = performance.now();
+
     const run = async <TRow extends QueryResultRow>(text: string, values: unknown[] = []): Promise<QueryResult<TRow>> =>
       withinBudget(
         async (): Promise<QueryResult<TRow>> => client.query<TRow>(text, values),
@@ -279,6 +365,8 @@ export async function withInteractiveTransaction<TResult>(
       await run(`SET LOCAL lock_timeout = ${limits.lockTimeoutMs}`);
       await run(`SET LOCAL idle_in_transaction_session_timeout = ${limits.idleTimeoutMs}`);
 
+      marks.preambleAt = performance.now();
+
       /* Bound to the client so the body cannot start a second connection by accident */
       const result: TResult = await withinBudget(
         async (): Promise<TResult> => body({ query: run }),
@@ -286,12 +374,19 @@ export async function withInteractiveTransaction<TResult>(
         (): void => undefined,
       );
 
+      marks.workedAt = performance.now();
+
       await commitWithin(client, budget);
+
+      committed = true;
+      marks.endedAt = performance.now();
 
       client.release();
 
       return result;
     } catch (error: unknown) {
+      marks.endedAt ??= performance.now();
+
       // Every way out of the transaction hands the connection back from here, on exactly one of these branches and the
       // successful return above. Neon's pool wraps each client it lends out in a release-once guard and throws on a
       // second call, so a step that raises a refusal leaves the handing back to this owner rather than doing it too:
@@ -325,6 +420,10 @@ export async function withInteractiveTransaction<TResult>(
       throw error;
     }
   } finally {
+    marks.endedAt ??= performance.now();
+
     await cleanly(pool.end(), limits.cleanupTimeoutMs);
+
+    report(options.onPhases, phasesFrom(startedAt, marks, committed));
   }
 }

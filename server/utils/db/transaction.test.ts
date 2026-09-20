@@ -22,6 +22,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { symbolName } from '#shared/utils/symbol';
 
+import type { ITransactionPhases } from './types';
+
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
@@ -191,7 +193,7 @@ async function run<TResult>(
 
   try {
     const value: TResult = await withInteractiveTransaction(body, {
-      connectionString: 'postgres://nowhere/none',
+      connectionString: NOWHERE,
       limits: {
         cleanupTimeoutMs: CLEANUP_MS,
         operationTimeoutMs,
@@ -267,6 +269,21 @@ const BODY_FAILURE: string = 'the seat is not a member';
 const BUDGET_MS: number = 40;
 
 /**
+ * A budget long enough that no phase of an instrumented operation is refused by it: these cases are about where the
+ * time went, not about the deadline
+ * @internal
+ * @constant
+ */
+const PATIENT_MS: number = 2000;
+
+/**
+ * The connection string every case dials, which no case ever reaches: the transport is a fake
+ * @internal
+ * @constant
+ */
+const NOWHERE: string = 'postgres://nowhere/none';
+
+/**
  * How long cleanup is given, short enough that a pool which never closes is still not a hang
  * @internal
  * @constant
@@ -302,6 +319,77 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(outcome).toBe('recorded');
       expect(transport.sent).toContain('COMMIT');
       expect(transport.released).toEqual([undefined]);
+    });
+
+    it('tells an observer where the operation’s time went, phase by phase', async (): Promise<void> => {
+      transport.connectMs = 40;
+      transport.delays = { COMMIT: 30, 'SELECT 1': 60 };
+
+      let phases: ITransactionPhases | undefined = undefined;
+
+      await withInteractiveTransaction(
+        async (transaction): Promise<void> => {
+          await transaction.query('SELECT 1');
+        },
+        {
+          connectionString: NOWHERE,
+          limits: { cleanupTimeoutMs: CLEANUP_MS, operationTimeoutMs: PATIENT_MS },
+          onPhases: (observed: ITransactionPhases): void => {
+            phases = observed;
+          },
+        },
+      );
+
+      const observed: ITransactionPhases = phases!;
+
+      // Each bound rather than an equality, because a timer fires no earlier than it is asked to and never exactly
+      expect(observed.committed).toBe(true);
+      expect(observed.connectMs).toBeGreaterThanOrEqual(40);
+      expect(observed.bodyMs).toBeGreaterThanOrEqual(60);
+      expect(observed.commitMs).toBeGreaterThanOrEqual(30);
+      expect(observed.operationMs).toBeGreaterThanOrEqual(
+        observed.connectMs + observed.preambleMs + observed.bodyMs + observed.commitMs,
+      );
+    });
+
+    it('reports an operation that never committed as one, rather than as a whole transaction', async (): Promise<void> => {
+      let phases: ITransactionPhases | undefined = undefined;
+
+      await expect(
+        withInteractiveTransaction(
+          async (): Promise<never> => {
+            throw new Error(BODY_FAILURE);
+          },
+          {
+            connectionString: NOWHERE,
+            limits: { cleanupTimeoutMs: CLEANUP_MS, operationTimeoutMs: PATIENT_MS },
+            onPhases: (observed: ITransactionPhases): void => {
+              phases = observed;
+            },
+          },
+        ),
+      ).rejects.toThrow(BODY_FAILURE);
+
+      const observed: ITransactionPhases = phases!;
+
+      expect(observed.committed).toBe(false);
+      expect(observed.commitMs).toBe(0);
+      expect(observed.connectMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it('lets an observer’s own failure change nothing about the operation', async (): Promise<void> => {
+      const { outcome } = await (async (): Promise<{ outcome: string }> => ({
+        outcome: await withInteractiveTransaction(async (): Promise<string> => 'recorded', {
+          connectionString: NOWHERE,
+          limits: { cleanupTimeoutMs: CLEANUP_MS, operationTimeoutMs: BUDGET_MS },
+          onPhases: (): never => {
+            throw new Error('the instrumentation is broken');
+          },
+        }),
+      }))();
+
+      expect(outcome).toBe('recorded');
+      expect(transport.sent).toContain('COMMIT');
     });
 
     it('refuses an operation that spends its whole budget dialling the database', async (): Promise<void> => {

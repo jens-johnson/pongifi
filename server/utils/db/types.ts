@@ -82,3 +82,37 @@ export interface ITransactionLimits {
   /* How long a single statement may run */
   statementTimeoutMs: number;
 }
+
+/**
+ * Where one transaction's wall time went, measured by the helper that owns each phase.
+ *
+ * Only this helper can see three of these: the dial happens before any statement the caller writes, the commit is
+ * sent after the last one, and cleanup runs outside the operation's budget entirely. A measurement taken around the
+ * call can see the total and nothing else, and one taken inside the body can attribute neither end of it.
+ *
+ * Every figure is one observation of one operation, in milliseconds, taken on the client side: a statement's time
+ * includes the round trip that carried it
+ * @public
+ */
+export interface ITransactionPhases {
+  /* The caller's body, from the first statement it sends to the value it returns */
+  bodyMs: number;
+
+  /* Rolling back and closing the pool, bounded separately and spent after the operation's own deadline */
+  cleanupMs: number;
+
+  /* `COMMIT` sent until it was answered; zero when the operation ended before one was sent */
+  commitMs: number;
+
+  /* Whether the commit was answered, so a refused or abandoned operation is not read as a completed one */
+  committed: boolean;
+
+  /* Dialling the pool and taking a connection from it */
+  connectMs: number;
+
+  /* The whole budgeted operation, from before the dial until the commit was answered or the operation ended */
+  operationMs: number;
+
+  /* `BEGIN` and the three `SET LOCAL` limits, which are four round trips before the caller's work begins */
+  preambleMs: number;
+}
