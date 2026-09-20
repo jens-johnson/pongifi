@@ -141,3 +141,38 @@ export interface IReconstruction {
   /* The side that took the match */
   winner: Side;
 }
+
+/**
+ * What the Record page needs before a person can type anything: the rules the entry will be judged by, the roster it
+ * may seat, and the database's own clock.
+ *
+ * The clock is here because it is the only honest source of now. A device five minutes fast would otherwise offer a
+ * default play time the server refuses as the future, and the person would have to guess why (contract, Record Clock
+ * Addendum)
+ * @public
+ */
+export interface IResultFormContext {
+  /* Whether this account may record in this league at all, and the sentence to show when it may not */
+  authority: { may: boolean; who: string };
+
+  /* The league's configuration revision these rules came from; the save carries it back */
+  configurationRevision: number;
+
+  /* The formats this league records in this slice */
+  formats: GameType[];
+
+  /* The league's name, for the caption and the title */
+  leagueName: string;
+
+  /* The database's wall clock when the form was issued, which is what the play time is initialized from */
+  now: string;
+
+  /* The oldest play time this league still accepts, from that clock and the frozen entry window */
+  earliest: string;
+
+  /* The rules the entry is judged by, as the caption states them */
+  rules: { matchFormat: number; targetScore: Record<string, number>; winningMargin: number };
+
+  /* The ACTIVE members a seat may hold, as the members panel names them */
+  roster: { displayName: string; id: string }[];
+}
