@@ -565,9 +565,12 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
 
     it('rolls back and reports the body’s own failure rather than the budget', async (): Promise<void> => {
+      // A patient budget, because this case is about which failure is reported rather than about the deadline: under
+      // the tight one, a machine that pauses between two statements makes the budget the true answer and the case
+      // fails for being right
       const { outcome } = await run(async (): Promise<never> => {
         throw new Error(BODY_FAILURE);
-      });
+      }, PATIENT_MS);
 
       expect((outcome as Error).message).toBe(BODY_FAILURE);
       expect(transport.sent).toContain('ROLLBACK');
