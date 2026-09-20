@@ -26,14 +26,13 @@ import { createError, getRouterParam, type H3Event } from 'h3';
 import type { LeagueRole } from '#shared/domain';
 import { isUuid } from '#shared/leagues';
 import type { IRecordRequestBody, IResultFormContext, TRequestValidation } from '#shared/results';
-import { normalizeSubmission, ResultOperation, validateRecordBody } from '#shared/results';
+import { normalizeSubmission, validateRecordBody } from '#shared/results';
 import { useResultTransaction } from '#utils/db';
 import { runUpstream } from '#utils/http';
 import { readViewerRole } from '#utils/leagues';
 import type { IResultCurrentState, IResultEffect, IResultRefusalResponse, TResultOutcome } from '#utils/results';
 import { answerResultRefusal, recordResult, ResultRefusal } from '#utils/results';
-import type { IDuplicateCandidate, IOperationReceipt } from '#utils/results/queries';
-import { readDuplicateCandidates, readFormContext, readOperationReceipt } from '#utils/results/queries';
+import { readFormContext } from '#utils/results/queries';
 import { assertSameOrigin, assertWithinWriteRateLimit } from '#utils/write-boundary';
 
 /**
@@ -76,13 +75,6 @@ export interface IProbableDuplicateResponse {
 }
 
 /**
- * What the duplicate warning says
- * @internal
- * @constant
- */
-const DUPLICATE_MESSAGE: string = 'This looks like a result already recorded.';
-
-/**
  * What a caller is told when the league is not theirs to record in, which is what a caller naming a league that does
  * not exist is told
  * @internal
@@ -98,38 +90,31 @@ const NOT_FOUND: string = 'That league could not be found.';
 const UPSTREAM_MESSAGE: string = 'Pongifi could not record this result right now.';
 
 /**
- * What a conflict hands the page to recover with.
+ * The rules a stale-rules conflict has to redraw against.
  *
- * A name tells the page which conflict it met; it does not tell it what to draw. Stale rules need the rules that are
- * current now, or the caption cannot redraw and Save cannot be re-enabled against something the person has seen. A
- * reused key with a changed body needs the match that already exists, or "open the result that exists" links
- * nowhere. Both reads are authorized by the caller already having been admitted to this league
+ * The only recovery the service cannot hand back itself: it refused because the league moved, and what the page
+ * needs is where the league is now. Everything else a conflict needs — the candidates it found, the result this
+ * operation already wrote — is decided under the lock and travels with the refusal
  * @internal
  * @async
  * @function
  * @param refusal - Why the service refused
  * @param leagueId - The league, already authorized for this caller
  * @param userId - The account from the verified session
- * @param receipt - What this operation had already written, when it had
- * @returns The fields to add to the conflict, which is nothing for a conflict that needs none
+ * @returns The context to add, or nothing for a refusal that needs none
  */
-async function recoveryFor(
+async function currentRulesFor(
   refusal: ResultRefusal,
   leagueId: string,
   userId: string,
-  receipt: IOperationReceipt | null,
 ): Promise<Record<string, unknown>> {
-  if (refusal === ResultRefusal.STALE_LEAGUE_RULES) {
-    const context: IResultFormContext | null = await readFormContext(leagueId, userId);
-
-    return context ? { context } : {};
+  if (refusal !== ResultRefusal.STALE_LEAGUE_RULES) {
+    return {};
   }
 
-  if (refusal === ResultRefusal.OPERATION_BODY_CHANGED && receipt) {
-    return { existing: { canonicalMatchId: receipt.canonicalMatchId } };
-  }
+  const context: IResultFormContext | null = await readFormContext(leagueId, userId);
 
-  return {};
+  return context ? { context } : {};
 }
 
 export default defineEventHandler(
@@ -168,40 +153,10 @@ export default defineEventHandler(
       throw createError({ statusCode: 404, statusMessage: NOT_FOUND });
     }
 
-    // A save whose response was lost has already created its match, so the identical retry now matches its own
-    // creation. Warning about that would hide the receipt the service is holding for exactly this case, so only an
-    // operation that has never committed is fresh enough to warn about
-    const receipt: IOperationReceipt | null = await runUpstream(
-      readOperationReceipt(user.id, ResultOperation.CREATE, clientOperationId),
-      UPSTREAM_MESSAGE,
-    );
-
-    if (!receipt) {
-      const candidates: IDuplicateCandidate[] = await runUpstream(
-        readDuplicateCandidates(leagueId, user.id, submission),
-        UPSTREAM_MESSAGE,
-      );
-      const unacknowledged: IDuplicateCandidate[] = candidates.filter(
-        (candidate: IDuplicateCandidate): boolean => !acknowledgedDuplicates.includes(candidate.canonicalMatchId),
-      );
-
-      // Advisory, and answered before the write rather than inside it: the acknowledgement travels beside the result
-      // rather than in it, so saying "record it anyway" never counts as a different body under the same operation id
-      if (unacknowledged.length > 0) {
-        setResponseStatus(event, 409);
-
-        return {
-          candidates: unacknowledged,
-          message: DUPLICATE_MESSAGE,
-          refusal: 'PROBABLE_DUPLICATE',
-          statusCode: 409,
-        };
-      }
-    }
-
     const outcome: TResultOutcome = await runUpstream(
       useResultTransaction(async (transaction): Promise<TResultOutcome> =>
         recordResult(transaction, user.id, {
+          acknowledgedDuplicates,
           clientOperationId,
           expectedLeagueRevision,
           leagueId,
@@ -216,7 +171,10 @@ export default defineEventHandler(
     if (!outcome.ok) {
       return {
         ...answerResultRefusal(event, outcome.refusal, null),
-        ...(await recoveryFor(outcome.refusal, leagueId, user.id, receipt)),
+        // What the refusal decided under the lock, never a snapshot read before it: an overlapping request is
+        // exactly what invalidates a candidate list or an existing-result link taken a moment earlier
+        ...(outcome.details ?? {}),
+        ...(await currentRulesFor(outcome.refusal, leagueId, user.id)),
       };
     }
 

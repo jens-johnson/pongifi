@@ -38,10 +38,47 @@ export interface IOperationKey {
 }
 
 /**
+ * A match this entry looks like, as the warning names it
+ * @public
+ */
+export interface IDuplicateCandidate {
+  /* The match, which is the page it is read at */
+  canonicalMatchId: string;
+
+  /* When it says it was played */
+  playedAt: string;
+}
+
+/**
+ * What a refusal hands back so the page can act on it.
+ *
+ * Read under the same lock the refusal was decided under, never from a snapshot taken before it: a candidate list or
+ * an existing-result link that was true a moment earlier is exactly the thing an overlapping request invalidates
+ * @public
+ */
+export interface IResultRefusalDetails {
+  /* The matches this entry looks like, when that is why it was refused */
+  candidates?: IDuplicateCandidate[];
+
+  /* The result this operation already wrote, when a reused key arrived with a different body */
+  existing?: { canonicalMatchId: string };
+}
+
+/**
  * A request to record a result
  * @public
  */
 export interface IRecordResultRequest extends IOperationKey {
+  /**
+   * The matches this person was shown as probable duplicates and chose to record anyway. Beside the result rather
+   * than in it: an acknowledgement is not part of what was recorded, so pressing "record it anyway" can never read
+   * as a different body under the same operation id.
+   *
+   * Absent means none were shown and none are excused, which is the direction that warns rather than the one that
+   * writes: a caller that forgets this field gets the warning, not a second match
+   */
+  acknowledgedDuplicates?: string[];
+
   /* The configuration revision the form was drawn at; a league that has moved since refuses rather than adapts */
   expectedLeagueRevision: number;
 
@@ -224,5 +261,5 @@ export interface IGenerationSnapshot {
  * @public
  */
 export type TResultOutcome =
-  | { ok: false; refusal: ResultRefusal; state: ResultState | null }
+  | { details?: IResultRefusalDetails; ok: false; refusal: ResultRefusal; state: ResultState | null }
   | { current: IResultCurrentState; ok: true; replayed: boolean; value: IResultEffect };

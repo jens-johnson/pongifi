@@ -21,7 +21,13 @@ import { randomUUID } from 'node:crypto';
 import { ResultAction, ResultState } from '#shared/results';
 import { withInteractiveTransaction } from '#utils/db/transaction';
 import type { IResultEffect, TResultOutcome } from '#utils/results';
-import { answerResult, redactNotesForAccount, ResultRefusalError, settleDueResults } from '#utils/results';
+import {
+  answerResult,
+  recordResult,
+  redactNotesForAccount,
+  ResultRefusalError,
+  settleDueResults,
+} from '#utils/results';
 
 import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
 import { amendOrThrow, disputeOne, doubles, ok, recordOrThrow, singles } from './scenarios-schema';
@@ -484,6 +490,230 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
           state!.reason === 'CONFIRMED_BY_ALL' &&
           state!.settled === 2 &&
           settledCount === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a retry that overlaps its original is answered from the receipt, never warned about its own match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const operation: string = randomUUID();
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const request = {
+        acknowledgedDuplicates: [],
+        clientOperationId: operation,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: entry,
+      };
+      const holding = latch();
+      const release = latch();
+
+      // The original, held open after it has written its match and its receipt but before it commits
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, request);
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // The retry, which finds no receipt yet and queues on the league's row. Everything it needs to answer
+      // correctly — the receipt, and the match the original is about to commit — appears while it waits
+      const retrying: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) => recordResult(transaction, ids.Ada!, request),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      release.open();
+
+      const first: TResultOutcome = await original;
+      const second: TResultOutcome = await retrying;
+      const [counts] = await read<{ receipts: number; revisions: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "result_operations") AS receipts`,
+      );
+      const replayed: boolean = second.ok && second.replayed;
+      const warned: string = second.ok ? 'none' : second.refusal;
+
+      return {
+        detail: `the retry answered ${replayed ? 'from the receipt' : `with "${warned}"`}; ${counts!.revisions} revision and ${counts!.receipts} receipt`,
+        passed: first.ok && replayed && counts!.revisions === 1 && counts!.receipts === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a changed body under a key whose original was still in flight conflicts on the key, not on a duplicate',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const operation: string = randomUUID();
+      const request = {
+        acknowledgedDuplicates: [],
+        clientOperationId: operation,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+      };
+      const holding = latch();
+      const release = latch();
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, request);
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      const edited: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, { ...request, submission: singles([[11, 6]], [ids.Ada!, ids.Ben!]) }),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      release.open();
+      await original;
+
+      const outcome: TResultOutcome = await edited;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const named: string | undefined = outcome.ok ? undefined : outcome.details?.existing?.canonicalMatchId;
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `refused as "${refusal}"${named ? ', naming the result that exists' : ''}; ${counts!.revisions} revision`,
+        passed: refusal === 'OPERATION_BODY_CHANGED' && named !== undefined && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a fresh operation that overlaps an identical entry is warned rather than writing a second match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const holding = latch();
+      const release = latch();
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, {
+            acknowledgedDuplicates: [],
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          });
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // A different operation id: this is somebody entering the same match again, not a retry of the first
+      const second: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgedDuplicates: [],
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      release.open();
+      await original;
+
+      const outcome: TResultOutcome = await second;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const candidates: number = outcome.ok ? 0 : (outcome.details?.candidates?.length ?? 0);
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `refused as "${refusal}" naming ${candidates} candidate; ${counts!.revisions} revision written`,
+        passed: refusal === 'PROBABLE_DUPLICATE' && candidates === 1 && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'the same entry recorded again with that candidate acknowledged writes the second match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const first: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+      const warned: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgedDuplicates: [],
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+      const recorded: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgedDuplicates: [first.canonicalMatchId],
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `the warning named the first match and the acknowledged entry recorded; ${counts!.revisions} revisions`,
+        passed: !warned.ok && warned.refusal === 'PROBABLE_DUPLICATE' && recorded.ok && counts!.revisions === 2,
       };
     },
   },

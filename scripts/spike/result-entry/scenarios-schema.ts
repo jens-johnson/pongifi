@@ -124,6 +124,45 @@ export async function disputeOne(
 }
 
 /**
+ * How far apart two fixture matches are placed, which is past the thirty minutes a probable duplicate is judged
+ * within
+ * @internal
+ * @constant
+ */
+const DISTINCT_MATCH_MS: number = 45 * 60 * 1000;
+
+/**
+ * How many of those places there are before they are reused, which keeps every fixture inside a default entry window
+ * @internal
+ * @constant
+ */
+const DISTINCT_MATCH_SLOTS: number = 24;
+
+/**
+ * How many fixture matches have been built, so each one takes its own place in the day
+ * @internal
+ */
+let played: number = 0;
+
+/**
+ * A play time far enough from the last fixture's to be a different match.
+ *
+ * Every fixture match would otherwise be entered at the same instant with the same seats and the same scores, which
+ * is the definition of a probable duplicate — the rule would refuse the second one, correctly, and the case would be
+ * about the fixture rather than about what it meant to test. Each call steps back past the duplicate window
+ * @internal
+ * @function
+ * @returns The play time, as an instant
+ */
+function nextPlayedAt(): string {
+  played += 1;
+
+  // Wrapped, so a long run of fixtures cannot walk the play time out of the entry window the league allows and turn
+  // every later case into a refusal about its own fixture
+  return new Date(Date.now() - HOUR_MS - (played % DISTINCT_MATCH_SLOTS) * DISTINCT_MATCH_MS).toISOString();
+}
+
+/**
  * A singles submission from per-game scores.
  *
  * The default play time is an hour ago rather than a fixed instant, because the service refuses an entry older than the
@@ -148,7 +187,7 @@ export function singles(
       b,
       gameNumber: index + 1,
     })),
-    playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
+    playedAt: nextPlayedAt(),
     retiredSeat: null,
     seats: [
       {

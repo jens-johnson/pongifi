@@ -38,30 +38,12 @@ const recordResultMock: Mock<(...args: unknown[]) => Promise<TResultOutcome>> = 
 );
 
 /**
- * The duplicate read double
- * @internal
- * @constant
- */
-const readDuplicateCandidatesMock: Mock<
-  (...args: unknown[]) => Promise<{ canonicalMatchId: string; playedAt: string }[]>
-> = vi.hoisted((): Mock<(...args: unknown[]) => Promise<{ canonicalMatchId: string; playedAt: string }[]>> => vi.fn());
-
-/**
  * The membership check double: what role, if any, this account holds in the league
  * @internal
  * @constant
  */
 const readViewerRoleMock: Mock<(...args: unknown[]) => Promise<string | null>> = vi.hoisted(
   (): Mock<(...args: unknown[]) => Promise<string | null>> => vi.fn(),
-);
-
-/**
- * The receipt double: what this operation had already written, when it had
- * @internal
- * @constant
- */
-const readOperationReceiptMock: Mock<(...args: unknown[]) => Promise<{ canonicalMatchId: string } | null>> = vi.hoisted(
-  (): Mock<(...args: unknown[]) => Promise<{ canonicalMatchId: string } | null>> => vi.fn(),
 );
 
 /**
@@ -90,11 +72,7 @@ vi.mock(
     recordResult: recordResultMock,
   }),
 );
-vi.mock('#utils/results/queries', (): Record<string, unknown> => ({
-  readDuplicateCandidates: readDuplicateCandidatesMock,
-  readFormContext: readFormContextMock,
-  readOperationReceipt: readOperationReceiptMock,
-}));
+vi.mock('#utils/results/queries', (): Record<string, unknown> => ({ readFormContext: readFormContextMock }));
 vi.mock('#utils/leagues', (): Record<string, unknown> => ({ readViewerRole: readViewerRoleMock }));
 vi.mock(
   '#utils/db',
@@ -253,22 +231,14 @@ describe(getTestFileName(import.meta.url), (): void => {
     vi.clearAllMocks();
     // Reset rather than clear: a `mockResolvedValueOnce` a case queued and never consumed — the duplicate read in a
     // case that takes the receipt path, for one — would otherwise be waiting for whichever case ran next
-    for (const double of [
-      readDuplicateCandidatesMock,
-      readFormContextMock,
-      readOperationReceiptMock,
-      readViewerRoleMock,
-      recordResultMock,
-    ]) {
+    for (const double of [readFormContextMock, readViewerRoleMock, recordResultMock]) {
       double.mockReset();
     }
 
     useResultTransactionMock.mockImplementation(
       async (run: (transaction: unknown) => Promise<unknown>): Promise<unknown> => run({}),
     );
-    readDuplicateCandidatesMock.mockResolvedValue([]);
     readViewerRoleMock.mockResolvedValue('PLAYER');
-    readOperationReceiptMock.mockResolvedValue(null);
     readFormContextMock.mockResolvedValue({ configurationRevision: 4 });
     body = {
       clientOperationId: OPERATION,
@@ -277,18 +247,19 @@ describe(getTestFileName(import.meta.url), (): void => {
     };
   });
 
-  it('records the result inside one transaction and answers with what it did', async (): Promise<void> => {
+  it('records the result inside one transaction, and hands the service what was acknowledged', async (): Promise<void> => {
     recordResultMock.mockResolvedValueOnce(RECORDED);
+    body = { ...body, acknowledgedDuplicates: [EXISTING_MATCH] };
 
     const answer = (await handler(buildEvent())) as { effect: unknown; replayed: boolean };
 
     expect(answer.effect).toEqual(RECORDED.ok && RECORDED.value);
-    expect(answer.replayed).toBe(false);
     expect(useResultTransactionMock).toHaveBeenCalledTimes(1);
     expect(recordResultMock).toHaveBeenCalledWith(
       expect.anything(),
       USER_ID,
       expect.objectContaining({
+        acknowledgedDuplicates: [EXISTING_MATCH],
         clientOperationId: OPERATION,
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
@@ -306,104 +277,36 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(setResponseStatusMock).toHaveBeenCalledWith(expect.anything(), 200);
   });
 
-  it('warns about a match that looks like this one, and records nothing yet', async (): Promise<void> => {
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT },
-    ]);
-
-    const answer = (await handler(buildEvent())) as { candidates: unknown[]; refusal: string };
-
-    expect(answer.refusal).toBe('PROBABLE_DUPLICATE');
-    expect(answer.candidates).toHaveLength(1);
-    expect(recordResultMock).not.toHaveBeenCalled();
-    expect(setResponseStatusMock).toHaveBeenCalledWith(expect.anything(), 409);
-  });
-
-  it('records it once the person has seen that candidate and pressed again', async (): Promise<void> => {
-    // Two identical honest matches in one evening stay possible; the warning is answered, not enforced
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT },
-    ]);
-    recordResultMock.mockResolvedValueOnce(RECORDED);
-    body = { ...body, acknowledgedDuplicates: [EXISTING_MATCH] };
-
-    await handler(buildEvent());
-
-    expect(recordResultMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('warns again when a different match appears after the acknowledgement', async (): Promise<void> => {
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT },
-      { canonicalMatchId: LEAGUE_ID, playedAt: '2026-09-20T12:20:00.000Z' },
-    ]);
-    body = { ...body, acknowledgedDuplicates: [EXISTING_MATCH] };
-
-    const answer = (await handler(buildEvent())) as { candidates: { canonicalMatchId: string }[] };
-
-    expect(answer.candidates.map((candidate): string => candidate.canonicalMatchId)).toEqual([LEAGUE_ID]);
-    expect(recordResultMock).not.toHaveBeenCalled();
-  });
-
-  it('tells a non-member nothing about the league, not even that a match matches', async (): Promise<void> => {
-    // The disclosure this ordering exists to prevent: a match id and a play time are private league data, and a
-    // session is authentication rather than access
-    readViewerRoleMock.mockResolvedValueOnce(null);
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT },
-    ]);
-
-    await expect(handler(buildEvent())).rejects.toMatchObject({ statusCode: 404 } satisfies Partial<H3Error>);
-    expect(readDuplicateCandidatesMock).not.toHaveBeenCalled();
-    expect(recordResultMock).not.toHaveBeenCalled();
-  });
-
-  it('answers a member removed since the page loaded with the same not-found', async (): Promise<void> => {
+  it('tells a non-member nothing about the league, and never reaches the service', async (): Promise<void> => {
+    // A session is authentication, not access: nothing about this league may be read before membership is
     readViewerRoleMock.mockResolvedValueOnce(null);
 
     await expect(handler(buildEvent())).rejects.toMatchObject({ statusCode: 404 } satisfies Partial<H3Error>);
+    expect(recordResultMock).not.toHaveBeenCalled();
   });
 
-  it('passes the asking account to the duplicate read rather than trusting a check above it', async (): Promise<void> => {
-    recordResultMock.mockResolvedValueOnce(RECORDED);
+  it('passes a probable duplicate through as the service decided it, candidates and all', async (): Promise<void> => {
+    // Decided under the league's lock rather than read before it, so the list travels with the refusal
+    recordResultMock.mockResolvedValueOnce({
+      details: { candidates: [{ canonicalMatchId: EXISTING_MATCH, playedAt: CANDIDATE_PLAYED_AT }] },
+      ok: false,
+      refusal: ResultRefusal.PROBABLE_DUPLICATE,
+      state: null,
+    } as TResultOutcome);
 
-    await handler(buildEvent());
+    const answer = (await handler(buildEvent())) as {
+      candidates: { canonicalMatchId: string }[];
+      refusal: string;
+      statusCode: number;
+    };
 
-    expect(readDuplicateCandidatesMock).toHaveBeenCalledWith(LEAGUE_ID, USER_ID, expect.anything());
-  });
-
-  it('replays a committed save whose response was lost, rather than warning about its own match', async (): Promise<void> => {
-    // The retry now matches the match it created a moment ago. Warning here would hide the receipt the service is
-    // holding for exactly this case, and tell the person their own committed result looks like a duplicate of itself
-    readOperationReceiptMock.mockResolvedValueOnce({ canonicalMatchId: EXISTING_MATCH });
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: EXISTING_MATCH, playedAt: '2026-09-20T12:00:00.000Z' },
-    ]);
-    recordResultMock.mockResolvedValueOnce({ ...RECORDED, replayed: true } as TResultOutcome);
-
-    const answer = (await handler(buildEvent())) as { replayed: boolean };
-
-    expect(answer.replayed).toBe(true);
-    expect(readDuplicateCandidatesMock).not.toHaveBeenCalled();
-    expect(setResponseStatusMock).toHaveBeenCalledWith(expect.anything(), 200);
-  });
-
-  it('replays a committed save even when a different match has since appeared', async (): Promise<void> => {
-    readOperationReceiptMock.mockResolvedValueOnce({ canonicalMatchId: EXISTING_MATCH });
-    readDuplicateCandidatesMock.mockResolvedValueOnce([
-      { canonicalMatchId: LEAGUE_ID, playedAt: '2026-09-20T12:05:00.000Z' },
-    ]);
-    recordResultMock.mockResolvedValueOnce({ ...RECORDED, replayed: true } as TResultOutcome);
-
-    await handler(buildEvent());
-
-    expect(recordResultMock).toHaveBeenCalledTimes(1);
-    expect(readDuplicateCandidatesMock).not.toHaveBeenCalled();
+    expect(answer).toMatchObject({ refusal: ResultRefusal.PROBABLE_DUPLICATE, statusCode: 409 });
+    expect(answer.candidates.map((candidate): string => candidate.canonicalMatchId)).toEqual([EXISTING_MATCH]);
   });
 
   it('hands a stale-rules conflict the rules that are current now', async (): Promise<void> => {
-    // A name tells the page which conflict it met; it does not tell it what to draw. Without the current rules the
-    // caption cannot redraw, and Save cannot be re-enabled against something the person has actually seen
+    // The one recovery the service cannot supply: it refused because the league moved, and the page needs where the
+    // league is now to redraw its caption before Save is offered again
     recordResultMock.mockResolvedValueOnce({
       ok: false,
       refusal: ResultRefusal.STALE_LEAGUE_RULES,
@@ -416,9 +319,9 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(answer.context.configurationRevision).toBe(4);
   });
 
-  it('hands a changed-body conflict the result that already exists', async (): Promise<void> => {
-    readOperationReceiptMock.mockResolvedValueOnce({ canonicalMatchId: EXISTING_MATCH });
+  it('carries the existing result the service named, rather than one it looked up itself', async (): Promise<void> => {
     recordResultMock.mockResolvedValueOnce({
+      details: { existing: { canonicalMatchId: EXISTING_MATCH } },
       ok: false,
       refusal: ResultRefusal.OPERATION_BODY_CHANGED,
       state: null,
@@ -429,16 +332,20 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(answer.existing.canonicalMatchId).toBe(EXISTING_MATCH);
   });
 
-  it('answers a stale league revision as a conflict the page can tell from the others', async (): Promise<void> => {
+  it('says nothing about an existing result the service did not name', async (): Promise<void> => {
+    // A receipt is keyed by actor, operation and id, so the match behind it can belong to a league this request
+    // never mentioned. When the service withholds it, the route must not invent one
     recordResultMock.mockResolvedValueOnce({
+      details: {},
       ok: false,
-      refusal: ResultRefusal.STALE_LEAGUE_RULES,
+      refusal: ResultRefusal.OPERATION_BODY_CHANGED,
       state: null,
     } as TResultOutcome);
 
-    const answer = (await handler(buildEvent())) as { refusal: string; statusCode: number };
+    const answer = (await handler(buildEvent())) as Record<string, unknown>;
 
-    expect(answer).toMatchObject({ refusal: ResultRefusal.STALE_LEAGUE_RULES, statusCode: 409 });
+    expect(answer.existing).toBeUndefined();
+    expect(answer.refusal).toBe(ResultRefusal.OPERATION_BODY_CHANGED);
   });
 
   it('throws a refusal that leaves the page nothing to redraw to', async (): Promise<void> => {
@@ -459,7 +366,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     };
 
     await expect(handler(buildEvent())).rejects.toMatchObject({ statusCode: 400 } satisfies Partial<H3Error>);
-    expect(readDuplicateCandidatesMock).not.toHaveBeenCalled();
+    expect(readViewerRoleMock).not.toHaveBeenCalled();
   });
 
   it('answers a malformed league id as the shared not-found, without a query', async (): Promise<void> => {

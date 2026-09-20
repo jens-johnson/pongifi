@@ -47,3 +47,11 @@ export const ADMIN_ROLES: readonly string[] = ['COMMISSIONER', 'MANAGER'];
  * @constant
  */
 export const SETTLEMENT_BATCH: number = 50;
+
+/**
+ * The most candidate matches one duplicate check reads under the league's lock. A warning is worth a bounded look
+ * and nothing more: a busy evening must not turn one save into an unbounded scan inside a transaction
+ * @public
+ * @constant
+ */
+export const DUPLICATE_SCAN_LIMIT: number = 50;

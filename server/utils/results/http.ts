@@ -38,6 +38,7 @@ export const RESULT_REFUSAL_STATUS: Record<ResultRefusal, number> = {
   [ResultRefusal.INVALID_SUBMISSION]: 422,
   [ResultRefusal.NOT_FOUND]: 404,
   [ResultRefusal.OPERATION_BODY_CHANGED]: 409,
+  [ResultRefusal.PROBABLE_DUPLICATE]: 409,
   [ResultRefusal.SEAT_NOT_A_MEMBER]: 422,
   [ResultRefusal.STALE_LEAGUE_RULES]: 409,
   [ResultRefusal.STALE_RESULT]: 409,
@@ -59,6 +60,7 @@ export const RESULT_REFUSAL_MESSAGE: Record<ResultRefusal, string> = {
   [ResultRefusal.NOT_FOUND]: 'That result could not be found.',
   [ResultRefusal.OPERATION_BODY_CHANGED]:
     'This entry was already recorded with different details. Open the result that exists, or record a new one.',
+  [ResultRefusal.PROBABLE_DUPLICATE]: 'This looks like a result already recorded.',
   [ResultRefusal.SEAT_NOT_A_MEMBER]: 'Everyone in the match has to be an active member of this league.',
   [ResultRefusal.STALE_LEAGUE_RULES]:
     'This league’s rules changed while you were entering the result. Check the scores against the rules above.',

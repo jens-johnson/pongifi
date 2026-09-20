@@ -31,6 +31,7 @@ import type {
 import {
   canonicalize,
   CONFIRMATION_RULE_VERSION,
+  DUPLICATE_WINDOW_MINUTES,
   findNoteProblem,
   findSubmissionProblem,
   normalizeSubmission,
@@ -47,15 +48,17 @@ import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import type { IInteractiveTransaction } from '../db/types';
-import { ADMIN_ROLES, HOUR_MS, SETTLEMENT_BATCH } from './constants';
+import { ADMIN_ROLES, DUPLICATE_SCAN_LIMIT, HOUR_MS, SETTLEMENT_BATCH } from './constants';
 import { ResultRefusal } from './enums';
 import { publishRatingGeneration } from './replay';
 import type {
   IAmendResultRequest,
   IAnswerResultRequest,
+  IDuplicateCandidate,
   IRecordResultRequest,
   IResultCurrentState,
   IResultEffect,
+  IResultRefusalDetails,
   IRevisionRow,
   IRevisionSide,
   TResultOutcome,
@@ -67,17 +70,17 @@ import type {
  * @public
  */
 export class ResultRefusalError extends Error {
-  /** The refusal */
-  public readonly refusal: ResultRefusal;
-
   /**
-   * Builds a refusal carrying the code a handler answers with
-   * @param refusal - Why the write was refused
+   * Builds the refusal, with whatever the page needs to act on it
+   * @param refusal - Which refusal this is
+   * @param details - What the page needs to draw, for the refusals that leave it something to do
    */
-  public constructor(refusal: ResultRefusal) {
+  public constructor(
+    public readonly refusal: ResultRefusal,
+    public readonly details: IResultRefusalDetails | undefined = undefined,
+  ) {
     super(refusal);
     this.name = 'ResultRefusalError';
-    this.refusal = refusal;
   }
 }
 
@@ -487,11 +490,18 @@ async function writeEvents(
  */
 async function replayOperation(
   transaction: IInteractiveTransaction,
-  key: { actorId: string; clientOperationId: string; operation: string; requestDigest: string },
+  key: { actorId: string; clientOperationId: string; leagueId?: string; operation: string; requestDigest: string },
 ): Promise<IResultEffect | null> {
-  const { rows } = await transaction.query<{ effect: IResultEffect; request_digest: string }>(
-    `SELECT "effect", "request_digest" FROM "result_operations"
-     WHERE "actor_user_id" = $1 AND "operation" = $2::result_operation AND "client_operation_id" = $3`,
+  const { rows } = await transaction.query<{
+    canonical_match_id: string;
+    effect: IResultEffect;
+    league_id: string;
+    request_digest: string;
+  }>(
+    `SELECT o."effect", o."request_digest", o."canonical_match_id", r."league_id"
+     FROM "result_operations" o
+     JOIN "result_revisions" r ON r."id" = o."result_revision_id"
+     WHERE o."actor_user_id" = $1 AND o."operation" = $2::result_operation AND o."client_operation_id" = $3`,
     [key.actorId, key.operation, key.clientOperationId],
   );
   const row = rows[0];
@@ -501,7 +511,14 @@ async function replayOperation(
   }
 
   if (row.request_digest !== key.requestDigest) {
-    throw new ResultRefusalError(ResultRefusal.OPERATION_BODY_CHANGED);
+    // Named only when it belongs to the league this request is about. A receipt is keyed by actor, operation and id,
+    // so the match behind it can be in a league this request never mentioned and this caller may not read
+    throw new ResultRefusalError(
+      ResultRefusal.OPERATION_BODY_CHANGED,
+      key.leagueId !== undefined && row.league_id === key.leagueId
+        ? { existing: { canonicalMatchId: row.canonical_match_id } }
+        : {},
+    );
   }
 
   return row.effect;
@@ -834,6 +851,95 @@ async function applyRecordResult(
 }
 
 /**
+ * The identity two entries of the same match would share.
+ *
+ * Seats by account and side, scores in order, the format and how it ended. Guest labels are deliberately absent: a
+ * guest is a label on one match rather than a person, so two matches against "Dave" are not evidence of one match
+ * entered twice (page spec, Probable Duplicates)
+ * @internal
+ * @function
+ * @param submission - The normalized submission
+ * @returns A string two duplicate entries agree on
+ */
+function duplicateKey(submission: IResultSubmission): string {
+  // A stored row whose submission is not shaped like one cannot be a duplicate of anything, and must not be able to
+  // stop somebody recording a result: a fixture row and a row from before this shape existed both land here
+  if (!Array.isArray(submission?.seats) || !Array.isArray(submission?.games)) {
+    return '';
+  }
+
+  const seats: string[] = submission.seats
+    .map((seat): string => `${seat.seat}:${seat.userId ?? 'guest'}`)
+    .sort((left: string, right: string): number => left.localeCompare(right));
+  const games: string[] = [...submission.games]
+    .sort((left, right): number => left.gameNumber - right.gameNumber)
+    .map((game): string => `${game.gameNumber}:${game.a}-${game.b}`);
+
+  return canonicalize({
+    ending: submission.ending,
+    games,
+    gameType: submission.gameType,
+    seats,
+  });
+}
+
+/**
+ * Refuses an entry that looks like a match this league already has, unless the person has seen it and said so.
+ *
+ * Under the league's lock, and after the receipt check, which is the only place this question has a stable answer.
+ * Asked before the lock it races every request that is mid-flight: a retry whose original had not committed yet
+ * finds no receipt, waits, and then meets the match its own original wrote — and warns the person that their own
+ * committed result looks like a duplicate of itself.
+ *
+ * Advisory rather than final: the refusal names what was found, and the same request carrying those ids records
+ * anyway, so two identical honest matches in one evening stay possible
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction, already holding the league's lock
+ * @param request - The league, and the matches the person has already been shown
+ * @param submission - The normalized submission
+ * @throws ResultRefusalError when a match this entry looks like has not been acknowledged
+ */
+async function refuseUnacknowledgedDuplicate(
+  transaction: IInteractiveTransaction,
+  request: IRecordResultRequest,
+  submission: IResultSubmission,
+): Promise<void> {
+  const played: number = Date.parse(submission.playedAt);
+
+  if (!Number.isFinite(played)) {
+    return;
+  }
+
+  const window: number = DUPLICATE_WINDOW_MINUTES * 60 * 1000;
+  const { rows } = await transaction.query<{
+    canonical_match_id: string;
+    played_at: Date;
+    submission: IResultSubmission;
+  }>(
+    `SELECT "canonical_match_id", "played_at", "submission" FROM "result_revisions"
+     WHERE "league_id" = $1 AND "is_current" AND "state" <> 'VOID'
+       AND "played_at" BETWEEN $2 AND $3
+     ORDER BY "played_at" DESC
+     LIMIT ${DUPLICATE_SCAN_LIMIT}`,
+    [request.leagueId, new Date(played - window), new Date(played + window)],
+  );
+  const key: string = duplicateKey(submission);
+  const candidates: IDuplicateCandidate[] = rows
+    .filter((row): boolean => key !== '' && duplicateKey(row.submission) === key)
+    .filter((row): boolean => !(request.acknowledgedDuplicates ?? []).includes(row.canonical_match_id))
+    .map((row): IDuplicateCandidate => ({
+      canonicalMatchId: row.canonical_match_id,
+      playedAt: row.played_at.toISOString(),
+    }));
+
+  if (candidates.length > 0) {
+    throw new ResultRefusalError(ResultRefusal.PROBABLE_DUPLICATE, { candidates });
+  }
+}
+
+/**
  * Records a result, answering with what it did or why it was refused.
  *
  * The order is fixed and every step of it is load-bearing. The league's lock first, so two results in one league are
@@ -877,6 +983,7 @@ export async function recordResult(
     const receipt: IResultEffect | null = await replayOperation(transaction, {
       actorId,
       clientOperationId: request.clientOperationId,
+      leagueId: request.leagueId,
       operation: 'CREATE',
       requestDigest,
     });
@@ -884,6 +991,10 @@ export async function recordResult(
     if (receipt) {
       return await replayed(transaction, receipt);
     }
+
+    // Only a fresh operation reaches the warning, and it reaches it here rather than before the lock: a retry whose
+    // original was still in flight would otherwise be warned about the match its own original had just written
+    await refuseUnacknowledgedDuplicate(transaction, request, submission);
 
     return await refusable(
       transaction,
@@ -900,6 +1011,7 @@ export async function recordResult(
   } catch (error: unknown) {
     if (error instanceof ResultRefusalError) {
       return {
+        details: error.details,
         ok: false,
         refusal: error.refusal,
         state: null,
@@ -1559,6 +1671,7 @@ export async function answerResult(
   } catch (error: unknown) {
     if (error instanceof ResultRefusalError) {
       return {
+        details: error.details,
         ok: false,
         refusal: error.refusal,
         state: null,
@@ -1847,6 +1960,7 @@ export async function amendResult(
   } catch (error: unknown) {
     if (error instanceof ResultRefusalError) {
       return {
+        details: error.details,
         ok: false,
         refusal: error.refusal,
         state: null,

@@ -40,6 +40,13 @@ export enum ResultRefusal {
   /* The league, the match or the caller's membership is not available to them */
   NOT_FOUND = 'NOT_FOUND',
 
+  /**
+   * A match already in this league that this entry looks like. Advisory rather than final: the person is shown what
+   * was found and records anyway if they mean to, which is what keeps two identical honest matches in one evening
+   * possible
+   */
+  PROBABLE_DUPLICATE = 'PROBABLE_DUPLICATE',
+
   /* The same operation key arrived carrying a different body */
   OPERATION_BODY_CHANGED = 'OPERATION_BODY_CHANGED',
 
