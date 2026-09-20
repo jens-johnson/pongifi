@@ -27,6 +27,18 @@ import { Seat } from './enums';
 export const RECONSTRUCTION_VERSION: number = 1;
 
 /**
+ * The confirmation protocol a new revision is born under.
+ *
+ * Version 1 asked every registered participant but the recorder for a vote. Version 2 asks each side for one answer:
+ * the recorder's own side is answered by the submission, a guests-only side is exempt, and every other side needs one
+ * confirmation from the accounts frozen as eligible for it. Revisions keep the version they were born under, because
+ * shrinking an old revision's outstanding requirements would rewrite what its audit says it was waiting for
+ * @public
+ * @constant
+ */
+export const CONFIRMATION_RULE_VERSION: number = 2;
+
+/**
  * The version of the frozen administration policy's shape. Stored beside the snapshot so a later field can be added
  * without guessing what an older row meant
  * @public

@@ -47,10 +47,3 @@ export const ADMIN_ROLES: readonly string[] = ['COMMISSIONER', 'MANAGER'];
  * @constant
  */
 export const SETTLEMENT_BATCH: number = 50;
-
-/**
- * The role that may void a result. Deleting a result is a commissioner's, per the pitch's authority table (V.I)
- * @public
- * @constant
- */
-export const VOID_ROLE: string = 'COMMISSIONER';

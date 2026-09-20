@@ -43,6 +43,13 @@
       "when": 1789868000193,
       "tag": "0005_rating_audit_and_void_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789924571497,
+      "tag": "0006_per_side_confirmation",
+      "breakpoints": true
     }
   ]
 }

@@ -115,8 +115,8 @@ Eleven tables model accounts, leagues, games, and ratings. The decisions worth k
   result, with exactly one current per match enforced by a partial unique index, and names the game rows it includes
   through `result_revision_games`. A correction writes new game rows and stamps the old ones `superseded_at`; the old
   rows stay readable and addressable, so **every count, list and ladder predicate must filter `superseded_at IS
-NULL`** or it will count a score nobody stands behind twice. A commissioner's void is a different thing entirely and
-  never sets that stamp: it moves the game rows to `VOID`, which every eligibility predicate already excludes.
+NULL`** or it will count a score nobody stands behind twice. An administrator's void is a different thing entirely
+  and never sets that stamp: it moves the game rows to `VOID`, which every eligibility predicate already excludes.
 - **A match is addressed by revision one's first game id** (`result_revisions.canonical_match_id`), for the whole of
   its life. That is the page's URL; game two of a best-of-three, and every game row a superseded revision left
   behind, resolve to it after the same membership check the page itself makes. The service mints the game ids so the

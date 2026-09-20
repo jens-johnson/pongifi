@@ -17,8 +17,14 @@
  */
 
 import type { RatingScope } from '#shared/domain';
-import type { IResultPolicySnapshot, IResultSubmission, ResultAction, ResultState } from '#shared/results';
-import type { IMatchSettings } from '#shared/rules-engine';
+import type {
+  IResultPolicySnapshot,
+  IResultSubmission,
+  ResultAction,
+  ResultState,
+  SideSatisfaction,
+} from '#shared/results';
+import type { IMatchSettings, Side } from '#shared/rules-engine';
 
 import type { ResultRefusal } from './enums';
 
@@ -120,12 +126,29 @@ export interface IResultCurrentState {
 }
 
 /**
+ * One side of a match as the revision that created it saw it: who may answer for that side, and how it is satisfied
+ * @public
+ */
+export interface IRevisionSide {
+  /* The registered accounts seated on this side, frozen as the revision was born */
+  confirmers: string[];
+
+  /* How the side stands: answered by the submission, by a confirmation, exempt, or still owed */
+  satisfiedBy: SideSatisfaction;
+
+  /* Which side of the table it is */
+  side: Side;
+}
+
+/**
  * A revision as the transaction reads it back under its locks
  * @public
  */
 export interface IRevisionRow {
   canonicalMatchId: string;
   confirmationDeadline: Date | null;
+  /* The confirmation protocol this revision was born under; an older revision is still judged by its own */
+  confirmationRuleVersion: number;
   gameType: string;
   id: string;
   leagueId: string;

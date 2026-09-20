@@ -24,11 +24,13 @@ import type {
   IReconstructedGame,
   IReconstruction,
   IResultPolicySnapshot,
+  IResultSeat,
   IResultSubmission,
   SubmissionProblem,
 } from '#shared/results';
 import {
   canonicalize,
+  CONFIRMATION_RULE_VERSION,
   findNoteProblem,
   findSubmissionProblem,
   normalizeSubmission,
@@ -37,13 +39,15 @@ import {
   ResultSettleReason,
   ResultState,
   Seat,
+  sideOfSeat,
+  SideSatisfaction,
 } from '#shared/results';
 import type { IMatchSettings } from '#shared/rules-engine';
 import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import type { IInteractiveTransaction } from '../db/types';
-import { ADMIN_ROLES, HOUR_MS, SETTLEMENT_BATCH, VOID_ROLE } from './constants';
+import { ADMIN_ROLES, HOUR_MS, SETTLEMENT_BATCH } from './constants';
 import { ResultRefusal } from './enums';
 import { publishRatingGeneration } from './replay';
 import type {
@@ -53,6 +57,7 @@ import type {
   IResultCurrentState,
   IResultEffect,
   IRevisionRow,
+  IRevisionSide,
   TResultOutcome,
 } from './types';
 
@@ -254,20 +259,55 @@ function toPolicySnapshot(settings: TLeagueSettings): IResultPolicySnapshot {
 }
 
 /**
- * The registered participants a revision has to hear from, frozen as it is born.
+ * The sides a revision is born with, and what each of them still owes.
  *
- * Guests cannot answer, and the recorder does not confirm their own entry. A recorder who was not playing excludes
- * nobody, so a commissioner recording somebody else's match still needs both of them
+ * Revision 2.3 of the contract asks each side for one answer instead of asking each person for a vote. The side the
+ * recorder plays on is answered by the submission itself; a side with nobody registered on it has nobody to ask; every
+ * other side owes one confirmation from any of the accounts seated on it, which are frozen here as that side's
+ * eligible set. A recorder who was not playing satisfies no side, so every registered side still owes an answer.
+ *
+ * The eligible set is stored for every side with registered accounts, including the recorder's own. It records who
+ * could have answered for that side, which is what makes a later read of the revision legible; it grants nothing,
+ * because a side already satisfied is not waiting for anybody
  * @internal
  * @function
  * @param submission - The normalized submission
  * @param recorderId - Who recorded it
- * @returns The account ids that have to answer
+ * @returns One entry per side the match has
  */
-function requiredAnswerers(submission: IResultSubmission, recorderId: string): string[] {
-  return submission.seats
-    .map((seat): string | null => seat.userId)
-    .filter((userId): userId is string => userId !== null && userId !== recorderId);
+function sidesOfSubmission(submission: IResultSubmission, recorderId: string): IRevisionSide[] {
+  const recorderSeat: IResultSeat | undefined = submission.seats.find((seat): boolean => seat.userId === recorderId);
+  const recorderSide: Side | null = recorderSeat ? sideOfSeat(recorderSeat.seat) : null;
+  const sides: Side[] = [...new Set(submission.seats.map((seat): Side => sideOfSeat(seat.seat)))];
+
+  return sides.map((side: Side): IRevisionSide => {
+    const confirmers: string[] = submission.seats
+      .filter((seat): boolean => sideOfSeat(seat.seat) === side)
+      .map((seat): string | null => seat.userId)
+      .filter((userId): userId is string => userId !== null);
+
+    return {
+      confirmers,
+      satisfiedBy: satisfactionOf(side === recorderSide, confirmers.length),
+      side,
+    };
+  });
+}
+
+/**
+ * What a side's answer is before anybody acts on it
+ * @internal
+ * @function
+ * @param isRecorders - Whether the recorder plays on this side
+ * @param registered - How many registered accounts are seated on it
+ * @returns How the side stands at birth
+ */
+function satisfactionOf(isRecorders: boolean, registered: number): SideSatisfaction {
+  if (isRecorders) {
+    return SideSatisfaction.SUBMISSION;
+  }
+
+  return registered === 0 ? SideSatisfaction.EXEMPT : SideSatisfaction.PENDING;
 }
 
 /**
@@ -504,22 +544,24 @@ async function writeReceipt(
 }
 
 /**
- * Whether a revision is settled the moment it is born, and why.
+ * The state a revision is born in, and why it settled if it did.
  *
- * The same question is asked of a correction as of a first entry: a league with confirmation off, or a match whose
- * only registered player is the person recording it, has nobody left to ask and settles at once. Anything else starts
- * a fresh pending revision with its own deadline
+ * A league with confirmation off settles everything at birth, and so does a match no side is waiting on: the
+ * recorder's own side answered by entering the score, and any other side with nobody registered on it has nobody to
+ * ask. Neither case invents a vote — the settlement reason says no confirmation was needed
  * @internal
  * @function
  * @param policy - The frozen policy
- * @param answerers - The registered participants who would have to answer
- * @returns The state to be born in, with the deadline or the settlement reason
+ * @param sides - The revision's sides
+ * @returns The birth state and the reason it settled, if it did
  */
 function birthState(
   policy: IResultPolicySnapshot,
-  answerers: string[],
+  sides: IRevisionSide[],
 ): { reason: ResultSettleReason | null; state: ResultState } {
-  if (!policy.requireConfirmation || answerers.length === 0) {
+  const awaited: boolean = sides.some((side): boolean => side.satisfiedBy === SideSatisfaction.PENDING);
+
+  if (!policy.requireConfirmation || !awaited) {
     return { reason: ResultSettleReason.NO_CONFIRMATION_NEEDED, state: ResultState.CONFIRMED };
   }
 
@@ -706,8 +748,8 @@ async function applyRecordResult(
 
   const settings: IMatchSettings = toMatchSettings(context.league.settings, submission.gameType);
   const reconstruction: IReconstruction = reconstruct(settings, submission);
-  const answerers: string[] = requiredAnswerers(submission, actorId);
-  const birth = birthState(policy, answerers);
+  const sides: IRevisionSide[] = sidesOfSubmission(submission, actorId);
+  const birth = birthState(policy, sides);
   const playedAt: Date = new Date(submission.playedAt);
   const revisionId: string = randomUUID();
 
@@ -725,9 +767,10 @@ async function applyRecordResult(
     `INSERT INTO "result_revisions" ("id", "canonical_match_id", "league_id", "revision", "is_current", "state",
        "game_type", "settings_snapshot", "policy_snapshot", "league_configuration_revision", "submission",
        "reconstruction", "reconstruction_version", "submission_digest", "played_at", "original_played_at",
-       "submitted_at", "confirmation_deadline", "settled_at", "settled_reason", "recorded_by")
+       "submitted_at", "confirmation_deadline", "settled_at", "settled_reason", "recorded_by",
+       "confirmation_rule_version")
      VALUES ($1, $2, $3, 1, true, $4::result_state, $5::game_type, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15,
-       $16, $17::result_settle_reason, $18)`,
+       $16, $17::result_settle_reason, $18, $19)`,
     [
       revisionId,
       canonicalMatchId,
@@ -747,10 +790,11 @@ async function applyRecordResult(
       settledAt,
       birth.reason,
       actorId,
+      CONFIRMATION_RULE_VERSION,
     ],
   );
 
-  await writeAnswerers(transaction, revisionId, answerers);
+  await writeSides(transaction, revisionId, sides);
   await writeProjection(transaction, {
     confirmationStatus:
       birth.state === ResultState.CONFIRMED ? ConfirmationStatus.CONFIRMED : ConfirmationStatus.UNCONFIRMED,
@@ -884,24 +928,33 @@ function reconstruct(settings: IMatchSettings, submission: IResultSubmission): I
 }
 
 /**
- * Freezes the accounts a revision is waiting on
+ * Freezes a revision's sides and the accounts eligible to answer for each of them
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
  * @param revisionId - The revision
- * @param answerers - The accounts
+ * @param sides - The sides the submission produced
  */
-async function writeAnswerers(
+async function writeSides(
   transaction: IInteractiveTransaction,
   revisionId: string,
-  answerers: string[],
+  sides: IRevisionSide[],
 ): Promise<void> {
-  for (const userId of answerers) {
+  for (const side of sides) {
     await transaction.query(
-      `INSERT INTO "result_required_answerers" ("result_revision_id", "user_id") VALUES ($1, $2)`,
-      [revisionId, userId],
+      `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by")
+       VALUES ($1, $2::participant_side, $3::side_satisfaction)`,
+      [revisionId, side.side, side.satisfiedBy],
     );
+
+    for (const userId of side.confirmers) {
+      await transaction.query(
+        `INSERT INTO "result_side_confirmers" ("result_revision_id", "side", "user_id")
+         VALUES ($1, $2::participant_side, $3)`,
+        [revisionId, side.side, userId],
+      );
+    }
   }
 }
 
@@ -953,6 +1006,7 @@ async function lockCurrentRevision(
   const { rows } = await transaction.query<{
     canonical_match_id: string;
     confirmation_deadline: Date | null;
+    confirmation_rule_version: number;
     game_type: string;
     id: string;
     league_id: string;
@@ -966,7 +1020,8 @@ async function lockCurrentRevision(
     submission: IResultSubmission;
   }>(
     `SELECT "id", "canonical_match_id", "league_id", "revision", "state", "game_type", "settings_snapshot",
-       "policy_snapshot", "submission", "played_at", "original_played_at", "confirmation_deadline", "recorded_by"
+       "policy_snapshot", "submission", "played_at", "original_played_at", "confirmation_deadline", "recorded_by",
+       "confirmation_rule_version"
      FROM "result_revisions" WHERE "canonical_match_id" = $1 AND "is_current" FOR UPDATE`,
     [canonicalMatchId],
   );
@@ -979,6 +1034,7 @@ async function lockCurrentRevision(
   return {
     canonicalMatchId: row.canonical_match_id,
     confirmationDeadline: row.confirmation_deadline,
+    confirmationRuleVersion: row.confirmation_rule_version,
     gameType: row.game_type,
     id: row.id,
     leagueId: row.league_id,
@@ -1098,57 +1154,159 @@ export async function settleDueResults(
 }
 
 /**
- * Whether every account a revision was waiting on has now confirmed it
+ * Whether a revision has every answer it was waiting for.
+ *
+ * Version 2 counts sides: a revision is answered when no side of it is still pending, whether the sides were
+ * satisfied by the submission, by an exemption or by somebody confirming. Version 1 revisions predate that protocol
+ * and are still judged by the per-person set they were born with, because shrinking an old revision's requirements
+ * would rewrite what its audit says it was waiting for
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
- * @param revisionId - The revision
- * @returns Whether the revision has its full set
+ * @param revision - The locked current revision
+ * @returns Whether nothing is outstanding
  */
-async function isFullyConfirmed(transaction: IInteractiveTransaction, revisionId: string): Promise<boolean> {
-  const { rows } = await transaction.query<{ outstanding: number }>(
-    `SELECT count(*)::int AS "outstanding"
-     FROM "result_required_answerers" r
-     WHERE r."result_revision_id" = $1
-       AND NOT EXISTS (
-         SELECT 1 FROM "result_actions" a
-         WHERE a."result_revision_id" = r."result_revision_id"
-           AND a."actor_user_id" = r."user_id"
-           AND a."type" = 'CONFIRM'
-       )`,
-    [revisionId],
+async function isFullyConfirmed(transaction: IInteractiveTransaction, revision: IRevisionRow): Promise<boolean> {
+  if (revision.confirmationRuleVersion < CONFIRMATION_RULE_VERSION) {
+    const { rows } = await transaction.query<{ outstanding: number }>(
+      `SELECT count(*)::int AS "outstanding"
+       FROM "result_required_answerers" r
+       WHERE r."result_revision_id" = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM "result_actions" a
+           WHERE a."result_revision_id" = r."result_revision_id"
+             AND a."actor_user_id" = r."user_id"
+             AND a."type" = 'CONFIRM'
+         )`,
+      [revision.id],
+    );
+
+    return (rows[0]?.outstanding ?? 1) === 0;
+  }
+
+  const { rows } = await transaction.query<{ pending: number }>(
+    `SELECT count(*)::int AS "pending" FROM "result_revision_sides"
+     WHERE "result_revision_id" = $1 AND "satisfied_by" = 'PENDING'`,
+    [revision.id],
   );
 
-  return (rows[0]?.outstanding ?? 1) === 0;
+  return (rows[0]?.pending ?? 1) === 0;
 }
 
 /**
- * Whether an account is one of the registered participants this revision is waiting on.
+ * Records one side's answer against the account that gave it.
  *
- * Confirming is that set's alone: it was frozen when the revision was born, it excludes guests and the recorder, and a
- * confirmation from anybody else would be a vote nobody asked for on a result that does not need it. Disputing is
- * wider by design, and checked separately
+ * The side is found from the account rather than named by the request: an account is seated once, so the side it may
+ * answer for is the one it is eligible on and that is still pending. Nothing happens on a version 1 revision, whose
+ * confirmations live in the action rows alone.
+ *
+ * The update is guarded by the pending state rather than by the check that came before it, so two confirmations
+ * arriving for the same side serialize on the row: the second updates nothing and the first one's confirmer stands
  * @internal
  * @async
  * @function
  * @param transaction - The open transaction
- * @param revisionId - The revision
+ * @param revision - The locked current revision
+ * @param userId - Who confirmed
+ * @param now - The database clock, sampled under the locks
+ */
+async function confirmSide(
+  transaction: IInteractiveTransaction,
+  revision: IRevisionRow,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  if (revision.confirmationRuleVersion < CONFIRMATION_RULE_VERSION) {
+    return;
+  }
+
+  await transaction.query(
+    `UPDATE "result_revision_sides" s
+     SET "satisfied_by" = 'CONFIRMATION', "confirmed_by_user_id" = $2, "confirmed_at" = $3
+     WHERE s."result_revision_id" = $1 AND s."satisfied_by" = 'PENDING'
+       AND EXISTS (
+         SELECT 1 FROM "result_side_confirmers" c
+         WHERE c."result_revision_id" = s."result_revision_id" AND c."side" = s."side" AND c."user_id" = $2
+       )`,
+    [revision.id, userId, now],
+  );
+}
+
+/**
+ * Whether the side this account could answer for has already been answered by somebody.
+ *
+ * The teammate's harmless retry: their side is settled as far as the protocol is concerned, so pressing Confirm adds
+ * nothing and must not be an error either. It is only harmless while the revision still stands as they saw it, which
+ * is the caller's check rather than this one's
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param revision - The locked current revision
+ * @param userId - The account
+ * @returns Whether a side they are eligible for already carries somebody's confirmation
+ */
+async function sideAlreadyAnswered(
+  transaction: IInteractiveTransaction,
+  revision: IRevisionRow,
+  userId: string,
+): Promise<boolean> {
+  if (revision.confirmationRuleVersion < CONFIRMATION_RULE_VERSION) {
+    return false;
+  }
+
+  const { rows } = await transaction.query<{ answered: number }>(
+    `SELECT count(*)::int AS "answered"
+     FROM "result_revision_sides" s
+     JOIN "result_side_confirmers" c
+       ON c."result_revision_id" = s."result_revision_id" AND c."side" = s."side"
+     WHERE s."result_revision_id" = $1 AND c."user_id" = $2 AND s."satisfied_by" = 'CONFIRMATION'`,
+    [revision.id, userId],
+  );
+
+  return (rows[0]?.answered ?? 0) > 0;
+}
+
+/**
+ * Whether this revision is waiting on an answer this account may give.
+ *
+ * Confirming belongs to the frozen set alone. Under version 2 that set is per side: the account has to be eligible on
+ * a side that still owes an answer, which excludes the recorder's own side and a side nobody registered plays on.
+ * Version 1 revisions ask the per-person set they were born with. Disputing is wider by design and checked separately
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param revision - The locked current revision
  * @param userId - The account
  * @returns Whether the revision is waiting on them
  */
-async function isRequiredAnswerer(
+async function mayConfirm(
   transaction: IInteractiveTransaction,
-  revisionId: string,
+  revision: IRevisionRow,
   userId: string,
 ): Promise<boolean> {
-  const { rows } = await transaction.query<{ required: number }>(
-    `SELECT count(*)::int AS "required" FROM "result_required_answerers"
-     WHERE "result_revision_id" = $1 AND "user_id" = $2`,
-    [revisionId, userId],
+  if (revision.confirmationRuleVersion < CONFIRMATION_RULE_VERSION) {
+    const { rows } = await transaction.query<{ required: number }>(
+      `SELECT count(*)::int AS "required" FROM "result_required_answerers"
+       WHERE "result_revision_id" = $1 AND "user_id" = $2`,
+      [revision.id, userId],
+    );
+
+    return (rows[0]?.required ?? 0) > 0;
+  }
+
+  const { rows } = await transaction.query<{ waiting: number }>(
+    `SELECT count(*)::int AS "waiting"
+     FROM "result_revision_sides" s
+     JOIN "result_side_confirmers" c
+       ON c."result_revision_id" = s."result_revision_id" AND c."side" = s."side"
+     WHERE s."result_revision_id" = $1 AND c."user_id" = $2 AND s."satisfied_by" = 'PENDING'`,
+    [revision.id, userId],
   );
 
-  return (rows[0]?.required ?? 0) > 0;
+  return (rows[0]?.waiting ?? 0) > 0;
 }
 
 /**
@@ -1414,9 +1572,9 @@ export async function answerResult(
 /**
  * Refuses an action the actor may not take, or the revision is no longer in a state to receive.
  *
- * Void is the commissioner's alone and applies in every state but the one it would repeat. Everything else needs a
- * revision still being answered: a confirmation from a participant the revision is actually waiting on, and a dispute
- * from anybody seated in it, the recorder and an earlier confirmer included
+ * Void belongs to a league's administrators and applies in every state but the one it would repeat. Everything else
+ * needs a revision still being answered: a confirmation from a participant the revision is actually waiting on, and a
+ * dispute from anybody seated in it, the recorder and an earlier confirmer included
  * @internal
  * @async
  * @function
@@ -1435,11 +1593,14 @@ async function refuseUnlessActionable(
   role: string,
 ): Promise<void> {
   if (action === ResultAction.VOID) {
-    if (role !== VOID_ROLE) {
+    // Jens's 2026-09-20 override widened this from the commissioner alone: a current manager may void too, including
+    // a result a commissioner already accepted. Losing the role removes the authority in the same breath, because the
+    // role read here is the one the actor holds now rather than the one they held when the result was recorded
+    if (!ADMIN_ROLES.includes(role)) {
       throw new ResultRefusalError(ResultRefusal.FORBIDDEN);
     }
 
-    // A commissioner may void a result in any state but the one it is already in; a second void is not a second ruling
+    // A result may be voided in any state but the one it is already in; a second void is not a second ruling
     if (current.state === ResultState.VOID) {
       throw new ResultRefusalError(ResultRefusal.STALE_RESULT);
     }
@@ -1453,7 +1614,7 @@ async function refuseUnlessActionable(
 
   const permitted: boolean =
     action === ResultAction.CONFIRM
-      ? await isRequiredAnswerer(transaction, current.id, actorId)
+      ? await mayConfirm(transaction, current, actorId)
       : current.submission.seats.some((seat): boolean => seat.userId === actorId);
 
   if (!permitted) {
@@ -1488,7 +1649,11 @@ async function applyAnswerAction(
 
   // Before the state check, because a confirmation that already settled the match would otherwise be told its own
   // effect was too late. Pressing Confirm twice is a 200 with where the match stands, never a second vote
-  if (request.action === ResultAction.CONFIRM && (await hasConfirmed(transaction, current.id, actorId))) {
+  if (
+    request.action === ResultAction.CONFIRM &&
+    ((await hasConfirmed(transaction, current.id, actorId)) ||
+      (await sideAlreadyAnswered(transaction, current, actorId)))
+  ) {
     return await acknowledgeConfirmation(transaction, actorId, request, current, context.requestDigest);
   }
 
@@ -1515,7 +1680,7 @@ async function applyAnswerAction(
     });
   }
 
-  const state: ResultState = await applyAnswer(transaction, current, request.action, context.now);
+  const state: ResultState = await applyAnswer(transaction, current, actorId, request.action, context.now);
   const effect: IResultEffect = {
     canonicalMatchId: current.canonicalMatchId,
     revision: current.revision,
@@ -1544,6 +1709,7 @@ async function applyAnswerAction(
  * @function
  * @param transaction - The open transaction
  * @param revision - The locked current revision
+ * @param actorId - Who acted, which is whose confirmation a side records
  * @param action - The action just recorded
  * @param now - The database clock, sampled under the locks
  * @returns The revision's state afterwards
@@ -1551,6 +1717,7 @@ async function applyAnswerAction(
 async function applyAnswer(
   transaction: IInteractiveTransaction,
   revision: IRevisionRow,
+  actorId: string,
   action: ResultAction,
   now: Date,
 ): Promise<ResultState> {
@@ -1582,7 +1749,9 @@ async function applyAnswer(
     return ResultState.DISPUTED;
   }
 
-  if (!(await isFullyConfirmed(transaction, revision.id))) {
+  await confirmSide(transaction, revision, actorId, now);
+
+  if (!(await isFullyConfirmed(transaction, revision))) {
     return ResultState.UNCONFIRMED;
   }
 
@@ -1744,8 +1913,8 @@ async function applyAmendment(
   }
 
   const reconstruction: IReconstruction = reconstruct(current.settingsSnapshot, submission);
-  const answerers: string[] = requiredAnswerers(submission, actorId);
-  const birth = birthState(current.policySnapshot, answerers);
+  const sides: IRevisionSide[] = sidesOfSubmission(submission, actorId);
+  const birth = birthState(current.policySnapshot, sides);
   const playedAt: Date = new Date(submission.playedAt);
   const revisionId: string = randomUUID();
   const gameIds: string[] = reconstruction.games.map((): string => randomUUID());
@@ -1764,9 +1933,10 @@ async function applyAmendment(
     `INSERT INTO "result_revisions" ("id", "canonical_match_id", "league_id", "revision", "is_current", "state",
        "game_type", "settings_snapshot", "policy_snapshot", "league_configuration_revision", "submission",
        "reconstruction", "reconstruction_version", "submission_digest", "played_at", "original_played_at",
-       "submitted_at", "confirmation_deadline", "settled_at", "settled_reason", "recorded_by", "edited_by")
+       "submitted_at", "confirmation_deadline", "settled_at", "settled_reason", "recorded_by", "edited_by",
+       "confirmation_rule_version")
      VALUES ($1, $2, $3, $4, true, $5::result_state, $6::game_type, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-       $17, $18, $19::result_settle_reason, $20, $21)`,
+       $17, $18, $19::result_settle_reason, $20, $21, $22)`,
     [
       revisionId,
       current.canonicalMatchId,
@@ -1789,10 +1959,11 @@ async function applyAmendment(
       birth.reason,
       current.recordedBy,
       actorId,
+      CONFIRMATION_RULE_VERSION,
     ],
   );
 
-  await writeAnswerers(transaction, revisionId, answerers);
+  await writeSides(transaction, revisionId, sides);
   await writeProjection(transaction, {
     confirmationStatus:
       birth.state === ResultState.CONFIRMED ? ConfirmationStatus.CONFIRMED : ConfirmationStatus.UNCONFIRMED,

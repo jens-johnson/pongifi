@@ -47,6 +47,30 @@ export enum ResultEnding {
 }
 
 /**
+ * How one side of a match came to be satisfied, recorded rather than inferred.
+ *
+ * Revision 2.3 of the contract asks each side for one answer instead of asking each person: the side that entered the
+ * score answered by entering it, a side with nobody registered on it has nobody to ask, and every other side needs one
+ * explicit confirmation from one of the accounts frozen as eligible for it. Keeping the three apart is what stops a
+ * reader turning a recorder's submission or a guest side's exemption into a vote somebody cast
+ * @public
+ * @enum
+ */
+export enum SideSatisfaction {
+  /* One eligible account on this side confirmed it; the row carries which account and when */
+  CONFIRMATION = 'CONFIRMATION',
+
+  /* Nobody registered plays on this side, so there is nobody to ask */
+  EXEMPT = 'EXEMPT',
+
+  /* This side still owes an answer */
+  PENDING = 'PENDING',
+
+  /* The recorder plays on this side, and entering the score is this side's answer */
+  SUBMISSION = 'SUBMISSION',
+}
+
+/**
  * The reason a revision reached a settled state, recorded so an audit never has to infer it from timestamps
  * @public
  * @enum

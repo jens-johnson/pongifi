@@ -21,8 +21,10 @@ import { EventType, GameType, MatchStatus, RallyWinner, replayMatch, Side } from
 import { defineSymbol } from '#shared/utils/symbol';
 
 import { DOUBLES_SEATS, MAX_ENTERED_SCORE, MAX_GAME_ROWS, RECONSTRUCTION_VERSION, SINGLES_SEATS } from './constants';
-import { ResultEnding, Seat } from './enums';
+import type { Seat } from './enums';
+import { ResultEnding } from './enums';
 import type { IReconstructedGame, IReconstruction, IResultSubmission } from './types';
+import { sideOfSeat } from './utils';
 
 /**
  * The seats each format fills, in the canonical interleaved order the engine reads sides from
@@ -138,18 +140,6 @@ function endsGameAt(settings: IMatchSettings, scores: TRunningScores, target: TR
  */
 function toRallyWinner(servingSide: Side, scoringSide: Side): RallyWinner {
   return servingSide === scoringSide ? RallyWinner.SERVING : RallyWinner.RECEIVING;
-}
-
-/**
- * Reads which side a seat plays on. The interleaved rotation makes this parity, and the engine derives sides the same
- * way from the opening rotation
- * @internal
- * @function
- * @param seat - The seat
- * @returns Its side
- */
-function sideOfSeat(seat: Seat): Side {
-  return seat === Seat.A1 || seat === Seat.A2 ? Side.A : Side.B;
 }
 
 /**

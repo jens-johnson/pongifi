@@ -167,6 +167,47 @@ export function singles(
 }
 
 /**
+ * A doubles submission seating A1, A2, B1 and B2 in that order
+ * @internal
+ * @function
+ * @param seats - The four accounts
+ * @param overrides - What the case changes
+ * @returns The submission
+ */
+export function doubles(
+  seats: [string, string, string, string],
+  overrides: Partial<IResultSubmission> = {},
+): IResultSubmission {
+  return {
+    ...singles([[11, 4]], [seats[0], seats[2]]),
+    gameType: GameType.DOUBLES,
+    seats: [
+      {
+        guestName: null,
+        seat: Seat.A1,
+        userId: seats[0],
+      },
+      {
+        guestName: null,
+        seat: Seat.A2,
+        userId: seats[1],
+      },
+      {
+        guestName: null,
+        seat: Seat.B1,
+        userId: seats[2],
+      },
+      {
+        guestName: null,
+        seat: Seat.B2,
+        userId: seats[3],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/**
  * Every schema and reconstruction check
  * @public
  * @constant

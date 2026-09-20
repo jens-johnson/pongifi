@@ -21,10 +21,10 @@ import { randomUUID } from 'node:crypto';
 import { ResultAction, ResultState } from '#shared/results';
 import { withInteractiveTransaction } from '#utils/db/transaction';
 import type { IResultEffect, TResultOutcome } from '#utils/results';
-import { answerResult, ResultRefusalError, settleDueResults } from '#utils/results';
+import { answerResult, redactNotesForAccount, ResultRefusalError, settleDueResults } from '#utils/results';
 
 import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
-import { amendOrThrow, disputeOne, ok, recordOrThrow, singles } from './scenarios-schema';
+import { amendOrThrow, disputeOne, doubles, ok, recordOrThrow, singles } from './scenarios-schema';
 import type { IScenario, IScenarioResult } from './types';
 import { PACKAGES } from './types';
 
@@ -100,6 +100,29 @@ export async function recordOne(
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
         submission: singles(rows, seats),
+      }),
+    { connectionString },
+  );
+}
+
+/**
+ * Confirms a revision on its own connection, throwing on a refusal
+ * @internal
+ * @function
+ * @param connectionString - The disposable database
+ * @param actor - Who is confirming
+ * @param canonicalMatchId - The match
+ * @returns What the write did
+ */
+function confirmOne(connectionString: string, actor: string, canonicalMatchId: string): Promise<IResultEffect> {
+  return withInteractiveTransaction(
+    (transaction) =>
+      answerOrThrow(transaction, actor, {
+        action: ResultAction.CONFIRM,
+        canonicalMatchId,
+        clientOperationId: randomUUID(),
+        expectedRevision: 1,
+        note: null,
       }),
     { connectionString },
   );
@@ -437,17 +460,7 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
         { connectionString },
       );
       const confirm = (actor: string): Promise<IResultEffect> =>
-        withInteractiveTransaction(
-          (transaction) =>
-            answerOrThrow(transaction, actor, {
-              action: ResultAction.CONFIRM,
-              canonicalMatchId: created.canonicalMatchId,
-              clientOperationId: randomUUID(),
-              expectedRevision: 1,
-              note: null,
-            }),
-          { connectionString },
-        );
+        confirmOne(connectionString, actor, created.canonicalMatchId);
       const both: PromiseSettledResult<IResultEffect>[] = await Promise.allSettled([
         confirm(ids.Ben!),
         confirm(ids.Cara!),
@@ -471,6 +484,53 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
           state!.reason === 'CONFIRMED_BY_ALL' &&
           state!.settled === 2 &&
           settledCount === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'two members of one side confirming at once answer for it once, and the first of them is the confirmer',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+      /* Ada is not seated, so both sides owe an answer and neither confirmation below can settle the match alone */
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!]),
+          }),
+        { connectionString },
+      );
+      const confirm = (actor: string): Promise<IResultEffect> =>
+        confirmOne(connectionString, actor, created.canonicalMatchId);
+
+      await Promise.allSettled([confirm(ids.Ben!), confirm(ids.Cara!)]);
+
+      const [state] = await read<{
+        confirmed_by: string | null;
+        confirmations: number;
+        pending: number;
+        state: string;
+      }>(
+        connectionString,
+        `SELECT r."state",
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'CONFIRM') AS confirmations,
+                (SELECT count(*)::int FROM "result_revision_sides"
+                 WHERE "result_revision_id" = r."id" AND "satisfied_by" = 'PENDING') AS pending,
+                (SELECT "confirmed_by_user_id" FROM "result_revision_sides"
+                 WHERE "result_revision_id" = r."id" AND "side" = 'A') AS confirmed_by
+         FROM "result_revisions" r WHERE r."id" = $1`,
+        [created.resultRevisionId],
+      );
+      const attributed: boolean = state!.confirmed_by === ids.Ben! || state!.confirmed_by === ids.Cara!;
+
+      return {
+        detail: `${state!.confirmations} confirmation recorded for the side, attributed to ${attributed ? 'one of the two accounts that raced' : 'nobody the race involved'}; ${state!.pending} side still pending and the result is ${state!.state}`,
+        passed: state!.confirmations === 1 && attributed && state!.pending === 1 && state!.state === 'UNCONFIRMED',
       };
     },
   },
@@ -972,6 +1032,148 @@ export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
       return {
         detail: `${state!.settled} results settled, ${state!.pointers} active pointer, ${state!.active_rows} snapshots in the active ladder`,
         passed: state!.settled === 2 && state!.pointers === 1 && state!.active_rows === 4,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'an amendment holds the accounts it names, so a deletion’s redaction waits rather than erasing under it',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const match: string = (await recordOne(connectionString, ids.Ada!, [ids.Ada!, ids.Ben!])).canonicalMatchId;
+
+      await withInteractiveTransaction(
+        (transaction) =>
+          answerOrThrow(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'Ben says the third game finished 11-9',
+          }),
+        { connectionString },
+      );
+
+      const holding = latch();
+      const release = latch();
+      const amending: Promise<IResultEffect> = withInteractiveTransaction(
+        async (transaction) => {
+          const effect: IResultEffect = await amendOrThrow(transaction, ids.Ada!, {
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            submission: singles([[11, 9]], [ids.Ada!, ids.Ben!]),
+          });
+
+          holding.open();
+          await release.reached;
+
+          return effect;
+        },
+        { connectionString },
+      );
+
+      await holding.reached;
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction((transaction) => redactNotesForAccount(transaction, ids.Ben!), {
+          connectionString,
+          limits: { lockTimeoutMs: 700 },
+        });
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      release.open();
+      await amending;
+
+      const redacted: number = await withInteractiveTransaction(
+        (transaction) => redactNotesForAccount(transaction, ids.Ben!),
+        { connectionString },
+      );
+      const [notes] = await read<{ legible: number; total: number }>(
+        connectionString,
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE "body" IS NOT NULL)::int AS legible
+         FROM "result_dispute_notes"`,
+      );
+
+      return {
+        detail: `the deletion was refused with "${refusal}" while the amendment held the seat, then redacted ${redacted} of ${notes!.total} notes once it committed; ${notes!.legible} still legible`,
+        passed: refusal.includes('lock timeout') && redacted === 1 && notes!.legible === 0,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a deletion in flight holds the seat, so an amendment naming it waits and is then refused outright',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const match: string = (await recordOne(connectionString, ids.Ada!, [ids.Ada!, ids.Ben!])).canonicalMatchId;
+
+      await disputeOne(connectionString, ids.Ben!, match);
+
+      const holding = latch();
+      const release = latch();
+      const correction = (limits?: { lockTimeoutMs: number }): Promise<IResultEffect> =>
+        withInteractiveTransaction(
+          (transaction) =>
+            amendOrThrow(transaction, ids.Ada!, {
+              canonicalMatchId: match,
+              clientOperationId: randomUUID(),
+              expectedRevision: 1,
+              submission: singles([[11, 9]], [ids.Ada!, ids.Ben!]),
+            }),
+          { connectionString, limits },
+        );
+
+      /* The deletion the account-deletion path will be: the account's own row first, then everything hanging off it */
+      const deleting: Promise<void> = withInteractiveTransaction(
+        async (transaction): Promise<void> => {
+          await redactNotesForAccount(transaction, ids.Ben!);
+          await transaction.query(`UPDATE "users" SET "deleted_at" = now() WHERE "id" = $1`, [ids.Ben!]);
+          await transaction.query(`DELETE FROM "memberships" WHERE "user_id" = $1`, [ids.Ben!]);
+
+          holding.open();
+          await release.reached;
+        },
+        { connectionString },
+      );
+
+      await holding.reached;
+
+      let waited: string = 'none';
+
+      try {
+        await correction({ lockTimeoutMs: 700 });
+      } catch (error: unknown) {
+        waited = refusalOf(error);
+      }
+
+      release.open();
+      await deleting;
+
+      let afterwards: string = 'none';
+
+      try {
+        await correction();
+      } catch (error: unknown) {
+        afterwards = refusalOf(error);
+      }
+
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `the correction waited and was refused with "${waited}" while the deletion held the seat, and with "${afterwards}" once it had committed; ${counts!.revisions} revision`,
+        passed: waited.includes('lock timeout') && afterwards !== 'none' && counts!.revisions === 1,
       };
     },
   },

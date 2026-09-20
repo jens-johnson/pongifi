@@ -30,7 +30,7 @@ import {
   RatingScope,
   RecordingMode,
 } from '#shared/domain';
-import { ResultAction, ResultOperation, ResultSettleReason, ResultState } from '#shared/results';
+import { ResultAction, ResultOperation, ResultSettleReason, ResultState, SideSatisfaction } from '#shared/results';
 import { EventType, GameType, Side } from '#shared/rules-engine';
 
 /**
@@ -121,6 +121,14 @@ export const participantOutcomeEnum = pgEnum('participant_outcome', valuesOf(Par
  * @constant
  */
 export const participantSideEnum = pgEnum('participant_side', valuesOf(Side));
+
+/**
+ * How one side of a match came to be satisfied: by the submission, by an explicit confirmation, by having nobody
+ * registered to ask, or not yet at all
+ * @public
+ * @constant
+ */
+export const sideSatisfactionEnum = pgEnum('side_satisfaction', valuesOf(SideSatisfaction));
 
 /**
  * Which ladder a rating snapshot belongs to

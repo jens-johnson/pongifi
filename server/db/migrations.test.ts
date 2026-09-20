@@ -75,6 +75,13 @@ const RESULT_MIGRATION: string = '0004_result_entry_persistence.sql';
 const RATING_AUDIT_MIGRATION: string = '0005_rating_audit_and_void_reason.sql';
 
 /**
+ * The migration that adds per-side confirmation to a database that already reached 0005
+ * @internal
+ * @constant
+ */
+const PER_SIDE_MIGRATION: string = '0006_per_side_confirmation.sql';
+
+/**
  * Where the checked-in migrations live
  * @internal
  * @constant
@@ -654,6 +661,78 @@ describe(getTestFileName(import.meta.url), (): void => {
           [revision],
         ),
       ).resolves.toBeDefined();
+    });
+  });
+  describe(PER_SIDE_MIGRATION, (): void => {
+    /**
+     * The folder the deployment before this change ran, rebuilt for every case
+     * @internal
+     */
+    let previous: string;
+
+    beforeEach(async (): Promise<void> => {
+      database = new PGlite();
+      previous = await folderThrough('0005_rating_audit_and_void_reason');
+    });
+
+    it('leaves a revision that predates the change under the rule it was born with', async (): Promise<void> => {
+      // A fresh database cannot prove this: the revision has to exist before the column does, which is the case where
+      // silently adopting the new protocol would shrink what an old revision's audit says it was waiting for
+      await migrate(drizzle(database), { migrationsFolder: previous });
+
+      const owner: string = await seedLeague();
+      const before: string = await seedRevision(owner, 1, true);
+
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const { rows } = await database.query<{ version: number }>(
+        `SELECT "confirmation_rule_version" AS "version" FROM "result_revisions" WHERE "id" = $1`,
+        [before],
+      );
+
+      expect(rows[0]!.version).toBe(1);
+    });
+
+    it('refuses a side that claims a confirmation with nobody and no time on it', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+
+      await expect(
+        database.query(
+          `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by")
+           VALUES ($1, 'A', 'CONFIRMATION')`,
+          [revision],
+        ),
+      ).rejects.toThrow();
+      // And the other half of the same rule: a side nobody confirmed must not carry a confirmer
+      await expect(
+        database.query(
+          `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by", "confirmed_by_user_id",
+             "confirmed_at") VALUES ($1, 'A', 'PENDING', $2, now())`,
+          [revision, owner],
+        ),
+      ).rejects.toThrow();
+    });
+
+    it('allows one row per side of a revision and refuses a second for the same side', async (): Promise<void> => {
+      await migrate(drizzle(database), { migrationsFolder: MIGRATIONS_FOLDER });
+
+      const owner: string = await seedLeague();
+      const revision: string = await seedRevision(owner, 1, true);
+      const side = async (which: string): Promise<unknown> =>
+        database.query(
+          `INSERT INTO "result_revision_sides" ("result_revision_id", "side", "satisfied_by")
+           VALUES ($1, $2::participant_side, 'PENDING')`,
+          [revision, which],
+        );
+
+      await side('A');
+      await side('B');
+
+      await expect(side('A')).rejects.toThrow();
+      expect(owner).not.toBe(revision);
     });
   });
 });

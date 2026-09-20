@@ -28,7 +28,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { GameCreator, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IResultSubmission } from '#shared/results';
+import type { IResultSeat, IResultSubmission } from '#shared/results';
 import {
   MAX_ENTERED_SCORE,
   MAX_GUEST_NAME_LENGTH,
@@ -36,6 +36,7 @@ import {
   ResultEnding,
   ResultState,
   Seat,
+  SideSatisfaction,
 } from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
@@ -172,6 +173,14 @@ async function inTransaction<TResult>(
 }
 
 /**
+ * What every case starts from: the tables a case writes, emptied rather than rebuilt. The migrations are the slow
+ * part, and each case seeds the roster it needs
+ * @internal
+ * @constant
+ */
+const EMPTIED: string = `TRUNCATE "result_revisions", "games", "rating_generations", "memberships", "leagues", "users" CASCADE`;
+
+/**
  * Seeds a league with a roster: the first name is its commissioner, the rest are players
  * @internal
  * @async
@@ -205,6 +214,34 @@ async function seedLeague(names: string[], settings: TLeagueSettings = settingsF
     ]);
   }
 }
+
+/**
+ * Who sits in one doubles seat: an account id, or a guest nobody can answer for
+ * @internal
+ */
+type TOccupant = string | { guest: string };
+
+/**
+ * One side of a revision as the database stored it
+ * @internal
+ */
+interface ISideRow {
+  /* Who confirmed for this side, when somebody did */
+  confirmedBy: string | null;
+
+  /* The accounts frozen as eligible to answer for it */
+  confirmers: string[];
+
+  /* How it came to be satisfied, or that it is still pending */
+  satisfiedBy: string;
+}
+
+/**
+ * The seats a doubles fixture fills, in the order its occupants are given
+ * @internal
+ * @constant
+ */
+const DOUBLES_ORDER: readonly Seat[] = [Seat.A1, Seat.A2, Seat.B1, Seat.B2];
 
 /**
  * A singles submission. The play time defaults to an hour ago, inside every league fixture's entry window
@@ -244,6 +281,103 @@ function singles(
     ],
     ...overrides,
   };
+}
+
+/**
+ * Empties the database and seeds a different roster, for a case that needs more accounts than the default three
+ * @internal
+ * @async
+ * @function
+ * @param names - The display names to seed, the first as commissioner
+ */
+async function reseed(names: string[]): Promise<void> {
+  await read(EMPTIED);
+  await seedLeague(names);
+}
+
+/**
+ * A doubles submission seating A1, A2, B1 and B2 in that order.
+ *
+ * An account id seats that account; a `{ guest }` seats somebody who has none, which is how a side with nobody to
+ * answer for it is expressed
+ * @internal
+ * @function
+ * @param occupants - Who sits in each of the four seats
+ * @returns The submission
+ */
+function doubles(occupants: [TOccupant, TOccupant, TOccupant, TOccupant]): IResultSubmission {
+  return {
+    ending: ResultEnding.COMPLETED,
+    gameType: GameType.DOUBLES,
+    games: [
+      {
+        a: 11,
+        b: 4,
+        gameNumber: 1,
+      },
+    ],
+    playedAt: new Date(Date.now() - HOUR_MS).toISOString(),
+    retiredSeat: null,
+    seats: DOUBLES_ORDER.map((seat: Seat, index: number): IResultSeat => {
+      const occupant: TOccupant = occupants[index]!;
+
+      return {
+        guestName: typeof occupant === 'string' ? null : occupant.guest,
+        seat,
+        userId: typeof occupant === 'string' ? occupant : null,
+      };
+    }),
+  };
+}
+
+/**
+ * How each side of a revision stands, and who was frozen as eligible to answer for it
+ * @internal
+ * @async
+ * @function
+ * @param match - The canonical match id
+ * @param revision - Which revision to read
+ * @returns One entry per side, keyed by the side
+ */
+async function sidesOf(match: string, revision: number = 1): Promise<Record<string, ISideRow>> {
+  const rows = await read<{ confirmed_by: string | null; confirmers: string[]; satisfied_by: string; side: string }>(
+    `SELECT s."side", s."satisfied_by", s."confirmed_by_user_id" AS "confirmed_by",
+            coalesce(array_agg(c."user_id" ORDER BY c."user_id") FILTER (WHERE c."user_id" IS NOT NULL), '{}') AS "confirmers"
+     FROM "result_revision_sides" s
+     JOIN "result_revisions" r ON r."id" = s."result_revision_id"
+     LEFT JOIN "result_side_confirmers" c
+       ON c."result_revision_id" = s."result_revision_id" AND c."side" = s."side"
+     WHERE r."canonical_match_id" = $1 AND r."revision" = $2
+     GROUP BY s."side", s."satisfied_by", s."confirmed_by_user_id"`,
+    [match, revision],
+  );
+
+  return Object.fromEntries(
+    rows.map((row): [string, ISideRow] => [
+      row.side,
+      {
+        confirmedBy: row.confirmed_by,
+        confirmers: [...row.confirmers].sort(),
+        satisfiedBy: row.satisfied_by,
+      },
+    ]),
+  );
+}
+
+/**
+ * Gives an account a role in the seeded league, for the cases about who may void
+ * @internal
+ * @async
+ * @function
+ * @param userId - The account
+ * @param role - The role they now hold
+ */
+async function setRole(userId: string, role: string): Promise<void> {
+  await read(`UPDATE "memberships" SET "role" = $1 WHERE "user_id" = $2 AND "league_id" = $3`, [
+    role,
+    userId,
+    LEAGUE_ID,
+  ]);
 }
 
 /**
@@ -406,8 +540,7 @@ describe(getTestFileName(import.meta.url), (): void => {
   });
 
   beforeEach(async (): Promise<void> => {
-    // Emptied rather than rebuilt: the migrations are the slow part, and every case seeds the roster it needs
-    await read(`TRUNCATE "result_revisions", "games", "rating_generations", "memberships", "leagues", "users" CASCADE`);
+    await read(EMPTIED);
     await seedLeague(['Ada', 'Ben', 'Cara']);
   });
 
@@ -744,6 +877,91 @@ describe(getTestFileName(import.meta.url), (): void => {
         ResultRefusal.SEAT_NOT_A_MEMBER,
       ]);
     });
+
+    it('asks only the other side of a doubles result one of its players entered', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      // Ada entered it, so Ada's side answered by entering it; the other side owes one answer from either of them
+      expect(sides.A).toEqual({
+        confirmedBy: null,
+        confirmers: [ids.Ada!, ids.Ben!].sort(),
+        satisfiedBy: SideSatisfaction.SUBMISSION,
+      });
+      expect(sides.B).toEqual({
+        confirmedBy: null,
+        confirmers: [ids.Cara!, ids.Dan!].sort(),
+        satisfiedBy: SideSatisfaction.PENDING,
+      });
+    });
+
+    it('leaves both sides owing an answer when the recorder was not playing', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!])),
+      ).canonicalMatchId;
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      expect([sides.A!.satisfiedBy, sides.B!.satisfiedBy]).toEqual([
+        SideSatisfaction.PENDING,
+        SideSatisfaction.PENDING,
+      ]);
+      expect([sides.A!.confirmers, sides.B!.confirmers]).toEqual([
+        [ids.Ben!, ids.Cara!].sort(),
+        [ids.Dan!, ids.Eve!].sort(),
+      ]);
+    });
+
+    it('exempts a side with nobody registered on it, and settles when no side is left to ask', async (): Promise<void> => {
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, { guest: 'Priya' }, { guest: 'Lee' }])),
+      ).canonicalMatchId;
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+      const [revision] = await read<{ reason: string; state: string }>(
+        `SELECT "settled_reason" AS reason, "state" FROM "result_revisions" WHERE "canonical_match_id" = $1`,
+        [match],
+      );
+
+      expect([sides.A!.satisfiedBy, sides.B!.satisfiedBy]).toEqual([
+        SideSatisfaction.SUBMISSION,
+        SideSatisfaction.EXEMPT,
+      ]);
+      expect(sides.B!.confirmers).toEqual([]);
+      // Nobody was asked and nobody voted: the reason says so rather than claiming a confirmation
+      expect([revision!.state, revision!.reason]).toEqual([ResultState.CONFIRMED, 'NO_CONFIRMATION_NEEDED']);
+    });
+
+    it('still waits for the one opponent on a guest-partnered side', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, { guest: 'Lee' }, ids.Cara!, { guest: 'Priya' }])),
+      ).canonicalMatchId;
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      expect(sides.B).toEqual({
+        confirmedBy: null,
+        confirmers: [ids.Cara!],
+        satisfiedBy: SideSatisfaction.PENDING,
+      });
+    });
+
+    it('asks the opponent’s side alone on a singles result a player entered', async (): Promise<void> => {
+      const match: string = await pending(ids.Ada!, [ids.Ada!, ids.Ben!]);
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      // Unchanged by the per-side rule: singles has one account on each side, so a side is a person
+      expect([sides.A!.satisfiedBy, sides.B!.satisfiedBy]).toEqual([
+        SideSatisfaction.SUBMISSION,
+        SideSatisfaction.PENDING,
+      ]);
+      expect(sides.B!.confirmers).toEqual([ids.Ben!]);
+    });
   });
 
   describe(symbolName(answerResult), (): void => {
@@ -755,6 +973,168 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect([refusalOf(recorder), refusalOf(outsider)]).toEqual([ResultRefusal.FORBIDDEN, ResultRefusal.FORBIDDEN]);
       expect(effectOf(answerer).state).toBe(ResultState.CONFIRMED);
+    });
+
+    it('settles a seated-recorder doubles result on one opponent’s confirmation, and the teammate’s late press is a no-op', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+      const first: TResultOutcome = await answer(ids.Cara!, ResultAction.CONFIRM, match);
+      const teammate: TResultOutcome = await answer(ids.Dan!, ResultAction.CONFIRM, match);
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+      const votes = await read<{ actor: string }>(
+        `SELECT "actor_user_id" AS actor FROM "result_actions" WHERE "type" = 'CONFIRM'`,
+      );
+      const [generations] = await read<{ n: number }>(`SELECT count(*)::int AS n FROM "rating_generations"`);
+
+      expect(effectOf(first).state).toBe(ResultState.CONFIRMED);
+      // The other opponent pressing Confirm afterwards is told where the match stands, and adds nothing
+      expect(effectOf(teammate).state).toBe(ResultState.CONFIRMED);
+      expect(votes.map((vote): string => vote.actor)).toEqual([ids.Cara!]);
+      expect(sides.B!.confirmedBy).toBe(ids.Cara!);
+      // One settlement, and the one generation the recording published plus the one the settlement did
+      expect(generations!.n).toBe(2);
+    });
+
+    it('refuses a confirmation from the recorder’s own side, which the submission already answered', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+      const recorder: TResultOutcome = await answer(ids.Ada!, ResultAction.CONFIRM, match);
+      const partner: TResultOutcome = await answer(ids.Ben!, ResultAction.CONFIRM, match);
+      const partnerDisputes: TResultOutcome = await answer(ids.Ben!, ResultAction.DISPUTE, match);
+
+      expect([refusalOf(recorder), refusalOf(partner)]).toEqual([ResultRefusal.FORBIDDEN, ResultRefusal.FORBIDDEN]);
+      // Not being asked to confirm never removes a seated player's right to dispute while the result is pending
+      expect(effectOf(partnerDisputes).state).toBe(ResultState.DISPUTED);
+    });
+
+    it('needs one member of each side when the recorder was not playing, and each side only once', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!])),
+      ).canonicalMatchId;
+      const firstSide: TResultOutcome = await answer(ids.Ben!, ResultAction.CONFIRM, match);
+      const sameSideAgain: TResultOutcome = await answer(ids.Cara!, ResultAction.CONFIRM, match);
+      const finalSide: TResultOutcome = await answer(ids.Eve!, ResultAction.CONFIRM, match);
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      expect(effectOf(firstSide).state).toBe(ResultState.UNCONFIRMED);
+      // The second account on an answered side changes nothing and is told so
+      expect(effectOf(sameSideAgain).state).toBe(ResultState.UNCONFIRMED);
+      expect(effectOf(finalSide).state).toBe(ResultState.CONFIRMED);
+      expect([sides.A!.confirmedBy, sides.B!.confirmedBy]).toEqual([ids.Ben!, ids.Eve!]);
+    });
+
+    it('keeps a side owing its answer when one of its members is removed, and lets a teammate give it', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+
+      await read(`DELETE FROM "memberships" WHERE "user_id" = $1`, [ids.Cara!]);
+
+      const removed: TResultOutcome = await answer(ids.Cara!, ResultAction.CONFIRM, match);
+      const teammate: TResultOutcome = await answer(ids.Dan!, ResultAction.CONFIRM, match);
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+
+      expect(refusalOf(removed)).toBe(ResultRefusal.NOT_FOUND);
+      expect(effectOf(teammate).state).toBe(ResultState.CONFIRMED);
+      // The eligible set is frozen: losing a membership removes access, not the row
+      expect(sides.B!.confirmers).toEqual([ids.Cara!, ids.Dan!].sort());
+      expect(sides.B!.confirmedBy).toBe(ids.Dan!);
+    });
+
+    it('waits for the deadline when every account that could answer a side is gone', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+
+      await read(`DELETE FROM "memberships" WHERE "user_id" = ANY($1::uuid[])`, [[ids.Cara!, ids.Dan!]]);
+      await read(`UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute'`);
+
+      const settled: number = await inTransaction((transaction) => settleDueResults(transaction, LEAGUE_ID));
+      const sides: Record<string, ISideRow> = await sidesOf(match);
+      const [revision] = await read<{ reason: string; state: string }>(
+        `SELECT "settled_reason" AS reason, "state" FROM "result_revisions"`,
+      );
+
+      expect(settled).toBe(1);
+      expect([revision!.state, revision!.reason]).toEqual([ResultState.CONFIRMED, 'DEADLINE_PASSED']);
+      // Accepting on the deadline invents no vote: the side is still recorded as never having answered
+      expect(sides.B!.satisfiedBy).toBe(SideSatisfaction.PENDING);
+      expect(sides.B!.confirmedBy).toBeNull();
+    });
+
+    it('conflicts on a fresh confirmation from an answered side once the result is disputed', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!])),
+      ).canonicalMatchId;
+
+      effectOf(await answer(ids.Ben!, ResultAction.CONFIRM, match));
+      effectOf(await answer(ids.Dan!, ResultAction.DISPUTE, match));
+
+      const teammate: TResultOutcome = await answer(ids.Cara!, ResultAction.CONFIRM, match);
+
+      // The harmless retry is harmless only while the revision still stands as they saw it
+      expect(refusalOf(teammate)).toBe(ResultRefusal.STALE_RESULT);
+    });
+
+    it('lets a manager void a result a commissioner already accepted, and drops it from the ladder', async (): Promise<void> => {
+      await setRole(ids.Ben!, 'MANAGER');
+
+      const match: string = await pending(ids.Ada!, [ids.Ada!, ids.Cara!]);
+
+      effectOf(await answer(ids.Cara!, ResultAction.CONFIRM, match));
+
+      const voided: TResultOutcome = await answer(ids.Ben!, ResultAction.VOID, match);
+      const [games] = await read<{ live: number; voided: number }>(
+        `SELECT count(*) FILTER (WHERE "status" = 'VOID')::int AS voided,
+                count(*) FILTER (WHERE "status" <> 'VOID')::int AS live
+         FROM "games"`,
+      );
+      const [ladder] = await read<{ snapshots: number }>(
+        `SELECT count(*)::int AS snapshots
+         FROM "rating_snapshots" s
+         JOIN "active_rating_generations" a ON a."rating_generation_id" = s."rating_generation_id"`,
+      );
+
+      expect(effectOf(voided).state).toBe(ResultState.VOID);
+      expect([games!.voided, games!.live]).toEqual([1, 0]);
+      // The void republishes the ladder inside its own transaction, and the voided match rates nobody
+      expect(ladder!.snapshots).toBe(0);
+    });
+
+    it('refuses a void from a player, and from the same manager the moment the role is gone', async (): Promise<void> => {
+      await setRole(ids.Ben!, 'MANAGER');
+
+      const first: string = await pending(ids.Ada!, [ids.Ada!, ids.Cara!]);
+      const second: string = await pending(ids.Ada!, [ids.Ada!, ids.Cara!]);
+      const player: TResultOutcome = await answer(ids.Cara!, ResultAction.VOID, first);
+      const asManager: TResultOutcome = await answer(ids.Ben!, ResultAction.VOID, first);
+
+      await setRole(ids.Ben!, 'PLAYER');
+
+      // The same account and the same action, refused now only because the role that carried it is gone
+      const demoted: TResultOutcome = await answer(ids.Ben!, ResultAction.VOID, second);
+      const [survivor] = await read<{ state: string }>(
+        `SELECT "state" FROM "result_revisions" WHERE "canonical_match_id" = $1`,
+        [second],
+      );
+
+      expect([refusalOf(player), refusalOf(demoted)]).toEqual([ResultRefusal.FORBIDDEN, ResultRefusal.FORBIDDEN]);
+      expect(effectOf(asManager).state).toBe(ResultState.VOID);
+      expect(survivor!.state).toBe(ResultState.UNCONFIRMED);
     });
 
     it('lets the recorder dispute their own pending result', async (): Promise<void> => {
@@ -930,35 +1310,12 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
 
     it('answers a confirmation somebody makes twice with where the match stands, not an error', async (): Promise<void> => {
-      // Doubles, so one confirmation leaves the match waiting and the second press has somewhere to land that is not
-      // settlement: the spec's repeated confirm is a 200 with the current state while others are still outstanding
+      // A recorder who was not playing, so the other side is still owed an answer and the second press has somewhere
+      // to land that is not settlement: the spec's repeated confirm is a 200 with the current state
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+
       const match: string = effectOf(
-        await record(ids.Ada!, {
-          ...singles([[11, 4]], [ids.Ada!, ids.Ben!]),
-          gameType: GameType.DOUBLES,
-          seats: [
-            {
-              guestName: null,
-              seat: Seat.A1,
-              userId: ids.Ada!,
-            },
-            {
-              guestName: null,
-              seat: Seat.A2,
-              userId: ids.Ben!,
-            },
-            {
-              guestName: null,
-              seat: Seat.B1,
-              userId: ids.Cara!,
-            },
-            {
-              guestName: 'Priya',
-              seat: Seat.B2,
-              userId: null,
-            },
-          ],
-        }),
+        await record(ids.Ada!, doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!])),
       ).canonicalMatchId;
 
       effectOf(await answer(ids.Ben!, ResultAction.CONFIRM, match));
@@ -1026,6 +1383,34 @@ describe(getTestFileName(import.meta.url), (): void => {
   });
 
   describe(symbolName(amendResult), (): void => {
+    it('gives the corrected revision its own sides, and leaves the original’s alone', async (): Promise<void> => {
+      await reseed(['Ada', 'Ben', 'Cara', 'Dan']);
+      await setRole(ids.Cara!, 'MANAGER');
+
+      const match: string = effectOf(
+        await record(ids.Ada!, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!])),
+      ).canonicalMatchId;
+
+      effectOf(await answer(ids.Dan!, ResultAction.DISPUTE, match));
+      effectOf(
+        await amend(ids.Cara!, match, doubles([ids.Ada!, ids.Ben!, ids.Cara!, ids.Dan!]), { expectedRevision: 1 }),
+      );
+
+      const corrected: Record<string, ISideRow> = await sidesOf(match, 2);
+      const original: Record<string, ISideRow> = await sidesOf(match, 1);
+
+      // Cara corrected it from the other side, so the correction is answered by Cara's side and owed by Ada's
+      expect([corrected.A!.satisfiedBy, corrected.B!.satisfiedBy]).toEqual([
+        SideSatisfaction.PENDING,
+        SideSatisfaction.SUBMISSION,
+      ]);
+      // And the original revision still records the sides it was born with
+      expect([original.A!.satisfiedBy, original.B!.satisfiedBy]).toEqual([
+        SideSatisfaction.SUBMISSION,
+        SideSatisfaction.PENDING,
+      ]);
+    });
+
     it('refuses a correction whose play time states no instant', async (): Promise<void> => {
       const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
       const outcome: TResultOutcome = await amend(

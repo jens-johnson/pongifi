@@ -16,7 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import { GameType } from '#shared/rules-engine';
+import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import { DOUBLES_SEATS, SINGLES_SEATS } from './constants';
@@ -150,6 +150,21 @@ export function seatsForGameType(gameType: GameType): readonly Seat[] {
   }
 
   return gameType === GameType.SINGLES ? SINGLES_SEATS : [];
+}
+
+/**
+ * Reads which side a seat plays on.
+ *
+ * The interleaved rotation makes this parity, and the engine derives sides the same way from the opening rotation.
+ * It lives here rather than in either caller because both the reconstruction and the answerer set turn on it, and two
+ * copies of a seat-to-side rule is one copy too many
+ * @public
+ * @function
+ * @param seat - The seat
+ * @returns Its side
+ */
+export function sideOfSeat(seat: Seat): Side {
+  return seat === Seat.A1 || seat === Seat.A2 ? Side.A : Side.B;
 }
 
 /**
