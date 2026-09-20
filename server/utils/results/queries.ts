@@ -20,11 +20,11 @@ import { and, desc, eq, gte, isNull, lte, ne, sql } from 'drizzle-orm';
 
 import { LeagueRole, MembershipStatus, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IResultFormContext, IResultSubmission } from '#shared/results';
+import type { IResultFormContext, IResultSubmission, ResultOperation } from '#shared/results';
 import { canonicalize, DUPLICATE_WINDOW_MINUTES, ResultState } from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 
-import { leagues, memberships, resultRevisions, users } from '../../db/schema';
+import { leagues, memberships, resultOperations, resultRevisions, users } from '../../db/schema';
 import { useDatabase } from '../db';
 import { HOUR_MS } from './constants';
 
@@ -197,16 +197,22 @@ function duplicateKey(submission: IResultSubmission): string {
  * what it found, and records anyway when told to.
  *
  * Bounded by the window and by a row limit, so a league with a busy evening cannot turn one save into an unbounded
- * scan
+ * scan.
+ *
+ * Joined to the caller's own ACTIVE membership rather than trusted to a check somewhere above it. A match id and a
+ * play time are private league data, and a warning that answered before authorization would hand them to anybody who
+ * guessed a league id and posted a matching scoreline
  * @public
  * @async
  * @function
  * @param leagueId - The league the entry belongs to
+ * @param userId - The account asking, which must be an active member of that league
  * @param submission - The normalized submission
  * @returns The candidates, newest first
  */
 export async function readDuplicateCandidates(
   leagueId: string,
+  userId: string,
   submission: IResultSubmission,
 ): Promise<IDuplicateCandidate[]> {
   const played: Date = new Date(submission.playedAt);
@@ -223,6 +229,15 @@ export async function readDuplicateCandidates(
       submission: resultRevisions.submission,
     })
     .from(resultRevisions)
+    .innerJoin(
+      memberships,
+      and(
+        eq(memberships.leagueId, resultRevisions.leagueId),
+        eq(memberships.userId, userId),
+        eq(memberships.status, MembershipStatus.ACTIVE),
+      ),
+    )
+    .innerJoin(users, and(eq(users.id, memberships.userId), isNull(users.deletedAt)))
     .where(
       and(
         eq(resultRevisions.leagueId, leagueId),
@@ -242,4 +257,56 @@ export async function readDuplicateCandidates(
       canonicalMatchId: row.canonicalMatchId,
       playedAt: row.playedAt.toISOString(),
     }));
+}
+
+/**
+ * What a receipt says this account's operation already did
+ * @public
+ */
+export interface IOperationReceipt {
+  /* The match the operation touched */
+  canonicalMatchId: string;
+
+  /* The revision it produced or answered */
+  resultRevisionId: string;
+}
+
+/**
+ * The receipt this account's operation already wrote, if it wrote one.
+ *
+ * Read before the duplicate advisory, and for one reason: a save whose response was lost has already created the
+ * match, so the identical retry now matches its own creation. Warning about that would tell the person their own
+ * committed result looks like a duplicate of itself, and the receipt the service would have replayed never gets
+ * read. Only an operation with no receipt is fresh enough to warn about.
+ *
+ * Keyed by the acting account, so it can only ever find this caller's own operation
+ * @public
+ * @async
+ * @function
+ * @param userId - The account from the verified session
+ * @param operation - Which kind of write this key belongs to
+ * @param clientOperationId - The identifier the page minted before it sent anything
+ * @returns The receipt, or null when this operation has never committed
+ */
+export async function readOperationReceipt(
+  userId: string,
+  operation: ResultOperation,
+  clientOperationId: string,
+): Promise<IOperationReceipt | null> {
+  const rows = await useDatabase()
+    .select({
+      canonicalMatchId: resultOperations.canonicalMatchId,
+      resultRevisionId: resultOperations.resultRevisionId,
+    })
+    .from(resultOperations)
+    .where(
+      and(
+        eq(resultOperations.actorUserId, userId),
+        eq(resultOperations.operation, operation),
+        eq(resultOperations.clientOperationId, clientOperationId),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
 }
