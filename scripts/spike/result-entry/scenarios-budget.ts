@@ -178,7 +178,9 @@ async function measure(connectionString: string, count: number): Promise<{ detai
         clientOperationId: randomUUID(),
         expectedLeagueRevision: 1,
         leagueId: LEAGUE_ID,
-        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
+        // The default play time, an hour back, rather than this process's idea of now: a client clock that leads the
+        // database's by a fraction of a second makes "now" a play time in the future, which the service refuses
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
       }),
     { connectionString },
   );
@@ -276,12 +278,26 @@ export const BUDGET_SCENARIOS: readonly IScenario[] = [
               clientOperationId: randomUUID(),
               expectedLeagueRevision: 1,
               leagueId: LEAGUE_ID,
-              submission: singles([[11, 4]], [ids.Ada!, ids.Ben!], { playedAt: new Date().toISOString() }),
+              submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
             }),
           { connectionString },
         ).then((): { elapsed: number } => ({ elapsed: performance.now() - started }));
       };
-      const [first, second] = await Promise.all([record(), record()]);
+      // Settled rather than raced: a scenario that returned while one of its writers was still open would leave a
+      // transaction holding the league's row while the next scenario rebuilt the schema under it, and the failure
+      // reported would belong to neither of them
+      const settled: PromiseSettledResult<{ elapsed: number }>[] = await Promise.allSettled([record(), record()]);
+      const refused: PromiseSettledResult<{ elapsed: number }> | undefined = settled.find(
+        (outcome): boolean => outcome.status === 'rejected',
+      );
+
+      if (refused?.status === 'rejected') {
+        throw refused.reason;
+      }
+
+      const [first, second] = settled.map((outcome) =>
+        outcome.status === 'fulfilled' ? outcome.value : { elapsed: 0 },
+      );
       const [counts] = await read<{ generations: number; pointers: number }>(
         connectionString,
         `SELECT (SELECT count(*)::int FROM "rating_generations") AS generations,
