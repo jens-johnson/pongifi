@@ -61,6 +61,22 @@ declare global {
       /* Upstash Redis REST endpoint; named after the legacy Vercel KV variables the integration creates */
       UPSTASH_REDIS_REST_KV_REST_API_URL?: string;
 
+      /* The disposable fixture database the deployed-origin probe measures against, and never the environment's own.
+         Absent everywhere but a deployment armed for one measurement, which is what makes that route absent too */
+      SPIKE_PROBE_DATABASE_URL?: string;
+
+      /* The league the probe's prepared fixture seats its two accounts in */
+      SPIKE_PROBE_LEAGUE_ID?: string;
+
+      /* That league's configuration revision when the fixture was prepared */
+      SPIKE_PROBE_LEAGUE_REVISION?: string;
+
+      /* The bearer token the probe requires; without it the route answers as though it does not exist */
+      SPIKE_PROBE_SECRET?: string;
+
+      /* The two seated accounts of the probe's fixture, comma separated */
+      SPIKE_PROBE_SEATS?: string;
+
       /* Set by the platform when Vercel's system environment variables are exposed. The invite lookup limiter trusts
          the forwarded client address only when this is present, since off-platform that header is caller-controlled */
       VERCEL?: string;
