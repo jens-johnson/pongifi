@@ -1,0 +1,226 @@
+<script setup lang="ts">
+/* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+import type { ComputedRef, Ref } from 'vue';
+
+import type { IMatchView } from '#shared/results';
+import { MAX_NOTE_LENGTH, ResultAction } from '#shared/results';
+import type { IResultActionState } from '~/utils/results/actions';
+import {
+  ACTION_LABEL,
+  actionsBlocked,
+  awaitingCheck,
+  failAction,
+  idleAction,
+  ResultActionPhase,
+  startAction,
+  VOID_QUESTION,
+} from '~/utils/results/actions';
+
+import type { IResultsMatchActionsEmits, IResultsMatchActionsProps } from './types';
+
+/* ─── Props ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The league and the match, with this viewer's own permissions on it
+ * @internal
+ * @constant
+ */
+const props: Readonly<IResultsMatchActionsProps> = defineProps<IResultsMatchActionsProps>();
+
+/**
+ * Raised whenever the page should read the match again: after an answer landed, and after one was refused because
+ * the result had already moved
+ * @internal
+ * @constant
+ */
+const emit = defineEmits<IResultsMatchActionsEmits>();
+
+/* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What the pressed action is doing, and what it is still holding
+ * @internal
+ * @constant
+ */
+const action: Ref<IResultActionState> = ref<IResultActionState>(idleAction());
+
+/**
+ * The words a dispute carries, kept across a refused attempt so nobody retypes them
+ * @internal
+ * @constant
+ */
+const note: Ref<string> = ref<string>('');
+
+/**
+ * Whether the void dialog is open. Void is the one action with no undo, so it is asked before it is sent
+ * @internal
+ * @constant
+ */
+const voidAsking: Ref<boolean> = ref<boolean>(false);
+
+/* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Whether every action is unavailable because one of them is unresolved
+ * @internal
+ * @constant
+ */
+const blocked: ComputedRef<boolean> = computed((): boolean => actionsBlocked(action.value));
+
+/**
+ * Whether this viewer holds any action at all
+ * @internal
+ * @constant
+ */
+const hasActions: ComputedRef<boolean> = computed(
+  (): boolean => props.match.viewer.mayConfirm || props.match.viewer.mayDispute || props.match.viewer.mayVoid,
+);
+
+/* ─── Methods ────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Sends an answer, or asks first when it is the one that cannot be undone.
+ *
+ * Pressing the same button again after an uncertain outcome re-sends the same operation id rather than a new one, so
+ * the server answers from the first attempt's receipt instead of acting twice — which is what makes Check safe
+ * @internal
+ * @async
+ * @function
+ * @param which - What was pressed
+ */
+async function press(which: ResultAction): Promise<void> {
+  const current: IMatchView = props.match;
+
+  if (which === ResultAction.VOID && !voidAsking.value) {
+    voidAsking.value = true;
+
+    return;
+  }
+
+  action.value = startAction(action.value, which, crypto.randomUUID());
+
+  try {
+    await $fetch(`/api/leagues/${props.leagueId}/games/${current.canonicalMatchId}/answer`, {
+      body: {
+        action: which,
+        clientOperationId: action.value.operationId,
+        expectedRevision: current.revision,
+        note: which === ResultAction.DISPUTE && note.value.trim().length > 0 ? note.value.trim() : null,
+      },
+      method: 'POST',
+    });
+
+    action.value = idleAction();
+    note.value = '';
+    voidAsking.value = false;
+
+    emit('resolved');
+  } catch (failure: unknown) {
+    action.value = failAction(action.value, failure);
+
+    // A conflict is the result having moved, not the request having failed: redraw to what is actually there and
+    // let the person choose again from the actions that still apply
+    if (action.value.phase === ResultActionPhase.CONFLICT) {
+      voidAsking.value = false;
+
+      emit('resolved');
+    }
+  }
+}
+</script>
+
+<template>
+  <div v-if="hasActions">
+    <p
+      v-if="action.message"
+      class="text-body mb-4"
+      data-test="action-message"
+      role="alert"
+    >
+      {{ action.message }}
+    </p>
+
+    <label
+      v-if="match.viewer.mayDispute"
+      class="block max-w-[560px]"
+    >
+      <span class="text-ink-subtle text-body-sm">What's wrong with it? (optional)</span>
+
+      <textarea
+        v-model="note"
+        class="border-border bg-surface text-body mt-1 block w-full rounded-lg border p-3"
+        data-test="dispute-note"
+        :disabled="blocked"
+        :maxlength="MAX_NOTE_LENGTH"
+        rows="3"
+      />
+    </label>
+
+    <div class="mt-4 flex flex-wrap gap-3">
+      <button
+        v-if="match.viewer.mayConfirm"
+        class="bg-accent-strong text-body rounded-lg px-4 py-2 font-medium text-white disabled:opacity-50"
+        data-test="confirm"
+        :disabled="blocked && !awaitingCheck(action, ResultAction.CONFIRM)"
+        type="button"
+        @click="press(ResultAction.CONFIRM)"
+      >
+        {{ awaitingCheck(action, ResultAction.CONFIRM) ? 'Check' : ACTION_LABEL[ResultAction.CONFIRM] }}
+      </button>
+
+      <button
+        v-if="match.viewer.mayDispute"
+        class="border-border text-body rounded-lg border px-4 py-2 font-medium disabled:opacity-50"
+        data-test="dispute"
+        :disabled="blocked && !awaitingCheck(action, ResultAction.DISPUTE)"
+        type="button"
+        @click="press(ResultAction.DISPUTE)"
+      >
+        {{ awaitingCheck(action, ResultAction.DISPUTE) ? 'Check' : ACTION_LABEL[ResultAction.DISPUTE] }}
+      </button>
+
+      <button
+        v-if="match.viewer.mayVoid"
+        class="text-body text-ink-subtle hover:text-ink rounded-lg px-4 py-2 font-medium disabled:opacity-50"
+        data-test="void"
+        :disabled="blocked && !awaitingCheck(action, ResultAction.VOID)"
+        type="button"
+        @click="press(ResultAction.VOID)"
+      >
+        {{ awaitingCheck(action, ResultAction.VOID) ? 'Check' : ACTION_LABEL[ResultAction.VOID] }}
+      </button>
+    </div>
+
+    <!-- Void is the one action with no undo, so it is asked in the page rather than sent on the first press -->
+    <div
+      v-if="voidAsking"
+      class="border-border bg-surface mt-4 max-w-[560px] rounded-lg border p-4"
+      data-test="void-dialog"
+      role="alertdialog"
+    >
+      <p class="text-body">{{ VOID_QUESTION }}</p>
+
+      <div class="mt-4 flex gap-3">
+        <button
+          class="bg-accent-strong text-body rounded-lg px-4 py-2 font-medium text-white disabled:opacity-50"
+          data-test="void-confirm"
+          :disabled="blocked"
+          type="button"
+          @click="press(ResultAction.VOID)"
+        >
+          Void this result
+        </button>
+
+        <button
+          class="text-body text-ink-subtle hover:text-ink px-4 py-2 font-medium"
+          data-test="void-cancel"
+          type="button"
+          @click="voidAsking = false"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</template>

@@ -335,6 +335,13 @@ useHead({
           >
         </li>
       </ol>
+
+      <WidgetsResultsMatchActions
+        class="mt-10"
+        :league-id="String(route.params.leagueId)"
+        :match="match"
+        @resolved="refresh()"
+      />
     </article>
   </main>
 </template>
