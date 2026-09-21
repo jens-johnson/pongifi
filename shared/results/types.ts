@@ -331,8 +331,19 @@ export interface IMatchView {
   /* Every revision, oldest first, for an amended result */
   history: IMatchViewRevision[];
 
+  /**
+   * The league's name.
+   *
+   * On the view because the page's title states it, and a title is read in a tab beside other tabs: "Ada v Ben"
+   * alone does not say which league it belongs to
+   */
+  leagueName: string;
+
   /* The seats */
   participants: IMatchViewParticipant[];
+
+  /* The seat that withdrew, when the match ended in a retirement; null otherwise */
+  retiredSeat: Seat | null;
 
   /* When the match was played */
   playedAt: string;

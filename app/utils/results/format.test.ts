@@ -34,7 +34,9 @@ import {
   toRatingCell,
   toRatingLine,
   toResolutionLine,
+  toSideLabel,
   toSummary,
+  toTitle,
 } from './format';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -83,6 +85,7 @@ function match(overrides: Partial<IMatchView> = {}): IMatchView {
     gamesWon: { a: 2, b: 1 },
     gameType: GameType.SINGLES,
     history: [],
+    leagueName: 'Friday Ladder',
     participants: [seat('Ada', Side.A), seat('Ben', Side.B)],
     playedAt: '2026-09-20T12:00:00.000Z',
     rating: { rated: true, unratedReason: null },
@@ -93,6 +96,7 @@ function match(overrides: Partial<IMatchView> = {}): IMatchView {
       member: true,
       removed: false,
     },
+    retiredSeat: null,
     revision: 1,
     rules: {
       matchFormat: 3,
@@ -189,10 +193,35 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
   });
 
+  describe(symbolName(toTitle), (): void => {
+    it('says the same thing before and after acceptance, and names the league', (): void => {
+      // A tab is read beside other tabs. A title that turned from "v" into "beat" would make one match look like
+      // two in somebody's history, and one without the league does not say which ladder it belongs to
+      expect(toTitle(match({ state: ResultState.UNCONFIRMED }))).toBe('Ada v Ben · Friday Ladder');
+      expect(toTitle(match({ state: ResultState.CONFIRMED }))).toBe('Ada v Ben · Friday Ladder');
+      expect(toTitle(match({ state: ResultState.DISPUTED }))).toBe('Ada v Ben · Friday Ladder');
+    });
+  });
+
+  describe(symbolName(toSideLabel), (): void => {
+    it('names the side a seat played on', (): void => {
+      expect(toSideLabel(seat('Ada', Side.A))).toBe('Side A');
+      expect(toSideLabel(seat('Ben', Side.B))).toBe('Side B');
+    });
+  });
+
   describe(symbolName(toSummary), (): void => {
     it('states the format, the length and the games won', (): void => {
       expect(toSummary(match())).toBe('Singles · Best of 3 · 2-1');
       expect(toSummary(match({ gameType: GameType.DOUBLES }))).toBe('Doubles · Best of 3 · 2-1');
+    });
+
+    it('names whoever withdrew, since the scoreline alone does not explain a retirement', (): void => {
+      expect(toSummary(match({ retiredSeat: Seat.B1 }))).toBe('Singles · Best of 3 · 2-1 · Ben retired');
+    });
+
+    it('says nothing about retirement when nobody withdrew', (): void => {
+      expect(toSummary(match())).not.toContain('retired');
     });
   });
 

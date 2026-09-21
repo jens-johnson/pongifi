@@ -19,7 +19,9 @@ import {
   toRatingCell,
   toRatingLine,
   toResolutionLine,
+  toSideLabel,
   toSummary,
+  toTitle,
 } from '~/utils/results/format';
 import type { IMatchPageResponse } from '~/utils/results/types';
 
@@ -118,7 +120,7 @@ if (notFound.value) {
 
 useHead({
   meta: [{ content: 'noindex', name: 'robots' }],
-  title: (): string => (match.value ? `${heading.value} · Pongifi` : 'Page not found · Pongifi'),
+  title: (): string => (match.value ? `${toTitle(match.value)} · Pongifi` : 'Page not found · Pongifi'),
 });
 </script>
 
@@ -162,7 +164,7 @@ useHead({
         class="text-ink-subtle hover:text-ink text-body-sm"
         :to="leagueRoute"
       >
-        Games
+        {{ match.leagueName }} › Games
       </NuxtLink>
 
       <h1 class="font-display text-display mt-2 font-medium tracking-tight">{{ heading }}</h1>
@@ -297,6 +299,9 @@ useHead({
           class="text-body flex flex-wrap items-baseline gap-x-2"
         >
           <span>{{ participant.identity.displayName }}</span>
+
+          <!-- The side, because this list has no column headings to read it from and doubles is otherwise unreadable -->
+          <span class="text-ink-subtle text-body-sm">{{ toSideLabel(participant) }}</span>
 
           <span
             v-if="participant.identity.guest"

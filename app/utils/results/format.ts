@@ -90,6 +90,32 @@ export function toHeading(match: IMatchView): string {
 }
 
 /**
+ * What the browser tab says.
+ *
+ * Always "v", and always the league, however the match ended. A tab is read beside other tabs, so it has to say
+ * which league this belongs to; and a title that changed from "v" to "beat" on acceptance would make the same match
+ * two different-looking tabs in somebody's history
+ * @public
+ * @function
+ * @param match - The match
+ * @returns The title, without the product name
+ */
+export function toTitle(match: IMatchView): string {
+  return `${namesOf(seatsOf(match, Side.A))} v ${namesOf(seatsOf(match, Side.B))} · ${match.leagueName}`;
+}
+
+/**
+ * Which side a seat plays on, for a list that cannot use the score table's column headings
+ * @public
+ * @function
+ * @param participant - The seat
+ * @returns The side's label
+ */
+export function toSideLabel(participant: IMatchViewParticipant): string {
+  return participant.side === Side.A ? 'Side A' : 'Side B';
+}
+
+/**
  * The line under the heading: the format, the length and the games won
  * @public
  * @function
@@ -98,8 +124,14 @@ export function toHeading(match: IMatchView): string {
  */
 export function toSummary(match: IMatchView): string {
   const format: string = match.gameType === GameType.DOUBLES ? 'Doubles' : 'Singles';
+  const line: string = `${format} · Best of ${match.rules.matchFormat} · ${match.gamesWon.a}-${match.gamesWon.b}`;
+  const retired: IMatchViewParticipant | undefined = match.participants.find(
+    (participant: IMatchViewParticipant): boolean => participant.seat === match.retiredSeat,
+  );
 
-  return `${format} · Best of ${match.rules.matchFormat} · ${match.gamesWon.a}-${match.gamesWon.b}`;
+  // A retired match is not a match somebody won on the scoreboard, so the line that states the score also states
+  // why it ended where it did
+  return retired ? `${line} · ${retired.identity.displayName} retired` : line;
 }
 
 /**

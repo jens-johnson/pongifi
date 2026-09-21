@@ -429,6 +429,7 @@ export async function readMatchView(
       editedBy: resultRevisions.editedBy,
       gameType: resultRevisions.gameType,
       id: resultRevisions.id,
+      leagueName: leagues.name,
       originalPlayedAt: resultRevisions.originalPlayedAt,
       isCurrent: resultRevisions.isCurrent,
       playedAt: resultRevisions.playedAt,
@@ -443,6 +444,9 @@ export async function readMatchView(
       submittedAt: resultRevisions.submittedAt,
     })
     .from(resultRevisions)
+    // Joined rather than read separately: the page's title needs the league's name, and a round trip costs more
+    // than repeating one string across a match's handful of revisions
+    .innerJoin(leagues, eq(leagues.id, resultRevisions.leagueId))
     .where(and(eq(resultRevisions.leagueId, leagueId), eq(resultRevisions.canonicalMatchId, canonicalMatchId)))
     .orderBy(asc(resultRevisions.revision));
   const current = revisions.find((row: (typeof revisions)[number]): boolean => row.isCurrent === true);
@@ -581,6 +585,7 @@ interface IMatchViewSource {
   current: {
     confirmationDeadline: Date | null;
     id: string;
+    leagueName: string;
     originalPlayedAt: Date;
     playedAt: Date;
     recordedBy: string;
@@ -733,6 +738,7 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
         scores: row.submission.games.map((game: IGameScoreRow): string => `${game.a}-${game.b}`).join(', '),
       };
     }),
+    leagueName: current.leagueName,
     participants,
     playedAt: current.playedAt.toISOString(),
     rating: {
@@ -740,6 +746,7 @@ function shapeMatchView(source: IMatchViewSource): IMatchView {
       unratedReason: rated ? null : source.policy.ratingEnabled ? 'GUEST' : 'RATINGS_OFF',
     },
     recordedBy: identityOf(identities.get(current.recordedBy)),
+    retiredSeat: submission.ending === ResultEnding.RETIRED ? submission.retiredSeat : null,
     revision: current.revision,
     rules: {
       matchFormat: source.settings.matchFormat,
