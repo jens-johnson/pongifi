@@ -3,9 +3,8 @@
 
 import type { ComputedRef, Ref } from 'vue';
 
-import type { IMatchView } from '#shared/results';
 import { MAX_NOTE_LENGTH, ResultAction } from '#shared/results';
-import type { IResultActionState } from '~/utils/results/actions';
+import type { IResultActionRequest, IResultActionState } from '~/utils/results/actions';
 import {
   ACTION_LABEL,
   actionsBlocked,
@@ -74,7 +73,13 @@ const blocked: ComputedRef<boolean> = computed((): boolean => actionsBlocked(act
  * @constant
  */
 const hasActions: ComputedRef<boolean> = computed(
-  (): boolean => props.match.viewer.mayConfirm || props.match.viewer.mayDispute || props.match.viewer.mayVoid,
+  (): boolean =>
+    props.match.viewer.mayConfirm ||
+    props.match.viewer.mayDispute ||
+    props.match.viewer.mayVoid ||
+    // An answer nobody can be sure of has to stay reachable even when the re-read no longer offers the action that
+    // made it: a confirmation that may have landed is exactly what removes the confirm button
+    action.value.phase !== ResultActionPhase.IDLE,
 );
 
 /* ─── Methods ────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -90,24 +95,28 @@ const hasActions: ComputedRef<boolean> = computed(
  * @param which - What was pressed
  */
 async function press(which: ResultAction): Promise<void> {
-  const current: IMatchView = props.match;
-
   if (which === ResultAction.VOID && !voidAsking.value) {
     voidAsking.value = true;
 
     return;
   }
 
-  action.value = startAction(action.value, which, crypto.randomUUID());
+  // The request this press would make, if it is a new one. `startAction` keeps the earlier request instead when
+  // this is a retry, so a check re-sends what the first attempt sent rather than what the page is showing now
+  const intended: IResultActionRequest = {
+    action: which,
+    clientOperationId: crypto.randomUUID(),
+    expectedRevision: props.match.revision,
+    note: which === ResultAction.DISPUTE && note.value.trim().length > 0 ? note.value.trim() : null,
+  };
+
+  action.value = startAction(action.value, intended, props.match.canonicalMatchId);
+
+  const sending: IResultActionState = action.value;
 
   try {
-    await $fetch(`/api/leagues/${props.leagueId}/games/${current.canonicalMatchId}/answer`, {
-      body: {
-        action: which,
-        clientOperationId: action.value.operationId,
-        expectedRevision: current.revision,
-        note: which === ResultAction.DISPUTE && note.value.trim().length > 0 ? note.value.trim() : null,
-      },
+    await $fetch(`/api/leagues/${props.leagueId}/games/${sending.targetMatchId}/answer`, {
+      body: sending.request,
       method: 'POST',
     });
 
@@ -117,7 +126,7 @@ async function press(which: ResultAction): Promise<void> {
 
     emit('resolved');
   } catch (failure: unknown) {
-    action.value = failAction(action.value, failure);
+    action.value = failAction(sending, failure);
 
     // A conflict is the result having moved, not the request having failed: redraw to what is actually there and
     // let the person choose again from the actions that still apply
@@ -159,7 +168,7 @@ async function press(which: ResultAction): Promise<void> {
 
     <div class="mt-4 flex flex-wrap gap-3">
       <button
-        v-if="match.viewer.mayConfirm"
+        v-if="match.viewer.mayConfirm || awaitingCheck(action, ResultAction.CONFIRM)"
         class="bg-accent-strong text-body rounded-lg px-4 py-2 font-medium text-white disabled:opacity-50"
         data-test="confirm"
         :disabled="blocked && !awaitingCheck(action, ResultAction.CONFIRM)"
@@ -170,7 +179,7 @@ async function press(which: ResultAction): Promise<void> {
       </button>
 
       <button
-        v-if="match.viewer.mayDispute"
+        v-if="match.viewer.mayDispute || awaitingCheck(action, ResultAction.DISPUTE)"
         class="border-border text-body rounded-lg border px-4 py-2 font-medium disabled:opacity-50"
         data-test="dispute"
         :disabled="blocked && !awaitingCheck(action, ResultAction.DISPUTE)"
@@ -181,7 +190,7 @@ async function press(which: ResultAction): Promise<void> {
       </button>
 
       <button
-        v-if="match.viewer.mayVoid"
+        v-if="match.viewer.mayVoid || awaitingCheck(action, ResultAction.VOID)"
         class="text-body text-ink-subtle hover:text-ink rounded-lg px-4 py-2 font-medium disabled:opacity-50"
         data-test="void"
         :disabled="blocked && !awaitingCheck(action, ResultAction.VOID)"

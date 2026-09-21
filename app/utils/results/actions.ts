@@ -23,8 +23,8 @@ import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failur
  * Where a pressed action has got to.
  *
  * Four states rather than a boolean, because "we do not know" is a distinct answer that the page has to keep: an
- * action whose outcome is uncertain may have committed, so the operation id is held and every other action waits
- * until the person resolves it
+ * action whose outcome is uncertain may have committed, so its request is held and every other action waits until
+ * the person resolves it
  * @public
  * @enum
  */
@@ -46,6 +46,28 @@ export enum ResultActionPhase {
 }
 
 /**
+ * The body a press sent, kept exactly as it was sent.
+ *
+ * The server keys an operation on the account, the operation id and a digest of the body, so a retry that rebuilt
+ * its body from whatever the page is showing now is not a retry at all: the same id carrying a different body is a
+ * conflict, and the answer the person is waiting on stays unresolved
+ * @public
+ */
+export interface IResultActionRequest {
+  /* Which answer this is */
+  action: ResultAction;
+
+  /* The operation this press belongs to, from first attempt to resolved outcome */
+  clientOperationId: string;
+
+  /* The revision the page was showing when it was pressed */
+  expectedRevision: number;
+
+  /* The words a dispute carried, or null */
+  note: string | null;
+}
+
+/**
  * What a pressed action is doing, and what it is still holding
  * @public
  */
@@ -56,16 +78,32 @@ export interface IResultActionState {
   /* What to tell the person, or null when there is nothing to say */
   message: string | null;
 
-  /**
-   * The operation this press belongs to, held from the press until the outcome is known.
-   *
-   * Kept across a retry on purpose: the same id is what lets the server answer a second attempt from the first
-   * attempt's receipt rather than acting twice
-   */
-  operationId: string | null;
-
   /* Where it has got to */
   phase: ResultActionPhase;
+
+  /**
+   * Whether this press is a check on an earlier answer rather than a new one.
+   *
+   * Carried on the state because the phase cannot say it: a check in flight is SENDING like any other press, and
+   * what it may conclude from a refusal is entirely different
+   */
+  recovering: boolean;
+
+  /**
+   * The request this press made, held from the press until the outcome is known.
+   *
+   * Held whole rather than by its operation id alone: a retry has to re-send the body the first attempt sent, or
+   * the server cannot recognize it as the same operation
+   */
+  request: IResultActionRequest | null;
+
+  /**
+   * The match the request was aimed at.
+   *
+   * Held for the same reason as the body. A page that re-read between the press and the retry may be showing a
+   * different match or a later revision, and a retry rebuilt from that would ask about an operation nobody made
+   */
+  targetMatchId: string | null;
 }
 
 /**
@@ -90,7 +128,7 @@ export const VOID_QUESTION: string = 'Void this result? It stops counting and ca
  * What an outcome nobody can be sure of says.
  *
  * Deliberately not an error: the write may have committed, and telling somebody it failed would invite a second
- * one. Check re-reads the result and shows them what is actually there
+ * one. Check re-sends the same request, which the server answers from the first attempt's receipt
  * @public
  * @constant
  */
@@ -111,6 +149,17 @@ export const CONFLICT_MESSAGE: string = 'This result changed while you were look
 export const REFUSED_MESSAGE: string = 'Pongifi could not save this right now.';
 
 /**
+ * What is added when a check itself was refused.
+ *
+ * A refused check says nothing about the answer it was checking on. Every refusal the page can recognize from the
+ * outside — a spent write allowance, an ended session, a membership since lost — is decided before the server ever
+ * looks for the earlier operation's receipt, so it establishes only that the check did not run
+ * @public
+ * @constant
+ */
+export const STILL_UNRESOLVED_MESSAGE: string = 'Your earlier answer may still have gone through. Check again.';
+
+/**
  * Nothing pressed, nothing outstanding
  * @public
  * @function
@@ -120,31 +169,40 @@ export function idleAction(): IResultActionState {
   return {
     action: null,
     message: null,
-    operationId: null,
     phase: ResultActionPhase.IDLE,
+    recovering: false,
+    request: null,
+    targetMatchId: null,
   };
 }
 
 /**
  * The state a press starts in.
  *
- * A retry of an uncertain action keeps the id it was pressed with; a fresh press takes a new one. That is the whole
- * difference between asking the server "did my action land?" and asking it to act again
+ * A retry of an uncertain action re-sends the request it was pressed with, against the match it was aimed at; a
+ * fresh press takes the new one. That is the whole difference between asking the server "did my answer land?" and
+ * asking it to answer again
  * @public
  * @function
  * @param state - Where the page is now
- * @param action - What was pressed
- * @param operationId - A fresh operation id, used only when this is not a retry of the same action
+ * @param request - The request this press would make, used only when this is not a retry
+ * @param targetMatchId - The match this press would be aimed at, used only when this is not a retry
  * @returns The state while it is in flight
  */
-export function startAction(state: IResultActionState, action: ResultAction, operationId: string): IResultActionState {
-  const retrying: boolean = state.phase === ResultActionPhase.UNCERTAIN && state.action === action;
+export function startAction(
+  state: IResultActionState,
+  request: IResultActionRequest,
+  targetMatchId: string,
+): IResultActionState {
+  const retrying: boolean = state.phase === ResultActionPhase.UNCERTAIN && state.action === request.action;
 
   return {
-    action,
+    action: request.action,
     message: null,
-    operationId: retrying ? state.operationId : operationId,
     phase: ResultActionPhase.SENDING,
+    recovering: retrying,
+    request: retrying ? state.request : request,
+    targetMatchId: retrying ? state.targetMatchId : targetMatchId,
   };
 }
 
@@ -163,10 +221,7 @@ function messageOf(error: unknown): string {
     return REFUSED_MESSAGE;
   }
 
-  const { data, statusMessage }: { data?: { message?: unknown }; statusMessage?: unknown } = error as {
-    data?: { message?: unknown };
-    statusMessage?: unknown;
-  };
+  const { data, statusMessage } = error as { data?: { message?: unknown }; statusMessage?: unknown };
   const carried: unknown = data?.message ?? statusMessage;
 
   return typeof carried === 'string' && carried.length > 0 ? carried : REFUSED_MESSAGE;
@@ -175,9 +230,14 @@ function messageOf(error: unknown): string {
 /**
  * Where a failed press leaves the page.
  *
- * A conflict is not a failure the person caused and not one they can retry: the result moved, so the page redraws
- * to what is there now and they choose again. An uncertain outcome keeps its operation id so that pressing again
- * asks about the same operation rather than starting a second one
+ * A conflict is not a failure the person caused and not one they can retry: the result moved, and the server decided
+ * that under the match's lock having already consulted the operation's receipt — so it is an authoritative answer
+ * about this press too, and the page redraws to what is there now.
+ *
+ * Nothing else is authoritative. A spent write allowance, an ended session and a membership since lost are all
+ * decided before the server looks for a receipt, so an answer that was already uncertain stays uncertain through
+ * them: the page says why the check could not run and keeps holding the request, rather than inventing an outcome
+ * for an answer that may well have landed
  * @public
  * @function
  * @param state - The state the press was made from
@@ -199,16 +259,30 @@ export function failAction(state: IResultActionState, error: unknown): IResultAc
     return {
       action: state.action,
       message: CONFLICT_MESSAGE,
-      operationId: null,
       phase: ResultActionPhase.CONFLICT,
+      recovering: false,
+      request: null,
+      targetMatchId: null,
+    };
+  }
+
+  // A refused check resolves nothing; the earlier answer is still outstanding and the page keeps holding it. Read
+  // from both, because a check that is still in flight is SENDING and only `recovering` says what it is
+  if (state.recovering || state.phase === ResultActionPhase.UNCERTAIN) {
+    return {
+      ...state,
+      message: `${messageOf(error)} ${STILL_UNRESOLVED_MESSAGE}`,
+      phase: ResultActionPhase.UNCERTAIN,
     };
   }
 
   return {
     action: state.action,
     message: messageOf(error),
-    operationId: null,
     phase: ResultActionPhase.REFUSED,
+    recovering: false,
+    request: null,
+    targetMatchId: null,
   };
 }
 

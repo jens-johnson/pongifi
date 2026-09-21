@@ -25,7 +25,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { IMatchView } from '#shared/results';
 import { ResultAction, ResultState } from '#shared/results';
-import { CONFLICT_MESSAGE, UNCERTAIN_MESSAGE, VOID_QUESTION } from '~/utils/results/actions';
+import {
+  ACTION_LABEL,
+  CONFLICT_MESSAGE,
+  STILL_UNRESOLVED_MESSAGE,
+  UNCERTAIN_MESSAGE,
+  VOID_QUESTION,
+} from '~/utils/results/actions';
 
 import MatchActions from './index.vue';
 
@@ -44,6 +50,13 @@ const LEAGUE_ID: string = 'b5e2d1ef-0000-4000-8000-000000000002';
  * @constant
  */
 const MATCH_ID: string = 'd7a4f3b1-0000-4000-8000-000000000004';
+
+/**
+ * A different match, which a page that re-read under the widget might be showing instead
+ * @internal
+ * @constant
+ */
+const LATER_MATCH_ID: string = 'f9c6b5d3-0000-4000-8000-000000000006';
 
 /**
  * The names the template gives each control
@@ -90,6 +103,12 @@ const WORDS: string = 'that was not the score';
 let sent: Record<string, unknown>[] = [];
 
 /**
+ * Every path the component sent to, in order, so a retry aimed at a different match is visible
+ * @internal
+ */
+let paths: string[] = [];
+
+/**
  * The endpoint's default answer: accepted, with nothing the component reads
  * @internal
  * @function
@@ -100,19 +119,50 @@ function answerAccepted(): unknown {
 }
 
 /**
+ * The server failing in a way that says nothing about whether the write landed
+ * @internal
+ * @function
+ * @param event - The request
+ * @returns The refusal body
+ */
+function answerUnavailable(event: H3Event): unknown {
+  setResponseStatus(event, 502);
+
+  return { message: 'Pongifi could not save this right now.' };
+}
+
+/**
+ * The write allowance spent, which is decided before the receipt is ever consulted
+ * @internal
+ * @function
+ * @param event - The request
+ * @returns The refusal body
+ */
+function answerRateLimited(event: H3Event): unknown {
+  setResponseStatus(event, 429);
+
+  return { message: 'Too many saves.' };
+}
+
+/**
  * What the endpoint answers next, set per case
  * @internal
  */
 let answer: (event: H3Event) => unknown = answerAccepted;
 
-registerEndpoint(`/api/leagues/${LEAGUE_ID}/games/${MATCH_ID}/answer`, {
-  handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
-    sent.push((await readBody(event)) as Record<string, unknown>);
+for (const target of [MATCH_ID, LATER_MATCH_ID]) {
+  // Both are registered so that a retry aimed at the wrong match is recorded and visible, rather than disappearing
+  // into a 404 that a case could mistake for the refusal it was testing
+  registerEndpoint(`/api/leagues/${LEAGUE_ID}/games/${target}/answer`, {
+    handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
+      sent.push((await readBody(event)) as Record<string, unknown>);
+      paths.push(event.path ?? '');
 
-    return answer(event);
-  }),
-  method: 'POST',
-});
+      return answer(event);
+    }),
+    method: 'POST',
+  });
+}
 
 /**
  * A match as one viewer reads it
@@ -146,8 +196,13 @@ function match(viewer: Partial<IMatchView['viewer']> = {}): IMatchView {
  * @param viewer - What this viewer may do
  * @returns The mounted actions
  */
-async function mountActions(viewer: Partial<IMatchView['viewer']> = {}): Promise<VueWrapper> {
-  return mountSuspended(MatchActions, { props: { leagueId: LEAGUE_ID, match: match(viewer) } });
+async function mountActions(
+  viewer: Partial<IMatchView['viewer']> = {},
+  overrides: Partial<IMatchView> = {},
+): Promise<VueWrapper> {
+  return mountSuspended(MatchActions, {
+    props: { leagueId: LEAGUE_ID, match: { ...match(viewer), ...overrides } },
+  });
 }
 
 /**
@@ -186,6 +241,7 @@ function at(wrapper: VueWrapper, name: string): DOMWrapper<Element> {
 describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
     sent = [];
+    paths = [];
     answer = answerAccepted;
   });
 
@@ -302,6 +358,89 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(sent).toHaveLength(2);
     expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
+  });
+
+  it('leaves the answer outstanding when the check itself was refused', async (): Promise<void> => {
+    // The write allowance is spent before the server ever looks for the earlier operation's receipt, so a 429 on a
+    // check proves only that the check did not run. Treating it as a refusal would tell somebody their confirmation
+    // failed when it may well have landed
+    answer = answerUnavailable;
+
+    const wrapper: VueWrapper = await mountActions({
+      mayConfirm: true,
+      mayDispute: true,
+      mayVoid: true,
+    });
+
+    await pressButton(wrapper, CONFIRM);
+
+    answer = answerRateLimited;
+    await pressButton(wrapper, CONFIRM);
+
+    expect(at(wrapper, MESSAGE).text()).toContain(STILL_UNRESOLVED_MESSAGE);
+    expect(at(wrapper, CONFIRM).text()).toBe('Check');
+    expect(at(wrapper, DISPUTE).attributes('disabled')).toBeDefined();
+    expect(at(wrapper, 'void').attributes('disabled')).toBeDefined();
+    expect(wrapper.emitted('resolved')).toBeUndefined();
+  });
+
+  it('recovers once the check gets through, on the same operation throughout', async (): Promise<void> => {
+    answer = answerUnavailable;
+
+    const wrapper: VueWrapper = await mountActions({ mayConfirm: true, mayDispute: true });
+
+    await pressButton(wrapper, CONFIRM);
+
+    answer = answerRateLimited;
+    await pressButton(wrapper, CONFIRM);
+
+    answer = answerAccepted;
+    await pressButton(wrapper, CONFIRM);
+
+    expect(sent).toHaveLength(3);
+    expect(new Set(sent.map((body): unknown => body.clientOperationId)).size).toBe(1);
+    expect(at(wrapper, MESSAGE).exists()).toBe(false);
+    expect(at(wrapper, CONFIRM).text()).toBe(ACTION_LABEL[ResultAction.CONFIRM]);
+    expect(at(wrapper, DISPUTE).attributes('disabled')).toBeUndefined();
+    expect(wrapper.emitted('resolved')).toHaveLength(1);
+  });
+
+  it('checks with the request it first sent, even after the page re-read', async (): Promise<void> => {
+    // The page may refresh under the widget between the press and the check. A check rebuilt from the new props
+    // would carry a later revision under the same operation id, which the server reads as a changed body
+    answer = answerUnavailable;
+
+    const wrapper: VueWrapper = await mountActions({ mayConfirm: true });
+
+    await pressButton(wrapper, CONFIRM);
+
+    await wrapper.setProps({
+      match: {
+        ...match({ mayConfirm: true }),
+        canonicalMatchId: LATER_MATCH_ID,
+        revision: 4,
+      },
+    });
+    await pressButton(wrapper, CONFIRM);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    expect(sent[1]?.expectedRevision).toBe(3);
+    expect(paths[1]).toBe(paths[0]);
+  });
+
+  it('keeps the check reachable when the re-read no longer offers the action', async (): Promise<void> => {
+    // A confirmation that may have landed is exactly what removes the confirm button, so recovery would otherwise
+    // disappear at the moment it is needed
+    answer = answerUnavailable;
+
+    const wrapper: VueWrapper = await mountActions({ mayConfirm: true });
+
+    await pressButton(wrapper, CONFIRM);
+    await wrapper.setProps({ match: match() });
+
+    expect(at(wrapper, CONFIRM).exists()).toBe(true);
+    expect(at(wrapper, CONFIRM).text()).toBe('Check');
   });
 
   it('redraws rather than retrying when the result moved underneath it', async (): Promise<void> => {
