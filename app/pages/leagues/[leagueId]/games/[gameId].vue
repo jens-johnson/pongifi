@@ -169,13 +169,22 @@ useHead({
 
       <p class="text-ink-subtle text-body mt-1">{{ summary }}</p>
 
-      <!-- A result past its deadline that could not be settled says so, and never claims to be accepted -->
+      <!--
+        A result past its own deadline says so rather than asking for an answer nobody owes. The flag is the
+        result's own overdue state, not whether the sweep reported success: settlement is bounded, so a league with
+        more overdue results than one batch holds leaves this one due after a sweep that worked. A failed sweep only
+        changes the wording, and never makes a result whose deadline has not arrived sound due
+      -->
       <p
-        v-if="page?.settlementFailed && match.state === ResultState.UNCONFIRMED"
+        v-if="page?.settlementOutstanding"
         class="text-body mt-6"
         role="alert"
       >
-        This result is due to be accepted, but Pongifi could not process it.
+        {{
+          page?.settlementFailed
+            ? 'This result is due to be accepted, but Pongifi could not process it.'
+            : 'This result is due to be accepted and is still being processed.'
+        }}
         <button
           class="text-accent-strong hover:text-accent font-medium"
           type="button"

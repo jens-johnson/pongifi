@@ -26,11 +26,12 @@ import { createError, getRouterParam, type H3Event } from 'h3';
 import type { LeagueRole } from '#shared/domain';
 import { isUuid } from '#shared/leagues';
 import type { IMatchView } from '#shared/results';
+import { ResultState } from '#shared/results';
 import { useResultTransaction } from '#utils/db';
 import { runUpstream } from '#utils/http';
 import { readViewerRole } from '#utils/leagues';
 import { resolveMatchRoute, settleDueResults } from '#utils/results';
-import { readMatchView } from '#utils/results/queries';
+import { readClock, readMatchView } from '#utils/results/queries';
 
 /**
  * A match as its page reads it, plus what the page has to know about getting there
@@ -44,12 +45,22 @@ export interface IMatchPageResponse {
   match: IMatchView;
 
   /**
-   * Whether settlement of this league's due results could not be completed.
+   * Whether the sweep this read performed could not be completed.
    *
-   * The page needs this rather than an error: a result that is past its deadline and could not be settled is shown
-   * with its failure and a retry, never as though it were still waiting for an answer nobody owes
+   * Explains an outstanding result rather than defining one: a sweep can fail over results that have nothing to do
+   * with the one being read, and that must not make this result sound overdue
    */
   settlementFailed: boolean;
+
+  /**
+   * Whether this result is past its own confirmation deadline and still unsettled.
+   *
+   * Decided by asking the result, never by trusting the sweep's return. Settlement is bounded, so a completed batch
+   * is not the same as a league that is caught up: with more overdue results than one batch holds, this result can
+   * still be waiting after a sweep that reported success. The page must never render such a result as ordinarily
+   * pending, whatever the reason it was not reached
+   */
+  settlementOutstanding: boolean;
 }
 
 /**
@@ -100,16 +111,17 @@ export default defineEventHandler(async (event: H3Event): Promise<IMatchPageResp
   }
 
   // Awaited, not fired and forgotten: the page must never render a result that is past its deadline as still
-  // waiting. A settlement that fails is shown as a failure rather than swallowed, which is why this is a flag and
-  // not a thrown error
+  // waiting. A settlement that fails is captured as a flag rather than thrown, so the page still renders
   const settled: boolean = await useResultTransaction(async (transaction): Promise<number> =>
     settleDueResults(transaction, leagueId),
   ).then(
     (): boolean => true,
     (): boolean => false,
   );
-  const match: IMatchView | null = await runUpstream(
-    readMatchView(leagueId, canonicalMatchId, user.id, role),
+
+  // Read whatever the sweep did or did not manage, and against the database's clock rather than this process's
+  const [match, now]: [IMatchView | null, Date | null] = await runUpstream(
+    Promise.all([readMatchView(leagueId, canonicalMatchId, user.id, role), readClock(leagueId)]),
     UPSTREAM_MESSAGE,
   );
 
@@ -117,9 +129,16 @@ export default defineEventHandler(async (event: H3Event): Promise<IMatchPageResp
     throw createError({ statusCode: 404, statusMessage: NOT_FOUND });
   }
 
+  // The result's own deadline decides this, not the sweep's return. `settleDueResults` is bounded, so a resolved
+  // sweep means "a batch ran", never "the league is caught up" — with more overdue results than one batch holds,
+  // this one can still be due after a sweep that succeeded
+  const deadline: number | null = match.confirmationDeadline ? Date.parse(match.confirmationDeadline) : null;
+
   return {
     canonicalMatchId,
     match,
     settlementFailed: !settled,
+    settlementOutstanding:
+      match.state === ResultState.UNCONFIRMED && deadline !== null && now !== null && deadline <= now.getTime(),
   };
 });

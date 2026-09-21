@@ -377,6 +377,64 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(winner?.confirmed).toBe(false);
     });
 
+    it('reports where a multi-game match started and ended, not the values it passed through', async (): Promise<void> => {
+      // A losing side descends across its games, so the highest rating it held and the lowest it moved from are both
+      // interior points. Taking extrema reported a 1200 → 1162.14 → 1133.40 loss back as 1162.14 → 1162.14
+      await read(
+        `TRUNCATE "result_revisions", "games", "rating_generations", "memberships", "leagues", "users" CASCADE`,
+      );
+      await seedLeague(['Ada', 'Ben', 'Cara'], settingsFixture({ matchFormat: 3 }));
+
+      const match: string = await record(
+        ids.Ada!,
+        singles([ids.Ada!, ids.Ben!], {
+          games: [
+            {
+              a: 4,
+              b: 11,
+              gameNumber: 1,
+            },
+            {
+              a: 9,
+              b: 11,
+              gameNumber: 2,
+            },
+          ],
+        }),
+      );
+
+      await inTransaction((transaction) =>
+        answerResult(transaction, ids.Ben!, {
+          action: ResultAction.CONFIRM,
+          canonicalMatchId: match,
+          clientOperationId: randomUUID(),
+          expectedRevision: 1,
+          note: null,
+        }),
+      );
+
+      const page: IMatchView = await view(match, ids.Ben!);
+      const loser = page.participants.find((participant): boolean => participant.identity.displayName === 'Ada');
+      const winner = page.participants.find((participant): boolean => participant.identity.displayName === 'Ben');
+
+      expect(page.games).toHaveLength(2);
+
+      // Both sides, and both directions: the endpoints have to be consistent with the change between them, which is
+      // what extrema cannot be across more than one game
+      for (const participant of [loser, winner]) {
+        expect(participant?.rating?.before).toBe(1200);
+        expect(participant?.rating?.after).toBeCloseTo(
+          (participant?.rating?.before ?? 0) + (participant?.rating?.delta ?? 0),
+          6,
+        );
+      }
+
+      expect(loser?.rating?.delta).toBeLessThan(0);
+      expect(loser?.rating?.after).toBeLessThan(1200);
+      expect(winner?.rating?.delta).toBeGreaterThan(0);
+      expect(winner?.rating?.after).toBeGreaterThan(1200);
+    });
+
     it('says a guest game is unrated, and why', async (): Promise<void> => {
       const match: string = await record(
         ids.Ada!,

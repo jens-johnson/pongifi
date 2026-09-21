@@ -29,6 +29,14 @@ export interface IMatchPageResponse {
   /* The match */
   match: IMatchView;
 
-  /* Whether settlement of this league's due results could not be completed */
+  /* Whether the sweep this read performed could not be completed; explains an outstanding result, never defines one */
   settlementFailed: boolean;
+
+  /**
+   * Whether this result is past its own confirmation deadline and still unsettled.
+   *
+   * Settlement is bounded, so a sweep that succeeded is not a league that is caught up. This is the flag the page
+   * branches on; a result that is due must never be rendered as ordinarily pending
+   */
+  settlementOutstanding: boolean;
 }

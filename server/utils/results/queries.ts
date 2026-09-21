@@ -18,7 +18,7 @@
 
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { LeagueRole, MembershipStatus, ResultRecorder } from '#shared/domain';
+import { LeagueRole, MembershipStatus, RatingScope, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
 import type {
   IGameScoreRow,
@@ -340,6 +340,32 @@ function winnerOf(game: IGameScoreRow, retiredSide: Side | null): Side | null {
 }
 
 /**
+ * The database's clock.
+ *
+ * A deadline is decided against the instant the database holds, never against this process's: a runner whose clock
+ * runs fast would otherwise declare a result overdue that the database has not reached yet, and one running slow
+ * would describe an overdue result as still waiting.
+ *
+ * Read through the league rather than bare, and answering null rather than falling back to this process's clock, so
+ * that a caller can never be handed the wrong clock while believing it read the right one
+ * @public
+ * @async
+ * @function
+ * @param leagueId - The league whose row carries the read
+ * @returns The current instant as the database states it, or null when the league is gone
+ */
+export async function readClock(leagueId: string): Promise<Date | null> {
+  const database = useDatabase();
+  const clock = await database
+    .select({ now: sql<Date>`now()` })
+    .from(leagues)
+    .where(eq(leagues.id, leagueId))
+    .limit(1);
+
+  return clock[0]?.now ?? null;
+}
+
+/**
  * Reads a match as its page shows it.
  *
  * The current revision alone decides what is on the page: its submission states the scores and the seats, its
@@ -453,12 +479,18 @@ export async function readMatchView(
         actions.map((action: (typeof actions)[number]): string => action.id),
       ),
     );
+  // Endpoints, not extrema. A match's snapshots are one row per game, and a losing match descends: taking max(rating)
+  // and min(rating_before) reports the highest and lowest values the match passed through rather than where it
+  // started and where it ended, which for a 1200 → 1162.14 → 1133.40 loss reads back as 1162.14 → 1162.14.
+  //
+  // Ordered by game number rather than by created_at: every snapshot of a match is written by one publication, and
+  // `now()` is transaction-scoped, so their created_at values are identical and could not order anything
   const ratings = await database
     .select({
-      after: sql<number>`max(${ratingSnapshots.rating})`,
-      before: sql<number>`min(${ratingSnapshots.ratingBefore})`,
+      after: sql<number>`(array_agg(${ratingSnapshots.rating} ORDER BY ${resultRevisionGames.gameNumber} DESC))[1]`,
+      before: sql<number>`(array_agg(${ratingSnapshots.ratingBefore} ORDER BY ${resultRevisionGames.gameNumber}))[1]`,
       delta: sql<number>`sum(${ratingSnapshots.delta})`,
-      provisional: sql<boolean>`bool_or(${ratingSnapshots.isProvisional})`,
+      provisional: sql<boolean>`(array_agg(${ratingSnapshots.isProvisional} ORDER BY ${resultRevisionGames.gameNumber} DESC))[1]`,
       userId: ratingSnapshots.userId,
     })
     .from(ratingSnapshots)
@@ -467,7 +499,15 @@ export async function readMatchView(
       eq(activeRatingGenerations.ratingGenerationId, ratingSnapshots.ratingGenerationId),
     )
     .innerJoin(resultRevisionGames, eq(resultRevisionGames.gameId, ratingSnapshots.gameId))
-    .where(and(eq(activeRatingGenerations.leagueId, leagueId), eq(resultRevisionGames.resultRevisionId, current.id)))
+    .where(
+      and(
+        eq(activeRatingGenerations.leagueId, leagueId),
+        eq(resultRevisionGames.resultRevisionId, current.id),
+        // Only one scope is written today, but per-format sub-ratings are a deferred feature; without this the page
+        // would silently start aggregating a player's overall and per-format rows together the day they land
+        eq(ratingSnapshots.scope, RatingScope.OVERALL),
+      ),
+    )
     .groupBy(ratingSnapshots.userId);
   const identities = await readIdentities(leagueId, [
     ...submission.seats.map((seat): string | null => seat.userId).filter((id): id is string => id !== null),

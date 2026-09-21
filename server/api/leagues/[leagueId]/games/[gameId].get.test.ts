@@ -22,6 +22,7 @@ import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IMatchView } from '#shared/results';
+import { ResultState } from '#shared/results';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -62,6 +63,15 @@ const readMatchViewMock: Mock<(...args: unknown[]) => Promise<IMatchView | null>
 );
 
 /**
+ * The clock double, so a case states what the database's instant is rather than inheriting the runner's
+ * @internal
+ * @constant
+ */
+const readClockMock: Mock<(...args: unknown[]) => Promise<Date | null>> = vi.hoisted(
+  (): Mock<(...args: unknown[]) => Promise<Date | null>> => vi.fn(),
+);
+
+/**
  * The transaction double, which runs its body against nothing
  * @internal
  * @constant
@@ -79,7 +89,10 @@ vi.mock(
     settleDueResults: settleDueResultsMock,
   }),
 );
-vi.mock('#utils/results/queries', (): Record<string, unknown> => ({ readMatchView: readMatchViewMock }));
+vi.mock('#utils/results/queries', (): Record<string, unknown> => ({
+  readClock: readClockMock,
+  readMatchView: readMatchViewMock,
+}));
 vi.mock('#utils/leagues', (): Record<string, unknown> => ({ readViewerRole: readViewerRoleMock }));
 vi.mock(
   '#utils/db',
@@ -146,7 +159,19 @@ const { default: handler }: { default: EventHandler } = await import('./[gameId]
  * @internal
  * @constant
  */
-const MATCH: IMatchView = { canonicalMatchId: MATCH_ID, revision: 1 } as unknown as IMatchView;
+const MATCH: IMatchView = {
+  canonicalMatchId: MATCH_ID,
+  confirmationDeadline: '2026-09-22T12:00:00.000Z',
+  revision: 1,
+  state: ResultState.UNCONFIRMED,
+} as unknown as IMatchView;
+
+/**
+ * The instant the database is at: before the fixture's deadline, so the result is not yet due
+ * @internal
+ * @constant
+ */
+const NOW: Date = new Date('2026-09-21T12:00:00.000Z');
 
 /**
  * Builds an event whose path names a league and a game
@@ -187,12 +212,14 @@ describe(getTestFileName(import.meta.url), (): void => {
     settleDueResultsMock.mockReset();
     readViewerRoleMock.mockReset();
     readMatchViewMock.mockReset();
+    readClockMock.mockReset();
     setResponseHeaderMock.mockReset();
 
     readViewerRoleMock.mockResolvedValue('PLAYER');
     resolveMatchRouteMock.mockResolvedValue(MATCH_ID);
     settleDueResultsMock.mockResolvedValue(0);
     readMatchViewMock.mockResolvedValue(MATCH);
+    readClockMock.mockResolvedValue(NOW);
   });
 
   it('answers with the match, the id its page lives at, and a clean settlement', async (): Promise<void> => {
@@ -200,6 +227,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       canonicalMatchId: MATCH_ID,
       match: MATCH,
       settlementFailed: false,
+      settlementOutstanding: false,
     });
   });
 
@@ -284,7 +312,61 @@ describe(getTestFileName(import.meta.url), (): void => {
       canonicalMatchId: MATCH_ID,
       match: MATCH,
       settlementFailed: true,
+      settlementOutstanding: false,
     });
+  });
+
+  it('calls a result the sweep did not reach outstanding, even when the sweep succeeded', async (): Promise<void> => {
+    // settleDueResults is bounded. With more overdue results in the league than one batch holds, a sweep that
+    // resolves cleanly can leave this result still due, and the page would otherwise render ordinary pending copy
+    readClockMock.mockResolvedValue(new Date('2026-09-23T12:00:00.000Z'));
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({
+      settlementFailed: false,
+      settlementOutstanding: true,
+    });
+  });
+
+  it('does not call a result due because an unrelated settlement failed', async (): Promise<void> => {
+    // The sweep covers the whole league; its failure says nothing about a result whose deadline has not arrived
+    settleDueResultsMock.mockRejectedValue(new Error('could not settle'));
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({
+      settlementFailed: true,
+      settlementOutstanding: false,
+    });
+  });
+
+  it('calls a result outstanding when its deadline passed and the sweep also failed', async (): Promise<void> => {
+    settleDueResultsMock.mockRejectedValue(new Error('could not settle'));
+    readClockMock.mockResolvedValue(new Date('2026-09-23T12:00:00.000Z'));
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({
+      settlementFailed: true,
+      settlementOutstanding: true,
+    });
+  });
+
+  it('never calls a settled result outstanding, whatever its deadline says', async (): Promise<void> => {
+    // The deadline is long past, but the result was accepted; nothing is owed and nothing is due
+    readMatchViewMock.mockResolvedValue({ ...MATCH, state: ResultState.CONFIRMED });
+    readClockMock.mockResolvedValue(new Date('2026-09-23T12:00:00.000Z'));
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({ settlementOutstanding: false });
+  });
+
+  it('judges the deadline against the database clock rather than this process’s', async (): Promise<void> => {
+    // A runner running fast must not declare a result overdue that the database has not reached yet
+    readClockMock.mockResolvedValue(new Date('2026-09-21T11:59:59.000Z'));
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({ settlementOutstanding: false });
+    expect(readClockMock).toHaveBeenCalledWith(LEAGUE_ID);
+  });
+
+  it('does not guess when the clock could not be read', async (): Promise<void> => {
+    readClockMock.mockResolvedValue(null);
+
+    await expect(handler(buildEvent())).resolves.toMatchObject({ settlementOutstanding: false });
   });
 
   it('sends every game of a match to the match, not to the id that was asked for', async (): Promise<void> => {
