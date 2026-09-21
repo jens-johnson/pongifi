@@ -363,10 +363,11 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(readClockMock).toHaveBeenCalledWith(LEAGUE_ID);
   });
 
-  it('does not guess when the clock could not be read', async (): Promise<void> => {
+  it('refuses the read when the clock could not be read, rather than guessing', async (): Promise<void> => {
+    // Unknown is not the same as not due; answering false would render an overdue result as ordinarily pending
     readClockMock.mockResolvedValue(null);
 
-    await expect(handler(buildEvent())).resolves.toMatchObject({ settlementOutstanding: false });
+    expect(await statusOf(buildEvent())).toBe(502);
   });
 
   it('sends every game of a match to the match, not to the id that was asked for', async (): Promise<void> => {

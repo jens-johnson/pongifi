@@ -48,7 +48,7 @@ const databaseRef = vi.hoisted((): { current: unknown } => ({ current: undefined
 
 vi.mock('#utils/db', (): Record<string, unknown> => ({ useDatabase: (): unknown => databaseRef.current }));
 
-const { readMatchView } = await import('./queries');
+const { readClock, readFormContext, readMatchView } = await import('./queries');
 const { amendResult, answerResult, recordResult } = await import('./utils');
 
 /**
@@ -297,6 +297,39 @@ describe(getTestFileName(import.meta.url), (): void => {
 
   afterAll(async (): Promise<void> => {
     await client.close();
+  });
+
+  describe(symbolName(readClock), (): void => {
+    it('answers with an instant, not with whatever shape the driver hands back', async (): Promise<void> => {
+      // sql<Date> is a TypeScript annotation and nothing more. Both PGlite and the Neon HTTP adapter preserve a
+      // timestamp as a string, so a caller doing date arithmetic on this value throws at runtime
+      const now: Date | null = await readClock(LEAGUE_ID);
+
+      expect(now).toBeInstanceOf(Date);
+      expect(Number.isNaN(now?.getTime() ?? Number.NaN)).toBe(false);
+      expect(Math.abs((now?.getTime() ?? 0) - Date.now())).toBeLessThan(HOUR_MS);
+    });
+
+    it('answers with nothing for a league that is not there, rather than this process’s clock', async (): Promise<void> => {
+      expect(await readClock(randomUUID())).toBeNull();
+    });
+  });
+
+  describe(symbolName(readFormContext), (): void => {
+    it('opens the form on instants, not on whatever the driver returned', async (): Promise<void> => {
+      // This read exists to hand the form the database's clock. Its own arithmetic runs on that value, so a driver
+      // returning a string throws here rather than anywhere the mocked route tests could see
+      const context = await readFormContext(LEAGUE_ID, ids.Ada!);
+
+      expect(context).not.toBeNull();
+      expect(Number.isNaN(Date.parse(context!.now))).toBe(false);
+      expect(Number.isNaN(Date.parse(context!.earliest))).toBe(false);
+      expect(Date.parse(context!.earliest)).toBeLessThan(Date.parse(context!.now));
+    });
+
+    it('answers nothing for a league that is not there', async (): Promise<void> => {
+      expect(await readFormContext(randomUUID(), ids.Ada!)).toBeNull();
+    });
   });
 
   describe(symbolName(readMatchView), (): void => {

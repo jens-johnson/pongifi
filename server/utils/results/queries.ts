@@ -152,13 +152,16 @@ export async function readFormContext(leagueId: string, userId: string): Promise
     .where(and(eq(memberships.leagueId, leagueId), eq(memberships.status, MembershipStatus.ACTIVE)));
 
   // The database's clock, not this process's: the window below is measured from the instant the form is
-  // initialized with, and a browser five minutes fast never decides what "now" was
-  const clock = await database
-    .select({ now: sql<Date>`now()` })
-    .from(leagues)
-    .where(eq(leagues.id, leagueId))
-    .limit(1);
-  const now: Date = clock[0]?.now ?? new Date();
+  // initialized with, and a browser five minutes fast never decides what "now" was.
+  //
+  // No fallback to this process's clock. The whole point of this read is that the instant is the database's, so a
+  // clock that could not be read makes the context unavailable rather than quietly substituting the runner's
+  const now: Date | null = await readClock(leagueId);
+
+  if (!now) {
+    return null;
+  }
+
   const role: LeagueRole = league.role as LeagueRole;
 
   return {
@@ -340,6 +343,39 @@ function winnerOf(game: IGameScoreRow, retiredSide: Side | null): Side | null {
 }
 
 /**
+ * The database's clock, rendered as text this process can read back without guessing.
+ *
+ * `sql<Date>` is a TypeScript annotation and performs no conversion, and neither PGlite nor the Neon HTTP adapter
+ * converts a timestamp — both hand back a string, in Postgres's own display format (`2026-09-21 15:07:45.088-08`),
+ * whose parsing is not portable. Formatting to ISO-8601 in the database instead makes the value unambiguous
+ * whatever driver carries it
+ * @internal
+ * @constant
+ */
+const CLOCK_COLUMN = sql<string>`to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+/**
+ * Reads an instant a driver handed over, whatever shape it chose.
+ *
+ * Defensive about the shape and strict about the value: a driver that starts converting timestamps, or one that
+ * hands back epoch milliseconds, is read correctly, and anything that is not a usable instant answers null rather
+ * than an Invalid Date that fails later and somewhere else
+ * @internal
+ * @function
+ * @param value - Whatever the driver returned
+ * @returns The instant, or null when there is not one
+ */
+function decodeInstant(value: unknown): Date | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const instant: Date = value instanceof Date ? value : new Date(value as number | string);
+
+  return Number.isNaN(instant.getTime()) ? null : instant;
+}
+
+/**
  * The database's clock.
  *
  * A deadline is decided against the instant the database holds, never against this process's: a runner whose clock
@@ -356,13 +392,9 @@ function winnerOf(game: IGameScoreRow, retiredSide: Side | null): Side | null {
  */
 export async function readClock(leagueId: string): Promise<Date | null> {
   const database = useDatabase();
-  const clock = await database
-    .select({ now: sql<Date>`now()` })
-    .from(leagues)
-    .where(eq(leagues.id, leagueId))
-    .limit(1);
+  const clock = await database.select({ now: CLOCK_COLUMN }).from(leagues).where(eq(leagues.id, leagueId)).limit(1);
 
-  return clock[0]?.now ?? null;
+  return decodeInstant(clock[0]?.now);
 }
 
 /**

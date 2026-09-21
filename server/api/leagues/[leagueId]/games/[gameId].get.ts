@@ -129,6 +129,13 @@ export default defineEventHandler(async (event: H3Event): Promise<IMatchPageResp
     throw createError({ statusCode: 404, statusMessage: NOT_FOUND });
   }
 
+  // Unknown is not the same as not due. Without the database's clock there is no way to say whether this result has
+  // passed its deadline, and answering false would render an overdue result as ordinarily pending — the exact
+  // failure this flag exists to prevent
+  if (!now) {
+    throw createError({ statusCode: 502, statusMessage: UPSTREAM_MESSAGE });
+  }
+
   // The result's own deadline decides this, not the sweep's return. `settleDueResults` is bounded, so a resolved
   // sweep means "a batch ran", never "the league is caught up" — with more overdue results than one batch holds,
   // this one can still be due after a sweep that succeeded
@@ -138,7 +145,6 @@ export default defineEventHandler(async (event: H3Event): Promise<IMatchPageResp
     canonicalMatchId,
     match,
     settlementFailed: !settled,
-    settlementOutstanding:
-      match.state === ResultState.UNCONFIRMED && deadline !== null && now !== null && deadline <= now.getTime(),
+    settlementOutstanding: match.state === ResultState.UNCONFIRMED && deadline !== null && deadline <= now.getTime(),
   };
 });
