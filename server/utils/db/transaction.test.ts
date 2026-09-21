@@ -281,6 +281,16 @@ const BODY_FAILURE: string = 'the seat is not a member';
  * @internal
  * @constant
  */
+/**
+ * How far a measured phase may fall short of the delay it was given.
+ *
+ * `setTimeout` schedules against one clock and `performance.now()` reads another, so a 60ms wait is regularly
+ * measured at 59.96. Without this the case fails for the runtime's clocks rather than for anything about phases
+ * @internal
+ * @constant
+ */
+const TIMER_SLACK_MS: number = 2;
+
 const BUDGET_MS: number = 40;
 
 /**
@@ -358,11 +368,18 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       const observed: ITransactionPhases = phases!;
 
-      // Each bound rather than an equality, because a timer fires no earlier than it is asked to and never exactly
+      // Each phase is checked against the delay it was given, with a little slack in both directions. Not an
+      // equality, because a timer fires when the runtime gets to it; and not a bare lower bound either, because
+      // `setTimeout` and `performance.now()` do not read the same clock and a 60ms wait measures as 59.96 often
+      // enough to matter. What the case is about is that each phase carries its own delay and no other phase's
       expect(observed.committed).toBe(true);
-      expect(observed.connectMs).toBeGreaterThanOrEqual(40);
-      expect(observed.bodyMs).toBeGreaterThanOrEqual(60);
-      expect(observed.commitMs).toBeGreaterThanOrEqual(30);
+      expect(observed.connectMs).toBeGreaterThanOrEqual(40 - TIMER_SLACK_MS);
+      expect(observed.bodyMs).toBeGreaterThanOrEqual(60 - TIMER_SLACK_MS);
+      expect(observed.commitMs).toBeGreaterThanOrEqual(30 - TIMER_SLACK_MS);
+
+      // And each stays inside its own phase: the body's 60ms must not appear in connect's or commit's number
+      expect(observed.connectMs).toBeLessThan(60);
+      expect(observed.commitMs).toBeLessThan(60);
       expect(observed.operationMs).toBeGreaterThanOrEqual(
         observed.connectMs + observed.preambleMs + observed.bodyMs + observed.commitMs,
       );
@@ -585,9 +602,12 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('destroys a connection whose rollback outran the cleanup bound', async (): Promise<void> => {
       transport.delays['ROLLBACK'] = SLOW_MS;
 
+      // A patient operation budget, because the bound under test is the cleanup one: the slow ROLLBACK is what this
+      // case arranges, and on the tight budget a busy runner spends the operation's instead, which reports the
+      // budget rather than the body and fails the case for a reason it is not about
       const { elapsed, outcome } = await run(async (): Promise<never> => {
         throw new Error(BODY_FAILURE);
-      });
+      }, PATIENT_MS);
 
       expect((outcome as Error).message).toBe(BODY_FAILURE);
       expect(elapsed).toBeLessThan(SLOW_MS);
@@ -597,7 +617,10 @@ describe(getTestFileName(import.meta.url), (): void => {
     it('answers even when closing the pool never does', async (): Promise<void> => {
       transport.endHangs = true;
 
-      const { elapsed, outcome } = await run(async (): Promise<string> => 'recorded');
+      // The patient budget on purpose: what is under test is that a pool whose close never resolves cannot hold the
+      // answer, and nothing in this path is slow. On the default budget a busy runner alone could spend it, which
+      // would fail the case for a reason that has nothing to do with the hang
+      const { elapsed, outcome } = await run(async (): Promise<string> => 'recorded', PATIENT_MS);
 
       expect(outcome).toBe('recorded');
       expect(elapsed).toBeLessThan(SLOW_MS);
