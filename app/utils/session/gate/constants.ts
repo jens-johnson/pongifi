@@ -64,3 +64,13 @@ export const GATED_LEAGUE_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/?$/;
  * @constant
  */
 export const GATED_LEAGUE_SETTINGS_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/settings\/?$/;
+
+/**
+ * The shape of a recorded match's page: a league path, `games`, and one more non-empty segment.
+ *
+ * Named as its own shape for the same reason the settings page is: a wildcard under `/leagues` would turn every
+ * mistyped deeper path into a sign-in prompt instead of a 404 (page spec, Shared Rules For This Slice)
+ * @public
+ * @constant
+ */
+export const GATED_LEAGUE_GAME_PATH_PATTERN: RegExp = /^\/leagues\/[^/]+\/games\/[^/]+\/?$/;
