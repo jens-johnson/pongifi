@@ -59,6 +59,13 @@ const MATCH_ID: string = 'd7a4f3b1-0000-4000-8000-000000000004';
 const LATER_MATCH_ID: string = 'f9c6b5d3-0000-4000-8000-000000000006';
 
 /**
+ * A different league, which the page may also have moved to under the widget
+ * @internal
+ * @constant
+ */
+const LATER_LEAGUE_ID: string = 'a1b2c3d4-0000-4000-8000-000000000007';
+
+/**
  * The names the template gives each control
  * @internal
  * @constant
@@ -150,10 +157,15 @@ function answerRateLimited(event: H3Event): unknown {
  */
 let answer: (event: H3Event) => unknown = answerAccepted;
 
-for (const target of [MATCH_ID, LATER_MATCH_ID]) {
-  // Both are registered so that a retry aimed at the wrong match is recorded and visible, rather than disappearing
-  // into a 404 that a case could mistake for the refusal it was testing
-  registerEndpoint(`/api/leagues/${LEAGUE_ID}/games/${target}/answer`, {
+for (const [league, target] of [
+  [LEAGUE_ID, MATCH_ID],
+  [LEAGUE_ID, LATER_MATCH_ID],
+  [LATER_LEAGUE_ID, MATCH_ID],
+  [LATER_LEAGUE_ID, LATER_MATCH_ID],
+]) {
+  // Every league-and-match combination is registered so that a retry aimed at the wrong one is recorded and
+  // visible, rather than disappearing into a 404 a case could mistake for the refusal it was testing
+  registerEndpoint(`/api/leagues/${league}/games/${target}/answer`, {
     handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
       sent.push((await readBody(event)) as Record<string, unknown>);
       paths.push(event.path ?? '');
@@ -405,16 +417,19 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.emitted('resolved')).toHaveLength(1);
   });
 
-  it('checks with the request it first sent, even after the page re-read', async (): Promise<void> => {
+  it('checks with the request it first sent, to where it first sent it, after a re-read', async (): Promise<void> => {
     // The page may refresh under the widget between the press and the check. A check rebuilt from the new props
-    // would carry a later revision under the same operation id, which the server reads as a changed body
+    // would carry a later revision under the same operation id, which the server reads as a changed body — and be
+    // aimed at a target the original operation was never made against, where its receipt is not
     answer = answerUnavailable;
 
     const wrapper: VueWrapper = await mountActions({ mayConfirm: true });
 
     await pressButton(wrapper, CONFIRM);
 
+    // Both props move together: the league as well as the match, since the endpoint is built from both
     await wrapper.setProps({
+      leagueId: LATER_LEAGUE_ID,
       match: {
         ...match({ mayConfirm: true }),
         canonicalMatchId: LATER_MATCH_ID,
@@ -427,6 +442,9 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(sent[1]).toEqual(sent[0]);
     expect(sent[1]?.expectedRevision).toBe(3);
     expect(paths[1]).toBe(paths[0]);
+    // The registered endpoint is served under a prefix, so the tail is what identifies the target
+    expect(paths[1]).toContain(`/api/leagues/${LEAGUE_ID}/games/${MATCH_ID}/answer`);
+    expect(paths[1]).not.toContain(LATER_LEAGUE_ID);
   });
 
   it('keeps the check reachable when the re-read no longer offers the action', async (): Promise<void> => {

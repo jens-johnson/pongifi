@@ -98,12 +98,14 @@ export interface IResultActionState {
   request: IResultActionRequest | null;
 
   /**
-   * The match the request was aimed at.
+   * The endpoint the request was sent to, whole.
    *
-   * Held for the same reason as the body. A page that re-read between the press and the retry may be showing a
-   * different match or a later revision, and a retry rebuilt from that would ask about an operation nobody made
+   * Held rather than the pieces it is built from, for the same reason as the body: a page that re-read between the
+   * press and the retry may be showing a different match in a different league, and a URL reassembled from those
+   * would aim the retry at a target the original operation was never made against. One field cannot be
+   * half-remembered the way two can
    */
-  targetMatchId: string | null;
+  endpoint: string | null;
 }
 
 /**
@@ -168,41 +170,41 @@ export const STILL_UNRESOLVED_MESSAGE: string = 'Your earlier answer may still h
 export function idleAction(): IResultActionState {
   return {
     action: null,
+    endpoint: null,
     message: null,
     phase: ResultActionPhase.IDLE,
     recovering: false,
     request: null,
-    targetMatchId: null,
   };
 }
 
 /**
  * The state a press starts in.
  *
- * A retry of an uncertain action re-sends the request it was pressed with, against the match it was aimed at; a
+ * A retry of an uncertain action re-sends the request it was pressed with, to the endpoint it was sent to; a
  * fresh press takes the new one. That is the whole difference between asking the server "did my answer land?" and
  * asking it to answer again
  * @public
  * @function
  * @param state - Where the page is now
  * @param request - The request this press would make, used only when this is not a retry
- * @param targetMatchId - The match this press would be aimed at, used only when this is not a retry
+ * @param endpoint - Where this press would be sent, used only when this is not a retry
  * @returns The state while it is in flight
  */
 export function startAction(
   state: IResultActionState,
   request: IResultActionRequest,
-  targetMatchId: string,
+  endpoint: string,
 ): IResultActionState {
   const retrying: boolean = state.phase === ResultActionPhase.UNCERTAIN && state.action === request.action;
 
   return {
     action: request.action,
+    endpoint: retrying ? state.endpoint : endpoint,
     message: null,
     phase: ResultActionPhase.SENDING,
     recovering: retrying,
     request: retrying ? state.request : request,
-    targetMatchId: retrying ? state.targetMatchId : targetMatchId,
   };
 }
 
@@ -258,11 +260,11 @@ export function failAction(state: IResultActionState, error: unknown): IResultAc
   if (failure === WriteFailure.CONFLICT) {
     return {
       action: state.action,
+      endpoint: null,
       message: CONFLICT_MESSAGE,
       phase: ResultActionPhase.CONFLICT,
       recovering: false,
       request: null,
-      targetMatchId: null,
     };
   }
 
@@ -278,11 +280,11 @@ export function failAction(state: IResultActionState, error: unknown): IResultAc
 
   return {
     action: state.action,
+    endpoint: null,
     message: messageOf(error),
     phase: ResultActionPhase.REFUSED,
     recovering: false,
     request: null,
-    targetMatchId: null,
   };
 }
 

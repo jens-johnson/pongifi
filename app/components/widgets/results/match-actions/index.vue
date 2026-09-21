@@ -110,15 +110,16 @@ async function press(which: ResultAction): Promise<void> {
     note: which === ResultAction.DISPUTE && note.value.trim().length > 0 ? note.value.trim() : null,
   };
 
-  action.value = startAction(action.value, intended, props.match.canonicalMatchId);
+  action.value = startAction(
+    action.value,
+    intended,
+    `/api/leagues/${props.leagueId}/games/${props.match.canonicalMatchId}/answer`,
+  );
 
   const sending: IResultActionState = action.value;
 
   try {
-    await $fetch(`/api/leagues/${props.leagueId}/games/${sending.targetMatchId}/answer`, {
-      body: sending.request,
-      method: 'POST',
-    });
+    await $fetch(sending.endpoint as string, { body: sending.request, method: 'POST' });
 
     action.value = idleAction();
     note.value = '';

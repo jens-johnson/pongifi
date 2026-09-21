@@ -53,11 +53,11 @@ const FIRST: string = 'a4f1c0de-0000-4000-8000-000000000001';
 const SECOND: string = 'b5e2d1ef-0000-4000-8000-000000000002';
 
 /**
- * The match a press is aimed at
+ * Where a press is sent
  * @internal
  * @constant
  */
-const MATCH: string = 'd7a4f3b1-0000-4000-8000-000000000004';
+const ENDPOINT: string = '/api/leagues/league-1/games/match-1/answer';
 
 /**
  * What a spent write allowance says
@@ -67,11 +67,11 @@ const MATCH: string = 'd7a4f3b1-0000-4000-8000-000000000004';
 const TOO_MANY: string = 'Too many saves.';
 
 /**
- * A match the page moved on to
+ * Where a press would be sent after the page moved on to another league and match
  * @internal
  * @constant
  */
-const LATER_MATCH: string = 'e8b5a4c2-0000-4000-8000-000000000005';
+const LATER_ENDPOINT: string = '/api/leagues/league-2/games/match-2/answer';
 
 /**
  * A request of the shape a press makes
@@ -111,7 +111,7 @@ function rejection(statusCode: number, message: string | null = null): unknown {
  * @returns The state the page is left in
  */
 function uncertain(action: ResultAction = ResultAction.CONFIRM): IResultActionState {
-  return failAction(startAction(idleAction(), request(action), MATCH), rejection(502));
+  return failAction(startAction(idleAction(), request(action), ENDPOINT), rejection(502));
 }
 
 /* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -119,13 +119,13 @@ function uncertain(action: ResultAction = ResultAction.CONFIRM): IResultActionSt
 describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(startAction), (): void => {
     it('takes the request it was given for a first press', (): void => {
-      const state: IResultActionState = startAction(idleAction(), request(ResultAction.CONFIRM), MATCH);
+      const state: IResultActionState = startAction(idleAction(), request(ResultAction.CONFIRM), ENDPOINT);
 
       expect(state).toMatchObject({
         action: ResultAction.CONFIRM,
         message: null,
         phase: ResultActionPhase.SENDING,
-        targetMatchId: MATCH,
+        endpoint: ENDPOINT,
       });
       expect(state.request?.clientOperationId).toBe(FIRST);
     });
@@ -137,15 +137,15 @@ describe(getTestFileName(import.meta.url), (): void => {
         clientOperationId: SECOND,
         expectedRevision: 4,
       });
-      const retried: IResultActionState = startAction(uncertain(), moved, LATER_MATCH);
+      const retried: IResultActionState = startAction(uncertain(), moved, LATER_ENDPOINT);
 
       expect(retried.request).toEqual(request(ResultAction.CONFIRM));
-      expect(retried.targetMatchId).toBe(MATCH);
+      expect(retried.endpoint).toBe(ENDPOINT);
     });
 
     it('holds a dispute’s original words through a check, whatever has been typed since', (): void => {
       const first: IResultActionState = failAction(
-        startAction(idleAction(), request(ResultAction.DISPUTE, { note: 'that was not the score' }), MATCH),
+        startAction(idleAction(), request(ResultAction.DISPUTE, { note: 'that was not the score' }), ENDPOINT),
         rejection(502),
       );
       const edited: IResultActionRequest = request(ResultAction.DISPUTE, {
@@ -153,23 +153,23 @@ describe(getTestFileName(import.meta.url), (): void => {
         note: 'actually it was 11-9',
       });
 
-      expect(startAction(first, edited, MATCH).request?.note).toBe('that was not the score');
+      expect(startAction(first, edited, ENDPOINT).request?.note).toBe('that was not the score');
     });
 
     it('takes a fresh request when a different action is pressed', (): void => {
       // A confirm that may have landed does not make a dispute part of the same operation
       const next: IResultActionRequest = request(ResultAction.DISPUTE, { clientOperationId: SECOND });
 
-      expect(startAction(uncertain(), next, MATCH).request?.clientOperationId).toBe(SECOND);
+      expect(startAction(uncertain(), next, ENDPOINT).request?.clientOperationId).toBe(SECOND);
     });
 
     it('clears a previous message so a refusal does not outlive the press it belonged to', (): void => {
       const refused: IResultActionState = failAction(
-        startAction(idleAction(), request(ResultAction.CONFIRM), MATCH),
+        startAction(idleAction(), request(ResultAction.CONFIRM), ENDPOINT),
         rejection(403, 'Your role in this league does not allow that.'),
       );
 
-      expect(startAction(refused, request(ResultAction.DISPUTE), MATCH).message).toBeNull();
+      expect(startAction(refused, request(ResultAction.DISPUTE), ENDPOINT).message).toBeNull();
     });
   });
 
@@ -178,7 +178,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       // No answer and a 5xx are the same answer: it may have committed
       for (const error of [rejection(502), rejection(500), new Error('network down')]) {
         const state: IResultActionState = failAction(
-          startAction(idleAction(), request(ResultAction.VOID), MATCH),
+          startAction(idleAction(), request(ResultAction.VOID), ENDPOINT),
           error,
         );
 
@@ -197,7 +197,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
         expect(checked.phase).toBe(ResultActionPhase.UNCERTAIN);
         expect(checked.request?.clientOperationId).toBe(FIRST);
-        expect(checked.targetMatchId).toBe(MATCH);
+        expect(checked.endpoint).toBe(ENDPOINT);
         expect(checked.message).toContain(STILL_UNRESOLVED_MESSAGE);
       }
     });
@@ -215,12 +215,12 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(checked.phase).toBe(ResultActionPhase.CONFLICT);
       expect(checked.request).toBeNull();
-      expect(checked.targetMatchId).toBeNull();
+      expect(checked.endpoint).toBeNull();
     });
 
     it('drops the request on a conflict, because the result moved rather than the request failing', (): void => {
       const state: IResultActionState = failAction(
-        startAction(idleAction(), request(ResultAction.CONFIRM), MATCH),
+        startAction(idleAction(), request(ResultAction.CONFIRM), ENDPOINT),
         rejection(409, 'You have already answered this result.'),
       );
 
@@ -230,7 +230,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
 
     it('prefers the server’s words to ours on a refusal', (): void => {
-      const press: IResultActionState = startAction(idleAction(), request(ResultAction.VOID), MATCH);
+      const press: IResultActionState = startAction(idleAction(), request(ResultAction.VOID), ENDPOINT);
 
       expect(failAction(press, rejection(403, 'Not your call.')).message).toBe('Not your call.');
       expect(failAction(press, rejection(422)).message).toBe(REFUSED_MESSAGE);
@@ -238,7 +238,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     it('drops the request on a first refusal, since nothing was written', (): void => {
       const state: IResultActionState = failAction(
-        startAction(idleAction(), request(ResultAction.DISPUTE), MATCH),
+        startAction(idleAction(), request(ResultAction.DISPUTE), ENDPOINT),
         rejection(422, 'That note is too long.'),
       );
 
@@ -250,7 +250,7 @@ describe(getTestFileName(import.meta.url), (): void => {
   describe(symbolName(actionsBlocked), (): void => {
     it('holds the page while something is in flight or unresolved', (): void => {
       // Pressing Void while a Confirm may or may not have landed is how somebody ends up having done both
-      expect(actionsBlocked(startAction(idleAction(), request(ResultAction.CONFIRM), MATCH))).toBe(true);
+      expect(actionsBlocked(startAction(idleAction(), request(ResultAction.CONFIRM), ENDPOINT))).toBe(true);
       expect(actionsBlocked(uncertain())).toBe(true);
     });
 
@@ -259,7 +259,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     });
 
     it('releases the page once the outcome is known, however it turned out', (): void => {
-      const sending: IResultActionState = startAction(idleAction(), request(ResultAction.CONFIRM), MATCH);
+      const sending: IResultActionState = startAction(idleAction(), request(ResultAction.CONFIRM), ENDPOINT);
 
       expect(actionsBlocked(idleAction())).toBe(false);
       expect(actionsBlocked(failAction(sending, rejection(409)))).toBe(false);
