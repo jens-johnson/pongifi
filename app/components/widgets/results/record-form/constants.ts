@@ -20,26 +20,19 @@ import type { IResultFormContext } from '#shared/results';
 import { toLocalDateTime } from '~/utils/results/format';
 
 /**
- * An hour, in milliseconds
- * @internal
- * @constant
- */
-const HOUR_MS: number = 60 * 60 * 1000;
-
-/**
  * What a play time outside the league's entry window says.
  *
  * The window is stated in hours rather than as two timestamps, because the person is deciding whether the match
- * they are thinking of is still enterable, not reading a range
+ * they are thinking of is still enterable, not reading a range. The hours come from the context rather than from
+ * the distance between its two instants: in Amend mode that distance is the window plus however long the result
+ * has been waiting to be corrected
  * @public
  * @function
- * @param context - The league's rules, which carry the window's two ends
+ * @param context - The rules this entry is judged by, which carry the window
  * @returns The message
  */
 export function PLAYED_AT_MESSAGE(context: IResultFormContext): string {
-  const hours: number = Math.round((Date.parse(context.now) - Date.parse(context.earliest)) / HOUR_MS);
-
-  return `Results can be recorded up to ${hours} hours after they were played.`;
+  return `Results can be recorded up to ${context.windowHours} hours after they were played.`;
 }
 
 /**
@@ -48,6 +41,13 @@ export function PLAYED_AT_MESSAGE(context: IResultFormContext): string {
  * @constant
  */
 export const RECORD_SAVE_LABEL: string = 'Record result';
+
+/**
+ * What the same button reads when the form was opened to correct a result rather than to enter one
+ * @public
+ * @constant
+ */
+export const RECORD_AMEND_LABEL: string = 'Save amendment';
 
 /**
  * What the Save button reads while a save is in flight, which is also when it is disabled.

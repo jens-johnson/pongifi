@@ -27,6 +27,7 @@ import type { Router } from 'vue-router';
 import { matchedRouteKey } from 'vue-router';
 
 import type { IResultFormContext } from '#shared/results';
+import { ResultEnding, Seat } from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 import { toLocalDateTime } from '~/utils/results/format';
 
@@ -179,6 +180,26 @@ let sent: Record<string, unknown>[] = [];
 let strays: Record<string, unknown>[] = [];
 
 /**
+ * Every body the form sent to the match it was correcting
+ * @internal
+ */
+let corrections: Record<string, unknown>[] = [];
+
+/**
+ * What the dispute the correction answers said
+ * @internal
+ * @constant
+ */
+const DISPUTE_NOTE: string = 'Game three was 11-9 my way.';
+
+/**
+ * When the match being corrected says it was played, which is not when the form was opened
+ * @internal
+ * @constant
+ */
+const PLAYED_AT: string = '2026-09-19T18:00:00.000Z';
+
+/**
  * Every form a case mounted, unmounted afterwards.
  *
  * The departure guards are registered on the route record the whole file shares, so a form left mounted would keep
@@ -217,6 +238,15 @@ registerEndpoint(`/api/leagues/${LEAGUE_ID}/games`, {
   method: 'POST',
 });
 
+registerEndpoint(`/api/leagues/${LEAGUE_ID}/games/${MATCH_ID}/amend`, {
+  handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
+    corrections.push((await readBody(event)) as Record<string, unknown>);
+
+    return answer(event);
+  }),
+  method: 'POST',
+});
+
 registerEndpoint(`/api/leagues/${OTHER_LEAGUE_ID}/games`, {
   handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
     strays.push((await readBody(event)) as Record<string, unknown>);
@@ -246,6 +276,7 @@ function context(overrides: Partial<IResultFormContext> = {}): IResultFormContex
     formats: [GameType.SINGLES, GameType.DOUBLES],
     leagueName: 'Friday Ladder',
     now: '2026-09-20T12:00:00.000Z',
+    windowHours: 48,
     roster: [
       { displayName: 'Ada', id: ADA },
       { displayName: 'Ben', id: BEN },
@@ -257,6 +288,72 @@ function context(overrides: Partial<IResultFormContext> = {}): IResultFormContex
     },
     ...overrides,
   };
+}
+
+/**
+ * The context a correction opens on: the match's frozen rules, its disputed revision, and what was said about it
+ * @internal
+ * @function
+ * @param overrides - What the case changes
+ * @returns The context
+ */
+function correcting(overrides: Partial<IResultFormContext> = {}): IResultFormContext {
+  return context({
+    amendment: {
+      canonicalMatchId: MATCH_ID,
+      dispute: {
+        at: '2026-09-19T20:00:00.000Z',
+        by: {
+          displayName: 'Ben',
+          guest: false,
+          id: BEN,
+          member: true,
+          removed: false,
+        },
+        note: DISPUTE_NOTE,
+        redacted: false,
+      },
+      expectedRevision: 1,
+      submission: {
+        ending: ResultEnding.COMPLETED,
+        gameType: GameType.SINGLES,
+        games: [
+          {
+            a: 11,
+            b: 4,
+            gameNumber: 1,
+          },
+          {
+            a: 9,
+            b: 11,
+            gameNumber: 2,
+          },
+          {
+            a: 11,
+            b: 7,
+            gameNumber: 3,
+          },
+        ],
+        playedAt: PLAYED_AT,
+        retiredSeat: null,
+        seats: [
+          {
+            guestName: null,
+            seat: Seat.A1,
+            userId: ADA,
+          },
+          {
+            guestName: null,
+            seat: Seat.B1,
+            userId: BEN,
+          },
+        ],
+      },
+    },
+    // The match froze one format and its own scoring rules; the league's current ones are not on this context at all
+    formats: [GameType.SINGLES],
+    ...overrides,
+  });
 }
 
 /**
@@ -407,6 +504,7 @@ describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
     sent = [];
     strays = [];
+    corrections = [];
     answer = answerRecorded;
     welcome.owed = false;
   });
@@ -415,6 +513,92 @@ describe(getTestFileName(import.meta.url), (): void => {
     while (mounted.length > 0) {
       mounted.pop()!.unmount();
     }
+  });
+
+  it('opens a correction on the revision it corrects, under the rules that match was played under', async (): Promise<void> => {
+    // The context carries the match's own frozen rules; the league's current ones are not on it at all
+    const wrapper: VueWrapper = await mountForm(
+      correcting({
+        rules: {
+          matchFormat: 3,
+          targetScore: { SINGLES: 11 },
+          winningMargin: 2,
+        },
+      }),
+    );
+
+    expect(at(wrapper, 'caption').text()).toContain('Best of 3 · Games to 11, win by 2');
+    expect(at(wrapper, 'format-fixed').text()).toContain('Singles');
+
+    expect((at(wrapper, 'seat-B1').element as HTMLSelectElement).value).toBe(BEN);
+    expect((at(wrapper, 'score-a-0').element as HTMLInputElement).value).toBe('11');
+    expect((at(wrapper, 'score-b-1').element as HTMLInputElement).value).toBe('11');
+    expect((at(wrapper, 'score-a-2').element as HTMLInputElement).value).toBe('11');
+    // The play time the revision stated, not the instant the form was opened
+    expect((at(wrapper, 'played-at').element as HTMLInputElement).value).not.toBe('');
+    expect(at(wrapper, 'dispute').text()).toContain(DISPUTE_NOTE);
+    expect(at(wrapper, 'save').text()).toBe('Save amendment');
+    // One format is a fixed line rather than a choice of one
+    expect(at(wrapper, `format-${GameType.SINGLES}`).exists()).toBe(false);
+  });
+
+  it('sends a correction to the match, under the revision it was opened on', async (): Promise<void> => {
+    const router: Router = useNuxtApp().$router as Router;
+    const { wrapper }: { wrapper: VueWrapper } = await mountRouted(correcting(), goToResult(router));
+
+    await at(wrapper, 'score-b-2').setValue('9');
+    await pressSave(wrapper);
+
+    await vi.waitFor((): void => {
+      expect(router.currentRoute.value.path).toBe(`/leagues/${LEAGUE_ID}/games/${MATCH_ID}`);
+    });
+
+    const body: Record<string, unknown> = corrections[0]!;
+
+    expect(corrections).toHaveLength(1);
+    // The revision the page was showing, never the league's configuration revision: the correction is judged
+    // against the result it corrects
+    expect(body.expectedRevision).toBe(1);
+    expect(body).not.toHaveProperty('expectedLeagueRevision');
+    expect(body).not.toHaveProperty('acknowledgement');
+    expect((body.submission as { games: { b: number }[] }).games[2]!.b).toBe(9);
+    // Nothing reached the league's own collection of results: a correction appends a revision, it does not record
+    expect(sent).toHaveLength(0);
+    expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+  });
+
+  it('keeps the correction on the page when the result moved underneath it', async (): Promise<void> => {
+    const wrapper: VueWrapper = await mountForm(correcting());
+
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 409);
+
+      return { current: null, message: 'This result changed while you were looking at it.' };
+    };
+
+    await at(wrapper, 'score-b-2').setValue('9');
+    await pressSave(wrapper);
+
+    expect(at(wrapper, SERVER_MESSAGE).text()).toContain('This result changed while you were looking at it.');
+    // The draft is the correction somebody typed; a refusal never takes it away
+    expect((at(wrapper, 'score-b-2').element as HTMLInputElement).value).toBe('9');
+  });
+
+  it('states the window the match was recorded under, not the distance between the two instants', async (): Promise<void> => {
+    // The correction's two ends are the original play time less the window, and now: a span that is the window
+    // plus however long the result has been waiting. Deriving hours from it would state a window nobody set
+    const wrapper: VueWrapper = await mountForm(
+      correcting({
+        earliest: '2026-09-17T18:00:00.000Z',
+        now: '2026-09-20T12:00:00.000Z',
+        windowHours: 48,
+      }),
+    );
+
+    await at(wrapper, 'played-at').setValue('2026-09-10T09:00');
+
+    expect(wrapper.text()).toContain('up to 48 hours');
+    expect(wrapper.text()).not.toContain('up to 66 hours');
   });
 
   it('states the rules the entry will be judged by', async (): Promise<void> => {

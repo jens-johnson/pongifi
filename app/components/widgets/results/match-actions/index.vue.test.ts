@@ -122,6 +122,20 @@ const DISPUTE: string = 'dispute';
 const NOTE: string = 'dispute-note';
 
 /**
+ * The control that opens a correction
+ * @internal
+ * @constant
+ */
+const AMEND: string = 'amend';
+
+/**
+ * The void control
+ * @internal
+ * @constant
+ */
+const VOID: string = 'void';
+
+/**
  * What the page says while something is outstanding
  * @internal
  * @constant
@@ -718,6 +732,45 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(sent).toHaveLength(3);
       expect(new Set(sent.map((body): unknown => body.clientOperationId)).size).toBe(1);
       expect(wrapper.emitted('resolved')).toHaveLength(1);
+    });
+  });
+
+  describe('opening a correction', (): void => {
+    it('offers the Record page in Amend mode, on the match rather than on the route', async (): Promise<void> => {
+      const wrapper: VueWrapper = await mountActions({
+        administrator: true,
+        mayAmend: true,
+        mayVoid: true,
+      });
+
+      expect(at(wrapper, AMEND).text()).toBe('Amend result');
+      expect(at(wrapper, AMEND).attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/new?amend=${MATCH_ID}`);
+    });
+
+    it('offers nothing to a viewer who may not correct it', async (): Promise<void> => {
+      // Past the bound, or on a result nobody questioned, the read says so and the page offers void alone
+      const wrapper: VueWrapper = await mountActions({ administrator: true, mayVoid: true });
+
+      expect(at(wrapper, AMEND).exists()).toBe(false);
+      expect(at(wrapper, VOID).exists()).toBe(true);
+    });
+
+    it('cannot be followed while an answer is unresolved', async (): Promise<void> => {
+      // Leaving would take the held request and its Check with it, which is the same reason the answers beside it
+      // are unavailable
+      answer = answerUnavailable;
+
+      const wrapper: VueWrapper = await mountActions({
+        administrator: true,
+        mayAmend: true,
+        mayVoid: true,
+      });
+
+      await pressButton(wrapper, VOID);
+      await pressButton(wrapper, 'void-confirm');
+
+      expect(at(wrapper, AMEND).attributes('aria-disabled')).toBe('true');
+      expect(at(wrapper, AMEND).classes()).toContain('pointer-events-none');
     });
   });
 });

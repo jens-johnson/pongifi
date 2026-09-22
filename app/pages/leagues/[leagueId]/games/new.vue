@@ -3,7 +3,7 @@
 
 import type { ComputedRef } from 'vue';
 
-import type { IResultFormContext } from '#shared/results';
+import type { IResultAmendment, IResultFormContext } from '#shared/results';
 import { AccountReadState, type IAccountReadStateInput } from '~/utils/account/read-state';
 import { HOME_ROUTE, LEAGUES_ROUTE } from '~/utils/marketing/routes';
 
@@ -24,7 +24,18 @@ const route: ReturnType<typeof useRoute> = useRoute();
 const { user }: ReturnType<typeof useUserSession> = useUserSession();
 
 /**
- * Everything the league says about how this entry will be judged, including the database's clock
+ * The result this page was opened to correct, when it was opened to correct one.
+ *
+ * A query rather than a route of its own: correcting is the same form under the same rules, opened on a result
+ * instead of on an empty draft (page spec, Record, Amend mode)
+ * @internal
+ * @constant
+ */
+const amendId: string = typeof route.query.amend === 'string' ? route.query.amend : '';
+
+/**
+ * Everything the league says about how this entry will be judged, including the database's clock; or, for a
+ * correction, everything the match froze when it was recorded
  * @internal
  * @constant
  */
@@ -34,8 +45,13 @@ const {
   refresh,
   status,
 }: Awaited<ReturnType<typeof useFetch<IResultFormContext>>> = await useFetch<IResultFormContext>(
-  (): string => `/api/leagues/${String(route.params.leagueId)}/games/context`,
-  { key: `record-${String(route.params.leagueId)}` },
+  (): string =>
+    amendId
+      ? `/api/leagues/${String(route.params.leagueId)}/games/context?amend=${encodeURIComponent(amendId)}`
+      : `/api/leagues/${String(route.params.leagueId)}/games/context`,
+  // Keyed by mode as well as by league: an entry and a correction are two different contexts for one league, and a
+  // shared key would open one of them on the other's rules
+  { key: `record-${String(route.params.leagueId)}-${amendId}` },
 );
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -75,16 +91,47 @@ const leagueRoute: ComputedRef<string> = computed((): string => `${LEAGUES_ROUTE
  */
 const cutthroatOnly: ComputedRef<boolean> = computed((): boolean => (context.value?.formats.length ?? 0) === 0);
 
+/**
+ * The result being corrected, when this is a correction
+ * @internal
+ * @constant
+ */
+const amendment: ComputedRef<IResultAmendment | null> = computed(
+  (): IResultAmendment | null => context.value?.amendment ?? null,
+);
+
+/**
+ * Where the result being corrected is read
+ * @internal
+ * @constant
+ */
+const gameRoute: ComputedRef<string> = computed(
+  (): string => `${leagueRoute.value}/games/${amendment.value?.canonicalMatchId ?? ''}`,
+);
+
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 if (notFound.value) {
   setResponseStatus(404);
 }
 
+// A correction nobody may make is not a page with a sentence on it: the result itself already says what state it
+// is in and which resolution is still open, and that is where the answer is (page spec, Record, Amend mode)
+if (amendment.value && !context.value?.authority.may) {
+  await navigateTo(gameRoute.value, { replace: true });
+}
+
 useHead({
   meta: [{ content: 'noindex', name: 'robots' }],
-  title: (): string =>
-    context.value ? `Record a result · ${context.value.leagueName} · Pongifi` : 'Page not found · Pongifi',
+  title: (): string => {
+    if (!context.value) {
+      return 'Page not found · Pongifi';
+    }
+
+    const what: string = context.value.amendment ? 'Amend a result' : 'Record a result';
+
+    return `${what} · ${context.value.leagueName} · Pongifi`;
+  },
 });
 </script>
 
@@ -124,10 +171,25 @@ useHead({
       v-else-if="context"
       class="max-w-[560px]"
     >
-      <h1 class="font-display text-display font-medium tracking-tight">Record a result</h1>
+      <h1 class="font-display text-display font-medium tracking-tight">
+        {{ amendment ? 'Amend a result' : 'Record a result' }}
+      </h1>
+
+      <!-- A correction nobody may make has already been sent to the result, which says why; this is what stands
+           if that navigation itself could not be made, and it names no reason the result does not state better -->
+      <template v-if="amendment && !context.authority.may">
+        <p class="text-body mt-4">This result cannot be corrected here.</p>
+
+        <NuxtLink
+          class="text-accent-strong hover:text-accent text-body mt-6 inline-block font-medium"
+          :to="gameRoute"
+        >
+          Back to the result
+        </NuxtLink>
+      </template>
 
       <!-- Not a 404: they are a member of this league, and the page says whose job this is -->
-      <template v-if="!context.authority.may">
+      <template v-else-if="!context.authority.may">
         <p class="text-body mt-4">Only {{ context.authority.who }} can record results in this league.</p>
 
         <NuxtLink

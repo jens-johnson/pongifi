@@ -16,7 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { IRecordRequestBody, IResultFormContext } from '#shared/results';
+import type { IAmendRequestBody, IRecordRequestBody, IResultFormContext } from '#shared/results';
 
 /**
  * What the Record form is given
@@ -77,8 +77,8 @@ export interface IRecordExisting {
  * @public
  */
 export interface IRecordAttempt {
-  /* The body, exactly as it was sent. The acknowledgement travels outside the digest */
-  body: IRecordRequestBody;
+  /* The body, exactly as it was sent: an entry's, or a correction's. The acknowledgement travels outside the digest */
+  body: IAmendRequestBody | IRecordRequestBody;
 
   /* Where it was sent, whole */
   endpoint: string;

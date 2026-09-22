@@ -190,6 +190,7 @@ export async function readFormContext(leagueId: string, userId: string): Promise
       targetScore: settings.targetScore as unknown as Record<string, number>,
       winningMargin: settings.winningMargin,
     },
+    windowHours: settings.resultAmendmentWindow,
   };
 }
 
@@ -297,6 +298,7 @@ export async function readAmendContext(
       targetScore: { [settings.gameType]: settings.targetScore },
       winningMargin: settings.winningMargin,
     },
+    windowHours: policy.resultAmendmentWindow,
   };
 }
 

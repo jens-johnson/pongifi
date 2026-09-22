@@ -3,12 +3,20 @@
 
 import type { ComputedRef, Ref } from 'vue';
 
-import type { IResultFormContext, IResultSubmission, Seat as TSeat } from '#shared/results';
+import type {
+  IGameScoreRow,
+  IResultAmendment,
+  IResultFormContext,
+  IResultSeat,
+  IResultSubmission,
+  Seat as TSeat,
+} from '#shared/results';
 import { ResultEnding, seatsForGameType } from '#shared/results';
 import type { IMatchSettings } from '#shared/rules-engine';
 import { GameType } from '#shared/rules-engine';
 import { SETTINGS_LEAVE_PROMPT } from '~/utils/leagues/settings';
 import { classifyWriteFailure, readWriteStatus, WriteFailure } from '~/utils/leagues/write-failure';
+import { toDisputeLine } from '~/utils/results/format';
 import type {
   IRecordDraft,
   IRecordProblems,
@@ -29,6 +37,7 @@ import {
 
 import {
   PLAYED_AT_MESSAGE,
+  RECORD_AMEND_LABEL,
   RECORD_CHECK_LABEL,
   RECORD_DUPLICATE_LINK,
   RECORD_EXISTING_LINK,
@@ -234,6 +243,25 @@ const leaveButton: Ref<HTMLButtonElement | null> = ref<HTMLButtonElement | null>
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 /**
+ * The result being corrected, when the form was opened to correct one.
+ *
+ * Read from the prop rather than from the held copy of the rules: a correction is judged against the revision the
+ * page was given, and nothing the server answers back replaces it
+ * @internal
+ * @constant
+ */
+const amendment: ComputedRef<IResultAmendment | null> = computed(
+  (): IResultAmendment | null => props.context.amendment,
+);
+
+/**
+ * What the dispute this correction answers said, for the line above the form
+ * @internal
+ * @constant
+ */
+const disputeLine: ComputedRef<string> = computed((): string => toDisputeLine(amendment.value ?? { dispute: null }));
+
+/**
  * The scoring rules this entry is judged by, in the shape the engine takes
  * @internal
  * @constant
@@ -351,7 +379,11 @@ const saveLabel: ComputedRef<string> = computed((): string => {
     return RECORD_SAVING_LABEL;
   }
 
-  return uncertain.value ? RECORD_CHECK_LABEL : RECORD_SAVE_LABEL;
+  if (uncertain.value) {
+    return RECORD_CHECK_LABEL;
+  }
+
+  return amendment.value ? RECORD_AMEND_LABEL : RECORD_SAVE_LABEL;
 });
 
 /**
@@ -419,6 +451,36 @@ function layOut(format: GameType): void {
     retiredSeat: null,
     rows: keep.length > 0 ? keep : [],
     seats: seatsFor(format),
+  };
+
+  growRows();
+}
+
+/**
+ * Opens the form on a result that already exists, for a correction.
+ *
+ * Everything the revision stated, including the play time it stated: a correction starts from what was entered, so
+ * the person changes the thing that was wrong and nothing else. The scores are the strings the inputs carry, as
+ * every other row in this form is
+ * @internal
+ * @function
+ * @param submission - The revision being corrected
+ */
+function openOn(submission: IResultSubmission): void {
+  draft.value = {
+    ending: submission.ending === ResultEnding.RETIRED ? 'RETIRED' : 'COMPLETED',
+    gamesPlayed: submission.games.length,
+    gameType: submission.gameType,
+    playedAt: toDateTimeLocal(submission.playedAt),
+    retiredSeat: submission.retiredSeat,
+    rows: [...submission.games]
+      .sort((left: IGameScoreRow, right: IGameScoreRow): number => left.gameNumber - right.gameNumber)
+      .map((game: IGameScoreRow): IRecordRow => ({ a: String(game.a), b: String(game.b) })),
+    seats: submission.seats.map((seat: IResultSeat): IRecordSeat => ({
+      guestName: seat.guestName,
+      seat: seat.seat,
+      userId: seat.userId,
+    })),
   };
 
   growRows();
@@ -587,14 +649,26 @@ async function save(): Promise<void> {
   // A check re-sends what the first attempt sent, to where it sent it, never anything rebuilt from what the page
   // holds now: the same operation id carrying a different body is a conflict, and a check aimed at a league the
   // original operation was never made against would answer about nothing
+  const correction: IResultAmendment | null = amendment.value;
+  // A correction is judged against the revision it was opened on rather than against the league's configuration,
+  // because the amended result stays under the rules the match was played under; and it is sent to the match it
+  // corrects rather than to the league's collection of results
   const attempt: IRecordAttempt = held.value ?? {
-    body: {
-      acknowledgement: acknowledgement.value,
-      clientOperationId: operationId.value,
-      expectedLeagueRevision: rules.value.configurationRevision,
-      submission: toSubmission(),
-    },
-    endpoint: `/api/leagues/${props.leagueId}/games`,
+    body: correction
+      ? {
+          clientOperationId: operationId.value,
+          expectedRevision: correction.expectedRevision,
+          submission: toSubmission(),
+        }
+      : {
+          acknowledgement: acknowledgement.value,
+          clientOperationId: operationId.value,
+          expectedLeagueRevision: rules.value.configurationRevision,
+          submission: toSubmission(),
+        },
+    endpoint: correction
+      ? `/api/leagues/${props.leagueId}/games/${correction.canonicalMatchId}/amend`
+      : `/api/leagues/${props.leagueId}/games`,
     leagueId: props.leagueId,
   };
 
@@ -702,6 +776,10 @@ function onStay(): void {
 
 layOut(gameType.value);
 
+if (amendment.value) {
+  openOn(amendment.value.submission);
+}
+
 watch([shown, settings], (): void => growRows());
 
 // The settings editor's rule, in the page rather than in a browser dialog: a form with work in it asks before it is
@@ -735,6 +813,15 @@ onBeforeRouteLeave((to): boolean => {
     >
       {{ rules.leagueName }} · Best of {{ settings.matchFormat }} · Games to {{ settings.targetScore }}, win by
       {{ settings.winningMargin }}
+    </p>
+
+    <!-- What was said against the result this correction answers, so it is read beside what is being corrected -->
+    <p
+      v-if="disputeLine"
+      class="text-body mt-4"
+      data-test="dispute"
+    >
+      {{ disputeLine }}
     </p>
 
     <!-- A league that records one format states it rather than offering a choice of one -->

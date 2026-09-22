@@ -227,21 +227,21 @@ export function toRatingLine(match: IMatchView): string {
  * What a dispute says it said, or that its words have been removed
  * @public
  * @function
- * @param match - The match
+ * @param subject - Anything carrying a dispute: the match its page shows, or the revision a correction answers
  * @returns The dispute line
  */
-export function toDisputeLine(match: IMatchView): string {
-  if (!match.dispute) {
+export function toDisputeLine(subject: Pick<IMatchView, 'dispute'>): string {
+  if (!subject.dispute) {
     return '';
   }
 
-  const opening: string = `Disputed by ${match.dispute.by.displayName} ${toLocalDateTime(match.dispute.at)}`;
+  const opening: string = `Disputed by ${subject.dispute.by.displayName} ${toLocalDateTime(subject.dispute.at)}`;
 
-  if (match.dispute.redacted) {
+  if (subject.dispute.redacted) {
     return `${opening}: ${REDACTED_NOTE_TEXT}`;
   }
 
-  return match.dispute.note ? `${opening}: ${match.dispute.note}` : opening;
+  return subject.dispute.note ? `${opening}: ${subject.dispute.note}` : opening;
 }
 
 /**

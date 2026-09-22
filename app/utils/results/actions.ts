@@ -120,6 +120,16 @@ export const ACTION_LABEL: Record<ResultAction, string> = {
 };
 
 /**
+ * What the control that opens a correction reads.
+ *
+ * Not one of the answers: amending is a navigation to the Record page in Amend mode, not a write this page makes.
+ * It sits beside them because it is one of the two resolutions a disputed result offers (page spec, Game, Actions)
+ * @public
+ * @constant
+ */
+export const AMEND_LABEL: string = 'Amend result';
+
+/**
  * What the void dialog asks before anything is sent
  * @public
  * @constant

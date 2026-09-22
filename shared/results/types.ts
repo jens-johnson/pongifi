@@ -207,6 +207,15 @@ export interface IResultFormContext {
 
   /* The ACTIVE members a seat may hold, as the members panel names them */
   roster: { displayName: string; id: string }[];
+
+  /**
+   * How many hours after a match was played it may still be entered, as the field's message states it.
+   *
+   * Stated rather than derived from the two instants above. In Amend mode they are not a window: the earliest is
+   * measured from the play time the first revision stated and the latest is now, so the span between them is the
+   * window plus however long the match has been waiting
+   */
+  windowHours: number;
 }
 
 /**

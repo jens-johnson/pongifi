@@ -5,10 +5,12 @@ import type { ComputedRef, Ref } from 'vue';
 
 import { MAX_NOTE_LENGTH, ResultAction } from '#shared/results';
 import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failure';
+import { LEAGUES_ROUTE } from '~/utils/marketing/routes';
 import type { IResultActionRequest, IResultActionState } from '~/utils/results/actions';
 import {
   ACTION_LABEL,
   actionsBlocked,
+  AMEND_LABEL,
   awaitingCheck,
   failAction,
   idleAction,
@@ -82,12 +84,25 @@ const blocked: ComputedRef<boolean> = computed((): boolean => actionsBlocked(act
  */
 const hasActions: ComputedRef<boolean> = computed(
   (): boolean =>
+    props.match.viewer.mayAmend ||
     props.match.viewer.mayConfirm ||
     props.match.viewer.mayDispute ||
     props.match.viewer.mayVoid ||
     // An answer nobody can be sure of has to stay reachable even when the re-read no longer offers the action that
     // made it: a confirmation that may have landed is exactly what removes the confirm button
     action.value.phase !== ResultActionPhase.IDLE,
+);
+
+/**
+ * Where a correction is made: the Record page, opened on this result.
+ *
+ * The match's own id rather than the route's game id, so a correction opened from a superseded game still corrects
+ * the result that game belongs to
+ * @internal
+ * @constant
+ */
+const amendRoute: ComputedRef<string> = computed(
+  (): string => `${LEAGUES_ROUTE}/${props.leagueId}/games/new?amend=${props.match.canonicalMatchId}`,
 );
 
 /* ─── Methods ────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -232,6 +247,19 @@ async function leaveForSession(failure: unknown): Promise<void> {
       >
         {{ awaitingCheck(action, ResultAction.DISPUTE) ? 'Check' : ACTION_LABEL[ResultAction.DISPUTE] }}
       </button>
+
+      <!-- A link, because correcting is a page rather than an answer this one sends. Unavailable while an answer
+           is unresolved, for the same reason the answers are: leaving would take its Check with it -->
+      <NuxtLink
+        v-if="match.viewer.mayAmend"
+        :aria-disabled="blocked"
+        class="border-border text-body rounded-lg border px-4 py-2 font-medium"
+        :class="blocked ? 'pointer-events-none opacity-50' : ''"
+        data-test="amend"
+        :to="amendRoute"
+      >
+        {{ AMEND_LABEL }}
+      </NuxtLink>
 
       <button
         v-if="match.viewer.mayVoid || awaitingCheck(action, ResultAction.VOID)"
