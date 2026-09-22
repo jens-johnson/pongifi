@@ -139,6 +139,14 @@ describe(getTestFileName(import.meta.url), (): void => {
       ).toBe('/welcome?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnot-a-uuid');
     });
 
+    it('gates the record page, which shares the result page’s shape', (): void => {
+      // Covered by the same pattern rather than one of its own; asserted so narrowing that pattern cannot quietly
+      // leave the form open to somebody signed out
+      expect(resolveSessionGate(visitor({ path: '/leagues/not-a-uuid/games/new' }))).toBe(
+        '/sign-in?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnew',
+      );
+    });
+
     it('leaves the bare league prefix, every other deeper league path and the invite landing ungated', (): void => {
       expect(resolveSessionGate(visitor({ path: '/leagues/' }))).toBeNull();
       expect(resolveSessionGate(visitor({ path: '/invite/abc' }))).toBeNull();

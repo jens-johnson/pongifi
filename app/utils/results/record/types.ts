@@ -119,3 +119,15 @@ export interface IRecordRecorder {
   /* The account doing the recording */
   userId: string;
 }
+
+/**
+ * What to call each side, for the line under the rows
+ * @public
+ */
+export interface IRecordSideNames {
+  /* Side A */
+  a: string;
+
+  /* Side B */
+  b: string;
+}

@@ -33,7 +33,52 @@ import {
   SCORE_SHAPE_MESSAGE,
   UNDECIDED_LINE,
 } from './constants';
-import type { IRecordDraft, IRecordProblems, IRecordRecorder, IRecordRow, IRecordSeat } from './types';
+import type {
+  IRecordDraft,
+  IRecordProblems,
+  IRecordRecorder,
+  IRecordRow,
+  IRecordSeat,
+  IRecordSideNames,
+} from './types';
+
+/**
+ * Renders an instant for a `datetime-local` input, which takes local wall-clock time and no zone.
+ *
+ * The instant is the server's; only its presentation is local. A browser in another zone shows a different clock
+ * face for the same moment, which is what somebody reading it expects
+ * @public
+ * @function
+ * @param iso - The instant, as the server issued it
+ * @returns What the input displays, or an empty string when there is no instant
+ */
+export function toDateTimeLocal(iso: string): string {
+  const instant: Date = new Date(iso);
+
+  if (Number.isNaN(instant.getTime())) {
+    return '';
+  }
+
+  const pad = (value: number): string => String(value).padStart(2, '0');
+
+  return (
+    `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}` +
+    `T${pad(instant.getHours())}:${pad(instant.getMinutes())}`
+  );
+}
+
+/**
+ * Reads what a `datetime-local` input holds back into an instant
+ * @public
+ * @function
+ * @param local - What the input holds
+ * @returns The instant, or null when the input holds nothing usable
+ */
+export function fromDateTimeLocal(local: string): string | null {
+  const instant: Date = new Date(local);
+
+  return Number.isNaN(instant.getTime()) ? null : instant.toISOString();
+}
 
 /**
  * How many games a side has to win to take the match
@@ -265,7 +310,7 @@ function countGamesWon(settings: IMatchSettings, draft: IRecordDraft): { a: numb
  * @param names - What to call each side
  * @returns The line
  */
-export function toDerivedLine(settings: IMatchSettings, draft: IRecordDraft, names: { a: string; b: string }): string {
+export function toDerivedLine(settings: IMatchSettings, draft: IRecordDraft, names: IRecordSideNames): string {
   const won: { a: number; b: number } = countGamesWon(settings, draft);
   const retired: 'a' | 'b' | null = retiredSideOf(draft);
 
@@ -411,6 +456,16 @@ export function findRecordProblems(
 }
 
 /* ─── Metadata ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+defineSymbol(toDateTimeLocal, {
+  name: 'To Date Time Local',
+  description: 'Renders an instant for a datetime-local input.',
+});
+
+defineSymbol(fromDateTimeLocal, {
+  name: 'From Date Time Local',
+  description: 'Reads a datetime-local input back into an instant.',
+});
 
 defineSymbol(gamesToWin, {
   name: 'Games To Win',

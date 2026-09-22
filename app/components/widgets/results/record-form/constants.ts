@@ -9,9 +9,9 @@
  *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
- * █████████████████████████████████ #components/widgets/results/record-form/types.ts ██████████████████████████████████
+ * ███████████████████████████████ #components/widgets/results/record-form/constants.ts ████████████████████████████████
  *
- * What the Record form is given, and what it reports.
+ * What the Record form says about a play time it cannot take.
  *
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
@@ -19,55 +19,24 @@
 import type { IResultFormContext } from '#shared/results';
 
 /**
- * What the Record form is given
- * @public
+ * An hour, in milliseconds
+ * @internal
+ * @constant
  */
-export interface IResultsRecordFormProps {
-  /* Everything the league says about how this entry will be judged, read from the server */
-  context: IResultFormContext;
-
-  /* The league being recorded in, for the request path */
-  leagueId: string;
-
-  /* The account recording, who is pre-seated and who may have to be seated at all */
-  recorderId: string;
-}
+const HOUR_MS: number = 60 * 60 * 1000;
 
 /**
- * What the form tells the page
+ * What a play time outside the league's entry window says.
+ *
+ * The window is stated in hours rather than as two timestamps, because the person is deciding whether the match
+ * they are thinking of is still enterable, not reading a range
  * @public
+ * @function
+ * @param context - The league's rules, which carry the window's two ends
+ * @returns The message
  */
-export interface IResultsRecordFormEmits {
-  /* A result was recorded; the page navigates to it */
-  recorded: [canonicalMatchId: string];
-}
+export function PLAYED_AT_MESSAGE(context: IResultFormContext): string {
+  const hours: number = Math.round((Date.parse(context.now) - Date.parse(context.earliest)) / HOUR_MS);
 
-/**
- * A match this entry was warned about looking like
- * @public
- */
-export interface IRecordDuplicate {
-  /* The match, which is the page it is read at */
-  canonicalMatchId: string;
-
-  /* When it says it was played */
-  playedAt: string;
-}
-
-/**
- * What a recorded result answers with, as far as this form reads it
- * @public
- */
-export interface IRecordedAnswer {
-  /* Where the match stands now, which carries the page to go to */
-  current: { canonicalMatchId: string };
-}
-
-/**
- * A rejection as the fetch layer raises it, carrying whatever the server answered
- * @public
- */
-export interface IRecordFailure {
-  /* The response body, when there was one */
-  data?: Record<string, unknown>;
+  return `Results can be recorded up to ${hours} hours after they were played.`;
 }
