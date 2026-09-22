@@ -16,23 +16,27 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { IResultFormContext } from '#shared/results';
+import { AMENDED_PLAYED_AT_MESSAGE, type IResultFormContext, RECORDED_PLAYED_AT_MESSAGE } from '#shared/results';
 import { toLocalDateTime } from '~/utils/results/format';
 
 /**
- * What a play time outside the league's entry window says.
+ * What a play time this form refuses says, in the words the route that would refuse it answers with.
  *
- * The window is stated in hours rather than as two timestamps, because the person is deciding whether the match
- * they are thinking of is still enterable, not reading a range. The hours come from the context rather than from
- * the distance between its two instants: in Amend mode that distance is the window plus however long the result
- * has been waiting to be corrected
+ * The hours come from the context rather than from the distance between its two instants: in Amend mode that
+ * distance is the window plus however long the result has been waiting to be corrected.
+ *
+ * A correction states the other rule entirely: its bound runs from the play time the first revision stated, back by
+ * the frozen window and forward only as far as now, so "recorded up to n hours after they were played" would name a
+ * rule this form is not applying. Told by the mode rather than read off the context, because a stale-rules refusal
+ * replaces the context with the league's own and a correction is still a correction after it
  * @public
  * @function
  * @param context - The rules this entry is judged by, which carry the window
+ * @param amending - Whether the form was opened to correct a result rather than to enter one
  * @returns The message
  */
-export function PLAYED_AT_MESSAGE(context: IResultFormContext): string {
-  return `Results can be recorded up to ${context.windowHours} hours after they were played.`;
+export function PLAYED_AT_MESSAGE(context: IResultFormContext, amending: boolean): string {
+  return amending ? AMENDED_PLAYED_AT_MESSAGE(context.windowHours) : RECORDED_PLAYED_AT_MESSAGE(context.windowHours);
 }
 
 /**
@@ -58,6 +62,16 @@ export const RECORD_AMEND_LABEL: string = 'Save amendment';
  * @constant
  */
 export const RECORD_SAVING_LABEL: string = 'Recording…';
+
+/**
+ * What the same button reads while a correction is in flight.
+ *
+ * A correction records nothing new: it replaces a revision of a result that already exists, and a button reading
+ * Recording… on a form headed Amend a result names the wrong act
+ * @public
+ * @constant
+ */
+export const RECORD_AMEND_SAVING_LABEL: string = 'Saving…';
 
 /**
  * What the Save button reads while an outcome is unknown.
@@ -95,6 +109,17 @@ export const RECORD_REFUSED_MESSAGE: string = 'Pongifi could not record this res
  * @constant
  */
 export const RECORD_EXISTING_LINK: string = 'Open the result that exists';
+
+/**
+ * What the link under a correction that can no longer be made says.
+ *
+ * The result this form was opened on has moved — amended or voided by somebody else, settled, or past the window it
+ * could be corrected within — so no press carrying the revision it was opened at can ever succeed. The result is
+ * where the state that ended this correction is written, and it is the only thing left to do from here
+ * @public
+ * @constant
+ */
+export const RECORD_SUPERSEDED_LINK: string = 'Open the result';
 
 /**
  * What one of the matches a duplicate warning listed is called.

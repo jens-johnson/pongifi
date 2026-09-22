@@ -755,12 +755,13 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(at(wrapper, VOID).exists()).toBe(true);
     });
 
-    it('cannot be followed while an answer is unresolved', async (): Promise<void> => {
+    it('cannot be followed by any means while an answer is unresolved, and can be once it is not', async (): Promise<void> => {
       // Leaving would take the held request and its Check with it, which is the same reason the answers beside it
-      // are unavailable
+      // are unavailable. Unavailable has to mean unavailable to every input method: a link that is only dimmed is
+      // still a link, and Enter on it, or a screen reader activating it, would leave anyway
       answer = answerUnavailable;
 
-      const wrapper: VueWrapper = await mountActions({
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({
         administrator: true,
         mayAmend: true,
         mayVoid: true,
@@ -769,8 +770,50 @@ describe(getTestFileName(import.meta.url), (): void => {
       await pressButton(wrapper, VOID);
       await pressButton(wrapper, 'void-confirm');
 
-      expect(at(wrapper, AMEND).attributes('aria-disabled')).toBe('true');
-      expect(at(wrapper, AMEND).classes()).toContain('pointer-events-none');
+      // There is no destination on the page at all, so there is nothing for any activation to follow
+      expect(at(wrapper, AMEND).attributes('href')).toBeUndefined();
+      expect(at(wrapper, AMEND).attributes('disabled')).toBeDefined();
+
+      await at(wrapper, AMEND).trigger('click');
+      await at(wrapper, AMEND).trigger('keydown', { key: 'Enter' });
+      await settled();
+
+      expect(router.currentRoute.value.path).toBe(GAME_PATH);
+      // And the answer nobody could be sure of is still exactly where it was
+      expect(at(wrapper, VOID).text()).toBe('Check');
+
+      // Reconciled, and the way to the correction is open again
+      answer = answerAccepted;
+      await pressButton(wrapper, VOID);
+
+      expect(at(wrapper, AMEND).attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/new?amend=${MATCH_ID}`);
+    });
+
+    it('cannot be followed while the first press is still in flight', async (): Promise<void> => {
+      // The same hold, a moment earlier: the request has left and nothing has answered it yet
+      let release: () => void = (): void => undefined;
+
+      answer = (): Promise<unknown> =>
+        new Promise((resolve: (value: unknown) => void): void => {
+          release = (): void => resolve(answerAccepted());
+        });
+
+      const { wrapper }: { wrapper: VueWrapper } = await mountRouted({
+        administrator: true,
+        mayAmend: true,
+        mayVoid: true,
+      });
+
+      await at(wrapper, VOID).trigger('click');
+      await at(wrapper, 'void-confirm').trigger('click');
+      await nextTick();
+
+      expect(at(wrapper, AMEND).attributes('href')).toBeUndefined();
+
+      release();
+      await settled();
+
+      expect(at(wrapper, AMEND).attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/new?amend=${MATCH_ID}`);
     });
   });
 });

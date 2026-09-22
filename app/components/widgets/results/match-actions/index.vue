@@ -248,18 +248,34 @@ async function leaveForSession(failure: unknown): Promise<void> {
         {{ awaitingCheck(action, ResultAction.DISPUTE) ? 'Check' : ACTION_LABEL[ResultAction.DISPUTE] }}
       </button>
 
-      <!-- A link, because correcting is a page rather than an answer this one sends. Unavailable while an answer
-           is unresolved, for the same reason the answers are: leaving would take its Check with it -->
-      <NuxtLink
-        v-if="match.viewer.mayAmend"
-        :aria-disabled="blocked"
-        class="border-border text-body rounded-lg border px-4 py-2 font-medium"
-        :class="blocked ? 'pointer-events-none opacity-50' : ''"
-        data-test="amend"
-        :to="amendRoute"
-      >
-        {{ AMEND_LABEL }}
-      </NuxtLink>
+      <!-- A link, because correcting is a page rather than an answer this one sends: it is worth opening in another
+           tab, and it is a destination rather than a write. Unavailable while an answer is unresolved, for the same
+           reason the answers beside it are — leaving would take the held Check with it.
+
+           Unavailable means a disabled button rather than a dimmed link, because a link that is only dimmed is still
+           a link: `pointer-events-none` stops a mouse and nothing else, so Enter on a focused link, a screen
+           reader's own activation and any other non-pointer press all still navigate away from the answer nobody
+           can be sure of. The sibling answers are disabled the same way, and the browser is what enforces it -->
+      <template v-if="match.viewer.mayAmend">
+        <NuxtLink
+          v-if="!blocked"
+          class="border-border text-body rounded-lg border px-4 py-2 font-medium"
+          data-test="amend"
+          :to="amendRoute"
+        >
+          {{ AMEND_LABEL }}
+        </NuxtLink>
+
+        <button
+          v-else
+          class="border-border text-body rounded-lg border px-4 py-2 font-medium opacity-50"
+          data-test="amend"
+          disabled
+          type="button"
+        >
+          {{ AMEND_LABEL }}
+        </button>
+      </template>
 
       <button
         v-if="match.viewer.mayVoid || awaitingCheck(action, ResultAction.VOID)"

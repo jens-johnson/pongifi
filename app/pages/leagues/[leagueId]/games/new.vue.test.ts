@@ -21,9 +21,10 @@ import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-uti
 import type { VueWrapper } from '@vue/test-utils';
 import type { H3Event } from 'h3';
 import { defineEventHandler, getQuery } from 'h3';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed } from 'vue';
 import type { Router } from 'vue-router';
+import { matchedRouteKey } from 'vue-router';
 
 import type { IResultAmendment, IResultFormContext } from '#shared/results';
 import { ResultEnding, Seat } from '#shared/results';
@@ -68,6 +69,20 @@ const PATH: string = `/leagues/${LEAGUE_ID}/games/new`;
  */
 const GAME_PATH: string = `/leagues/${LEAGUE_ID}/games/${MATCH_ID}`;
 
+/**
+ * What the form asks before a departure would take the draft with it
+ * @internal
+ * @constant
+ */
+const LEAVE_PROMPT: string = 'Leave without saving?';
+
+/**
+ * What the dispute a correction answers said, which is how a case tells one correction's form from another's
+ * @internal
+ * @constant
+ */
+const DISPUTE_NOTE: string = 'Game three was 11-9 my way.';
+
 mockNuxtImport('useUserSession', () => (): Record<string, unknown> => ({
   fetch: async (): Promise<void> => undefined,
   loggedIn: computed((): boolean => true),
@@ -82,6 +97,12 @@ mockNuxtImport('useUserSession', () => (): Record<string, unknown> => ({
 let answer: IResultFormContext;
 
 /**
+ * What the read answers for a particular correction, where one case needs two of them told apart
+ * @internal
+ */
+let answers: Record<string, IResultFormContext> = {};
+
+/**
  * Every query the page asked the context read with
  * @internal
  */
@@ -89,9 +110,11 @@ let asked: string[] = [];
 
 registerEndpoint(`/api/leagues/${LEAGUE_ID}/games/context`, {
   handler: defineEventHandler((event: H3Event): unknown => {
-    asked.push(String(getQuery(event).amend ?? ''));
+    const amend: string = String(getQuery(event).amend ?? '');
 
-    return answer;
+    asked.push(amend);
+
+    return answers[amend] ?? answer;
   }),
   method: 'GET',
 });
@@ -114,7 +137,7 @@ function amendment(): IResultAmendment {
         member: true,
         removed: false,
       },
-      note: 'Game three was 11-9 my way.',
+      note: DISPUTE_NOTE,
       redacted: false,
     },
     expectedRevision: 1,
@@ -199,7 +222,18 @@ async function mountPage(query: string = ''): Promise<{ router: Router; wrapper:
   clearNuxtData();
   await router.replace(route);
 
-  const wrapper: VueWrapper = await mountSuspended(NewPage, { route });
+  const wrapper: VueWrapper = await mountSuspended(NewPage, {
+    // In the document rather than detached, because the departure question moves focus into itself
+    attachTo: document.body,
+    global: {
+      // What a `<RouterView>` provides in the running app, so the form's guards register on the real record and a
+      // query change reaches them as the update it is
+      provide: {
+        [matchedRouteKey as unknown as string]: computed(() => router.currentRoute.value.matched[0]),
+      },
+    },
+    route,
+  });
 
   mounted.push(wrapper);
 
@@ -211,6 +245,7 @@ async function mountPage(query: string = ''): Promise<{ router: Router; wrapper:
 describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
     asked = [];
+    answers = {};
     answer = context();
   });
 
@@ -236,8 +271,102 @@ describe(getTestFileName(import.meta.url), (): void => {
     // The read is asked for the correction rather than for the league's own rules
     expect(asked).toEqual([MATCH_ID]);
     expect(wrapper.text()).toContain('Amend a result');
-    expect(wrapper.text()).toContain('Game three was 11-9 my way.');
+    expect(wrapper.text()).toContain(DISPUTE_NOTE);
     expect(wrapper.find('[data-test="save"]').text()).toBe('Save amendment');
+  });
+
+  it('opens the correction the address changes to, and leaves the first form behind', async (): Promise<void> => {
+    // A query change updates this page rather than replacing it, so without an identity of its own it would keep
+    // the context and the save target it was opened with while the address named another result entirely
+    answers[MATCH_ID] = context({ amendment: amendment() });
+
+    const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountPage();
+
+    expect(wrapper.text()).toContain('Record a result');
+
+    await router.push(`${PATH}?amend=${MATCH_ID}`);
+    await vi.waitFor((): void => {
+      expect(wrapper.text()).toContain('Amend a result');
+    });
+
+    // The read was asked again, for the correction this time
+    expect(asked).toEqual(['', MATCH_ID]);
+    expect(wrapper.text()).toContain(DISPUTE_NOTE);
+    expect(wrapper.find('[data-test="save"]').text()).toBe('Save amendment');
+  });
+
+  it('asks before exchanging one correction for another, and opens the second when it is answered', async (): Promise<void> => {
+    const other: string = 'f9c6b5d3-0000-4000-8000-000000000006';
+
+    answers[MATCH_ID] = context({ amendment: amendment() });
+    answers[other] = context({
+      amendment: {
+        ...amendment(),
+        canonicalMatchId: other,
+        dispute: { ...amendment().dispute!, note: 'That was never game four.' },
+      },
+    });
+
+    const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountPage(`?amend=${MATCH_ID}`);
+
+    // A correction opens pre-filled, so there is work on it from the moment it is drawn
+    await router.push(`${PATH}?amend=${other}`);
+    await vi.waitFor((): void => {
+      expect(wrapper.text()).toContain(LEAVE_PROMPT);
+    });
+
+    expect(router.currentRoute.value.query.amend).toBe(MATCH_ID);
+    expect(asked).toEqual([MATCH_ID]);
+
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click');
+    await vi.waitFor((): void => {
+      expect(wrapper.text()).toContain('That was never game four.');
+    });
+
+    // The second correction's own context, and nothing carried across from the first
+    expect(asked).toEqual([MATCH_ID, other]);
+    expect(wrapper.text()).not.toContain(DISPUTE_NOTE);
+  });
+
+  it('opens an entry when the address stops naming a correction, carrying nothing across', async (): Promise<void> => {
+    answers[MATCH_ID] = context({ amendment: amendment() });
+
+    const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountPage(`?amend=${MATCH_ID}`);
+
+    await router.push(PATH);
+    await vi.waitFor((): void => {
+      expect(wrapper.text()).toContain(LEAVE_PROMPT);
+    });
+
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click');
+    await vi.waitFor((): void => {
+      expect(wrapper.text()).toContain('Record a result');
+    });
+
+    expect(asked).toEqual([MATCH_ID, '']);
+    expect(wrapper.find('[data-test="save"]').text()).toBe('Record result');
+    // The correction's scores are not an entry's draft
+    expect((wrapper.find('[data-test="score-a-0"]').element as HTMLInputElement).value).toBe('');
+  });
+
+  it('sends a correction nobody may make to the result, on a later address as much as on the first', async (): Promise<void> => {
+    // The page is updated rather than replaced on a query change, so the decision the page opened with would
+    // otherwise stand for every correction the address named afterwards
+    answers[MATCH_ID] = context({
+      amendment: amendment(),
+      authority: {
+        may: false,
+        mustPlay: false,
+        who: 'a commissioner or manager',
+      },
+    });
+
+    const { router }: { router: Router } = await mountPage();
+
+    await router.push(`${PATH}?amend=${MATCH_ID}`);
+    await vi.waitFor((): void => {
+      expect(router.currentRoute.value.path).toBe(GAME_PATH);
+    });
   });
 
   it('sends a correction nobody may make to the result, which says why', async (): Promise<void> => {

@@ -27,7 +27,13 @@ import type { Router } from 'vue-router';
 import { matchedRouteKey } from 'vue-router';
 
 import type { IResultFormContext } from '#shared/results';
-import { ResultEnding, Seat } from '#shared/results';
+import {
+  AMENDED_PLAYED_AT_MESSAGE,
+  RECORDED_PLAYED_AT_MESSAGE,
+  ResultConflict,
+  ResultEnding,
+  Seat,
+} from '#shared/results';
 import { GameType } from '#shared/rules-engine';
 import { toLocalDateTime } from '~/utils/results/format';
 
@@ -88,6 +94,13 @@ const MATCH_ID: string = 'd7a4f3b1-0000-4000-8000-000000000004';
  * @constant
  */
 const OTHER_MATCH_ID: string = 'e8b5a4c2-0000-4000-8000-000000000005';
+
+/**
+ * What the server says when the result a correction was opened on is no longer the one it was opened at
+ * @internal
+ * @constant
+ */
+const RESULT_MOVED: string = 'This result changed while you were looking at it.';
 
 /**
  * The route the form is rendered at, which its departure guard is registered against
@@ -569,21 +582,84 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
   });
 
-  it('keeps the correction on the page when the result moved underneath it', async (): Promise<void> => {
+  it('ends the correction when the result moved out from under it, and says where it went', async (): Promise<void> => {
     const wrapper: VueWrapper = await mountForm(correcting());
 
     answer = (event: H3Event): unknown => {
       setResponseStatus(event, 409);
 
-      return { current: null, message: 'This result changed while you were looking at it.' };
+      return {
+        current: null,
+        message: RESULT_MOVED,
+        refusal: ResultConflict.STALE_RESULT,
+      };
     };
 
     await at(wrapper, 'score-b-2').setValue('9');
     await pressSave(wrapper);
 
-    expect(at(wrapper, SERVER_MESSAGE).text()).toContain('This result changed while you were looking at it.');
+    expect(at(wrapper, SERVER_MESSAGE).text()).toContain(RESULT_MOVED);
     // The draft is the correction somebody typed; a refusal never takes it away
     expect((at(wrapper, 'score-b-2').element as HTMLInputElement).value).toBe('9');
+    // The revision this form was opened at is gone, so no press carrying it can ever succeed: a second one would
+    // earn the same refusal for as long as the page stayed open
+    expect(at(wrapper, 'save').attributes('disabled')).toBeDefined();
+    // Built from the match this form was opened on, because the amend route answers a conflict with no state at all
+    expect(at(wrapper, 'superseded').text()).toBe('Open the result');
+    expect(at(wrapper, 'superseded').find('a').attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/${MATCH_ID}`);
+
+    // And editing the correction does not bring Save back: what ended it was not anything on the form
+    await at(wrapper, 'score-b-2').setValue('7');
+
+    expect(at(wrapper, 'save').attributes('disabled')).toBeDefined();
+    expect(sent).toHaveLength(0);
+    expect(corrections).toHaveLength(1);
+  });
+
+  it('does not end a correction on a conflict about the operation rather than the result', async (): Promise<void> => {
+    // A reused operation carrying a changed body is a 409 too, and it is answered from the receipt before the
+    // correction's eligibility is looked at: it says nothing about the revision having moved
+    const wrapper: VueWrapper = await mountForm(correcting());
+
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 409);
+
+      return {
+        current: null,
+        existing: { canonicalMatchId: OTHER_MATCH_ID },
+        message: 'This entry was already recorded with different details.',
+        refusal: ResultConflict.OPERATION_BODY_CHANGED,
+      };
+    };
+
+    await at(wrapper, 'score-b-2').setValue('9');
+    await pressSave(wrapper);
+
+    expect(at(wrapper, 'superseded').exists()).toBe(false);
+    expect(at(wrapper, 'existing').find('a').attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/${OTHER_MATCH_ID}`);
+    expect(at(wrapper, 'save').attributes('disabled')).toBeUndefined();
+  });
+
+  it('ends nothing on an entry, whose conflicts are all ones a second press can resolve', async (): Promise<void> => {
+    // The league's rules moving under an entry redraws the caption and offers Save again; there is no terminal
+    // refusal on this form outside a correction
+    const wrapper: VueWrapper = await mountForm();
+
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 409);
+
+      return {
+        current: null,
+        message: RESULT_MOVED,
+        refusal: ResultConflict.STALE_RESULT,
+      };
+    };
+
+    await fillWin(wrapper);
+    await pressSave(wrapper);
+
+    expect(at(wrapper, 'superseded').exists()).toBe(false);
+    expect(at(wrapper, 'save').attributes('disabled')).toBeUndefined();
   });
 
   it('states the window the match was recorded under, not the distance between the two instants', async (): Promise<void> => {
@@ -599,8 +675,40 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     await at(wrapper, 'played-at').setValue('2026-09-10T09:00');
 
-    expect(wrapper.text()).toContain('up to 48 hours');
-    expect(wrapper.text()).not.toContain('up to 66 hours');
+    expect(wrapper.text()).toContain(AMENDED_PLAYED_AT_MESSAGE(48));
+    expect(wrapper.text()).not.toContain('66');
+  });
+
+  it('states the correction’s own rule rather than the entry rule it is not applying', async (): Promise<void> => {
+    // An entry's window runs back from now; a correction's runs from the play time the first revision stated, back
+    // by the frozen window and forward only as far as now. Two rules, so two sentences
+    const entry: VueWrapper = await mountForm({ windowHours: 48 });
+    const correction: VueWrapper = await mountForm(correcting({ windowHours: 48 }));
+
+    await at(entry, 'played-at').setValue('2020-01-01T09:00');
+    await at(correction, 'played-at').setValue('2020-01-01T09:00');
+
+    expect(at(entry, 'played-at-problem').text()).toBe(RECORDED_PLAYED_AT_MESSAGE(48));
+    expect(at(correction, 'played-at-problem').text()).toBe(AMENDED_PLAYED_AT_MESSAGE(48));
+  });
+
+  it('says what it is doing while a correction is in flight', async (): Promise<void> => {
+    // A correction records nothing: it replaces a revision of a result that already exists
+    let release: () => void = (): void => undefined;
+
+    answer = (): Promise<unknown> =>
+      new Promise((resolve: (value: unknown) => void): void => {
+        release = (): void => resolve(answerRecorded());
+      });
+
+    const wrapper: VueWrapper = await mountForm(correcting());
+
+    await at(wrapper, 'save').trigger('submit');
+    await nextTick();
+
+    expect(at(wrapper, 'save').text()).toBe('Saving…');
+
+    release();
   });
 
   it('states the rules the entry will be judged by', async (): Promise<void> => {
@@ -1087,6 +1195,103 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(at(wrapper, SERVER_MESSAGE).text()).toBe(UNRECORDABLE);
       expect(at(wrapper, 'save').text()).toBe('Record result');
       expect((at(wrapper, 'score-b-1').element as HTMLInputElement).value).toBe('6');
+    });
+  });
+
+  describe('the address naming another form', (): void => {
+    it('asks before a query change takes the draft, and only goes when it is answered', async (): Promise<void> => {
+      // The router matches the same record for every query, so this is an update rather than a leave and the
+      // departure guard never sees it. It is a departure to this form all the same: what the form is — the league,
+      // the mode and the result — is read off the address, and all three can change without the path changing
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+      const amended: string = `${RECORD_PATH}?amend=${MATCH_ID}`;
+
+      await attemptLeave(wrapper, router, amended);
+
+      expect(wrapper.text()).toContain(LEAVE_PROMPT);
+      expect(router.currentRoute.value.fullPath).toBe(RECORD_PATH);
+
+      await at(wrapper, LEAVE).trigger('click');
+      await settled();
+
+      expect(router.currentRoute.value.fullPath).toBe(amended);
+    });
+
+    it('asks again when one correction is exchanged for another', async (): Promise<void> => {
+      const router: Router = useNuxtApp().$router as Router;
+      const opened: string = `${RECORD_PATH}?amend=${MATCH_ID}`;
+
+      await router.replace(opened);
+
+      const wrapper: VueWrapper = await mountSuspended(RecordForm, {
+        attachTo: document.body,
+        global: {
+          provide: {
+            [matchedRouteKey as unknown as string]: computed(() => router.currentRoute.value.matched[0]),
+          },
+        },
+        props: {
+          context: correcting(),
+          leagueId: LEAGUE_ID,
+          recorderId: ADA,
+        },
+        route: opened,
+      });
+
+      mounted.push(wrapper);
+
+      // A correction is pre-filled, so there is work on it from the moment it opens
+      await router.push(`${RECORD_PATH}?amend=${OTHER_MATCH_ID}`);
+      await settled();
+
+      expect(wrapper.text()).toContain(LEAVE_PROMPT);
+      expect(router.currentRoute.value.fullPath).toBe(opened);
+    });
+
+    it('holds an unresolved answer through the question, and Stay leaves it resolvable', async (): Promise<void> => {
+      // A correction nobody can be sure of must not be abandoned by a change of address any more than by a link:
+      // the held request goes with the form
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+
+        return {};
+      };
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, 'save').text()).toBe('Check');
+
+      await router.push(`${RECORD_PATH}?amend=${MATCH_ID}`);
+      await settled();
+
+      expect(wrapper.text()).toContain(LEAVE_PROMPT);
+      expect(router.currentRoute.value.fullPath).toBe(RECORD_PATH);
+
+      await at(wrapper, STAY).trigger('click');
+      await settled();
+
+      // The check is still the check, under the operation its own save was made with
+      expect(at(wrapper, 'save').text()).toBe('Check');
+
+      answer = answerRecorded;
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(sent[0]);
+    });
+
+    it('lets a query that renames nothing through without a question', async (): Promise<void> => {
+      // Only the league, the mode and the result decide which form this is; an unanswered question about anything
+      // else would be a dialog nobody could explain
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+
+      await attemptLeave(wrapper, router, `${RECORD_PATH}?from=dashboard`);
+
+      expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+      expect(router.currentRoute.value.fullPath).toBe(`${RECORD_PATH}?from=dashboard`);
     });
   });
 

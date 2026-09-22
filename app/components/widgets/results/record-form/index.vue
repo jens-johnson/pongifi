@@ -2,6 +2,7 @@
 /* ─── Imports ────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 import type { ComputedRef, Ref } from 'vue';
+import type { RouteLocationNormalized } from 'vue-router';
 
 import type {
   IGameScoreRow,
@@ -11,7 +12,7 @@ import type {
   IResultSubmission,
   Seat as TSeat,
 } from '#shared/results';
-import { ResultEnding, seatsForGameType } from '#shared/results';
+import { ResultConflict, ResultEnding, seatsForGameType } from '#shared/results';
 import type { IMatchSettings } from '#shared/rules-engine';
 import { GameType } from '#shared/rules-engine';
 import { SETTINGS_LEAVE_PROMPT } from '~/utils/leagues/settings';
@@ -38,6 +39,7 @@ import {
 import {
   PLAYED_AT_MESSAGE,
   RECORD_AMEND_LABEL,
+  RECORD_AMEND_SAVING_LABEL,
   RECORD_CHECK_LABEL,
   RECORD_DUPLICATE_LINK,
   RECORD_EXISTING_LINK,
@@ -46,6 +48,7 @@ import {
   RECORD_SAVE_LABEL,
   RECORD_SAVING_LABEL,
   RECORD_STILL_UNRESOLVED_MESSAGE,
+  RECORD_SUPERSEDED_LINK,
   RECORD_UNCERTAIN_MESSAGE,
 } from './constants';
 import type {
@@ -154,6 +157,18 @@ const candidates: Ref<IRecordDuplicate[]> = ref<IRecordDuplicate[]>([]);
  * @constant
  */
 const existing: Ref<IRecordExisting | null> = ref<IRecordExisting | null>(null);
+
+/**
+ * Whether the result this correction was opened on has moved out from under it.
+ *
+ * Terminal, and the only refusal on this form that is: the correction is judged against the revision the page was
+ * opened at, and that revision is gone — amended or voided by another administrator, settled, or past the window it
+ * could be corrected within. A second press carrying the same expected revision is the same refusal again forever,
+ * so Save stops rather than inviting one. Never set on an entry, where a conflict is something a redraw resolves
+ * @internal
+ * @constant
+ */
+const superseded: Ref<boolean> = ref<boolean>(false);
 
 /**
  * What the server said, shown above Save without clearing the draft
@@ -363,7 +378,7 @@ const problems: ComputedRef<IRecordProblems> = computed((): IRecordProblems => {
 
   return {
     ...found,
-    playedAt: outside && chosen !== rules.value.now ? PLAYED_AT_MESSAGE(rules.value) : null,
+    playedAt: outside && chosen !== rules.value.now ? PLAYED_AT_MESSAGE(rules.value, amendment.value !== null) : null,
   };
 });
 
@@ -390,7 +405,7 @@ const hasProblem: ComputedRef<boolean> = computed(
  */
 const saveLabel: ComputedRef<string> = computed((): string => {
   if (saving.value) {
-    return RECORD_SAVING_LABEL;
+    return amendment.value ? RECORD_AMEND_SAVING_LABEL : RECORD_SAVING_LABEL;
   }
 
   if (uncertain.value) {
@@ -410,7 +425,7 @@ const saveLabel: ComputedRef<string> = computed((): string => {
  * @constant
  */
 const saveBlocked: ComputedRef<boolean> = computed(
-  (): boolean => saving.value || (!uncertain.value && hasProblem.value),
+  (): boolean => saving.value || superseded.value || (!uncertain.value && hasProblem.value),
 );
 
 /**
@@ -629,6 +644,16 @@ async function settleFailure(failure: unknown): Promise<void> {
   // the link it points at nothing they can reach
   existing.value = data.existing ? (data.existing as IRecordExisting) : null;
 
+  // A correction is judged against the revision this page was opened at, and that revision is gone: amended or
+  // voided by somebody else, settled, or past the window. The same press can only ever earn the same refusal, so
+  // the form stops offering one and points at the result instead. Read from the refusal rather than from the
+  // status, because a reused operation carrying a changed body is a 409 too and is answered before a correction's
+  // eligibility is ever looked at — that one resolves the way it always has. An entry ends on nothing: every
+  // conflict it can meet is one a redraw or a second press resolves
+  if (amendment.value && data.refusal === ResultConflict.STALE_RESULT) {
+    superseded.value = true;
+  }
+
   if (data.context) {
     // The league moved under the form; the caption redraws to the rules the entry will now be judged by
     rules.value = data.context as IResultFormContext;
@@ -786,20 +811,29 @@ function onStay(): void {
   void nextTick((): void => origin?.focus());
 }
 
-/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
-
-layOut(gameType.value);
-
-if (amendment.value) {
-  openOn(amendment.value.submission);
+/**
+ * What this form is, as the URL states it: the league it records in, and the result a correction was opened on.
+ *
+ * Compared between two URLs rather than against what the form is holding, because the query names a game and the
+ * form holds the match that game was folded onto — a correction opened from a superseded game would read as a
+ * different form on every update if the two were compared directly
+ * @internal
+ * @function
+ * @param where - A route this page is or is about to be at
+ * @returns Its identity
+ */
+function identityOf(where: RouteLocationNormalized): string {
+  return `${String(where.params.leagueId)}|${typeof where.query.amend === 'string' ? where.query.amend : ''}`;
 }
 
-watch([shown, settings], (): void => growRows());
-
-// The settings editor's rule, in the page rather than in a browser dialog: a form with work in it asks before it is
-// left, and a session that has ended is not a question anybody can usefully answer. An unanswered question is not
-// permission either — a second attempt while it stands is refused too, and only Leave departs
-onBeforeRouteLeave((to): boolean => {
+/**
+ * Asks before a departure that would lose the draft, and refuses the departure until it is answered
+ * @internal
+ * @function
+ * @param to - Where the departure is going
+ * @returns Whether to go
+ */
+function askBeforeLosing(to: RouteLocationNormalized): boolean {
   if (departing || leavingForSession || !dirty.value || to.path.startsWith(SIGN_IN_ROUTE)) {
     return true;
   }
@@ -813,7 +847,28 @@ onBeforeRouteLeave((to): boolean => {
   }
 
   return false;
-});
+}
+
+/* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+layOut(gameType.value);
+
+if (amendment.value) {
+  openOn(amendment.value.submission);
+}
+
+watch([shown, settings], (): void => growRows());
+
+// The settings editor's rule, in the page rather than in a browser dialog: a form with work in it asks before it is
+// left, and a session that has ended is not a question anybody can usefully answer. An unanswered question is not
+// permission either — a second attempt while it stands is refused too, and only Leave departs
+onBeforeRouteLeave(askBeforeLosing);
+
+// A query change is not a departure the guard above ever sees: the router matches the same record, so the page is
+// updated rather than left. It is a departure to this form all the same, because what the form is — the league, the
+// mode, and the result a correction was opened on — is read off the URL, and all three of them can change without
+// the path changing at all. Asked only when one of them does: an unrelated query is not work anybody is losing
+onBeforeRouteUpdate((to, from): boolean => (identityOf(to) === identityOf(from) ? true : askBeforeLosing(to)));
 </script>
 
 <template>
@@ -1139,6 +1194,22 @@ onBeforeRouteLeave((to): boolean => {
         :to="`/leagues/${leagueId}/games/${existing.canonicalMatchId}`"
       >
         {{ RECORD_EXISTING_LINK }}
+      </NuxtLink>
+    </p>
+
+    <!-- The correction has ended: the result it was opened on has moved, and the line above says so. The link is
+         built from the match this form was opened on rather than from anything the refusal answered, because the
+         amend route answers a conflict with no current state at all -->
+    <p
+      v-if="superseded && amendment"
+      class="text-body-sm mt-2"
+      data-test="superseded"
+    >
+      <NuxtLink
+        class="text-accent-strong hover:text-accent font-medium"
+        :to="`/leagues/${leagueId}/games/${amendment.canonicalMatchId}`"
+      >
+        {{ RECORD_SUPERSEDED_LINK }}
       </NuxtLink>
     </p>
 
