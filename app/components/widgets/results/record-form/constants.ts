@@ -113,9 +113,9 @@ export const RECORD_EXISTING_LINK: string = 'Open the result that exists';
 /**
  * What the link under a correction that can no longer be made says.
  *
- * The result this form was opened on has moved — amended or voided by somebody else, settled, or past the window it
- * could be corrected within — so no press carrying the revision it was opened at can ever succeed. The result is
- * where the state that ended this correction is written, and it is the only thing left to do from here
+ * The result this form was opened on has moved — amended or voided by somebody else, or past the window it could be
+ * corrected within — so no press carrying the revision it was opened at can ever succeed. The result is where the
+ * state that ended this correction is written, and it is the only thing left to do from here
  * @public
  * @constant
  */

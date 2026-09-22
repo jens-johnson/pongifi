@@ -162,9 +162,9 @@ const existing: Ref<IRecordExisting | null> = ref<IRecordExisting | null>(null);
  * Whether the result this correction was opened on has moved out from under it.
  *
  * Terminal, and the only refusal on this form that is: the correction is judged against the revision the page was
- * opened at, and that revision is gone — amended or voided by another administrator, settled, or past the window it
- * could be corrected within. A second press carrying the same expected revision is the same refusal again forever,
- * so Save stops rather than inviting one. Never set on an entry, where a conflict is something a redraw resolves
+ * opened at, and that revision is gone — amended or voided by another administrator, or past the window it could be
+ * corrected within. A second press carrying the same expected revision is the same refusal again forever, so Save
+ * stops rather than inviting one. Never set on an entry, where a conflict is something a redraw resolves
  * @internal
  * @constant
  */
@@ -645,11 +645,11 @@ async function settleFailure(failure: unknown): Promise<void> {
   existing.value = data.existing ? (data.existing as IRecordExisting) : null;
 
   // A correction is judged against the revision this page was opened at, and that revision is gone: amended or
-  // voided by somebody else, settled, or past the window. The same press can only ever earn the same refusal, so
-  // the form stops offering one and points at the result instead. Read from the refusal rather than from the
-  // status, because a reused operation carrying a changed body is a 409 too and is answered before a correction's
-  // eligibility is ever looked at — that one resolves the way it always has. An entry ends on nothing: every
-  // conflict it can meet is one a redraw or a second press resolves
+  // voided by somebody else, or past the window. The same press can only ever earn the same refusal, so the form
+  // stops offering one and points at the result instead. Read from the refusal rather than from the status, because
+  // a reused operation carrying a changed body is a 409 too and is answered before a correction's eligibility is
+  // ever looked at — that one resolves the way it always has. An entry ends on nothing: every conflict it can meet
+  // is one a redraw or a second press resolves
   if (amendment.value && data.refusal === ResultConflict.STALE_RESULT) {
     superseded.value = true;
   }
