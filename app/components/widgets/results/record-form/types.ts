@@ -16,7 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { IResultFormContext } from '#shared/results';
+import type { IResultFormContext, IResultSubmission } from '#shared/results';
 
 /**
  * What the Record form is given
@@ -52,6 +52,40 @@ export interface IRecordDuplicate {
 
   /* When it says it was played */
   playedAt: string;
+}
+
+/**
+ * The result a reused operation id already wrote, when the refusal named one.
+ *
+ * A receipt is keyed by the account, the operation and its id, so the match behind one can sit in a league this
+ * request never mentioned; the server names it only when it belongs here, and the page links only what it was given
+ * @public
+ */
+export interface IRecordExisting {
+  /* The match, which is the page it is read at */
+  canonicalMatchId: string;
+}
+
+/**
+ * The body a save sent, exactly as it was sent.
+ *
+ * The server keys creation on the account, the operation id and a digest of the body, so a retry that rebuilt its
+ * body from whatever the form is showing now is not a retry at all: the same id carrying a different body is a
+ * conflict, and the save the person is waiting on stays unresolved. The acknowledgement travels outside the digest
+ * @public
+ */
+export interface IRecordRequestBody {
+  /* The token a duplicate warning issued, or null */
+  acknowledgement: string | null;
+
+  /* The operation this save belongs to, from the first attempt until an outcome is known */
+  clientOperationId: string;
+
+  /* The league revision the form drew its rules from */
+  expectedLeagueRevision: number;
+
+  /* The match being recorded */
+  submission: IResultSubmission;
 }
 
 /**

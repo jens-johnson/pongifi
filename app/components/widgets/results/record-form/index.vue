@@ -7,6 +7,8 @@ import type { IResultFormContext, IResultSubmission, Seat as TSeat } from '#shar
 import { ResultEnding, seatsForGameType } from '#shared/results';
 import type { IMatchSettings } from '#shared/rules-engine';
 import { GameType } from '#shared/rules-engine';
+import { SETTINGS_LEAVE_PROMPT } from '~/utils/leagues/settings';
+import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failure';
 import type {
   IRecordDraft,
   IRecordProblems,
@@ -25,11 +27,21 @@ import {
   toDerivedLine,
 } from '~/utils/results/record';
 
-import { PLAYED_AT_MESSAGE } from './constants';
+import {
+  PLAYED_AT_MESSAGE,
+  RECORD_CHECK_LABEL,
+  RECORD_EXISTING_LINK,
+  RECORD_REFUSED_MESSAGE,
+  RECORD_SAVE_LABEL,
+  RECORD_SAVING_LABEL,
+  RECORD_UNCERTAIN_MESSAGE,
+} from './constants';
 import type {
   IRecordDuplicate,
   IRecordedAnswer,
+  IRecordExisting,
   IRecordFailure,
+  IRecordRequestBody,
   IResultsRecordFormEmits,
   IResultsRecordFormProps,
 } from './types';
@@ -108,6 +120,13 @@ const acknowledgement: Ref<string | null> = ref<string | null>(null);
 const candidates: Ref<IRecordDuplicate[]> = ref<IRecordDuplicate[]>([]);
 
 /**
+ * The result this operation id already wrote, when a refusal named one
+ * @internal
+ * @constant
+ */
+const existing: Ref<IRecordExisting | null> = ref<IRecordExisting | null>(null);
+
+/**
  * What the server said, shown above Save without clearing the draft
  * @internal
  * @constant
@@ -120,6 +139,65 @@ const serverMessage: Ref<string | null> = ref<string | null>(null);
  * @constant
  */
 const saving: Ref<boolean> = ref<boolean>(false);
+
+/**
+ * The body a save sent, held from the press until its outcome is known.
+ *
+ * Held whole rather than by its operation id alone: creation is keyed on a digest of the body, so a check has to
+ * re-send what the first attempt sent. Cleared the moment the server answers either way, because the next press is
+ * then a fresh save of whatever the form is showing — a draft edited after a duplicate warning must go as edited
+ * @internal
+ * @constant
+ */
+const held: Ref<IRecordRequestBody | null> = ref<IRecordRequestBody | null>(null);
+
+/**
+ * Whether a save may or may not have been recorded.
+ *
+ * A distinct answer from refused, and the only one the page cannot resolve by itself: the write may have committed
+ * before its answer was lost, so the page holds the request and offers Check rather than inviting a second entry
+ * @internal
+ * @constant
+ */
+const uncertain: Ref<boolean> = ref<boolean>(false);
+
+/**
+ * The route a confirmed departure resumes, held while the page asks about the draft it would lose
+ * @internal
+ * @constant
+ */
+const pendingDeparture: Ref<string | null> = ref<string | null>(null);
+
+/**
+ * What had focus when the departure question was asked, so answering Stay gives it back
+ * @internal
+ * @constant
+ */
+let departureOrigin: HTMLElement | null = null;
+
+/**
+ * Whether the page is leaving because Leave was answered.
+ *
+ * The draft is still dirty at that moment, so the guard would otherwise ask the same question about the answer it
+ * was just given and the departure would never resolve
+ * @internal
+ * @constant
+ */
+let departing: boolean = false;
+
+/**
+ * The departure question's safe answer, which takes focus while the question stands
+ * @internal
+ * @constant
+ */
+const stayButton: Ref<HTMLButtonElement | null> = ref<HTMLButtonElement | null>(null);
+
+/**
+ * The departure question's other answer, which Tab cycles back to
+ * @internal
+ * @constant
+ */
+const leaveButton: Ref<HTMLButtonElement | null> = ref<HTMLButtonElement | null>(null);
 
 /* ─── Computed ───────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -226,6 +304,35 @@ const hasProblem: ComputedRef<boolean> = computed(
     problems.value.playedAt !== null ||
     Object.keys(problems.value.rows).length > 0 ||
     Object.keys(problems.value.seats).length > 0,
+);
+
+/**
+ * What the Save button reads.
+ *
+ * Three states on one button rather than a second control beside it: Check is the same request under the same
+ * operation id, which is exactly what makes pressing it safe
+ * @internal
+ * @constant
+ */
+const saveLabel: ComputedRef<string> = computed((): string => {
+  if (saving.value) {
+    return RECORD_SAVING_LABEL;
+  }
+
+  return uncertain.value ? RECORD_CHECK_LABEL : RECORD_SAVE_LABEL;
+});
+
+/**
+ * Whether the Save button is unavailable.
+ *
+ * Save is single-shot, so it is disabled while it is in flight. A Check is not gated on the form's own messages:
+ * it re-sends a body that was already accepted by these checks, and an unresolved save has to stay resolvable
+ * however the draft has been edited since
+ * @internal
+ * @constant
+ */
+const saveBlocked: ComputedRef<boolean> = computed(
+  (): boolean => saving.value || (!uncertain.value && hasProblem.value),
 );
 
 /**
@@ -346,34 +453,57 @@ function toSubmission(): IResultSubmission {
 }
 
 /**
- * Saves the result, and reads whatever the server answers back onto the form.
+ * Saves the result, or checks on one whose outcome is unknown, and reads whatever the server answers back onto the
+ * form.
  *
  * A refusal never clears the draft. A duplicate warning is answered by pressing Save again, which sends the token
- * the warning issued; a rules change redraws the caption to what the league says now
+ * the warning issued; a rules change redraws the caption to what the league says now; an answer that never arrived
+ * is re-sent unchanged rather than rebuilt, so the server answers it from the first attempt's receipt
  * @internal
  * @async
  * @function
  */
 async function save(): Promise<void> {
+  // A check re-sends the body the first attempt sent, never one rebuilt from what the form is showing now: the same
+  // operation id carrying a different body is a conflict, and the save being checked on would stay unresolved
+  const body: IRecordRequestBody = held.value ?? {
+    acknowledgement: acknowledgement.value,
+    clientOperationId: operationId.value,
+    expectedLeagueRevision: rules.value.configurationRevision,
+    submission: toSubmission(),
+  };
+
+  held.value = body;
   saving.value = true;
   serverMessage.value = null;
 
   try {
     const answer: IRecordedAnswer = await $fetch<IRecordedAnswer>(`/api/leagues/${props.leagueId}/games`, {
-      body: {
-        acknowledgement: acknowledgement.value,
-        clientOperationId: operationId.value,
-        expectedLeagueRevision: rules.value.configurationRevision,
-        submission: toSubmission(),
-      },
+      body,
       method: 'POST',
     });
 
+    held.value = null;
+    uncertain.value = false;
     candidates.value = [];
+    existing.value = null;
     acknowledgement.value = null;
     emit('recorded', answer.current.canonicalMatchId);
   } catch (failure: unknown) {
+    if (classifyWriteFailure(failure) === WriteFailure.UNCERTAIN) {
+      // No answer at all, or the server itself failed: either may have committed. Calling that a failure is how a
+      // second identical result gets entered, so the request and its operation id are kept and Check re-sends them
+      uncertain.value = true;
+      serverMessage.value = RECORD_UNCERTAIN_MESSAGE;
+
+      return;
+    }
+
     const data: Record<string, unknown> = (failure as IRecordFailure).data ?? {};
+
+    // Answered, so nothing is outstanding: the next press is a fresh save of whatever the form is showing by then
+    held.value = null;
+    uncertain.value = false;
 
     if (typeof data.acknowledgement === 'string') {
       // Shown what was found, and records anyway if they mean to: two identical honest matches in one evening are
@@ -382,45 +512,56 @@ async function save(): Promise<void> {
       candidates.value = (data.candidates as IRecordDuplicate[]) ?? [];
     }
 
+    // Named only when the refusal named it. The message tells the person to open the result that exists, so without
+    // the link it points at nothing they can reach
+    existing.value = data.existing ? (data.existing as IRecordExisting) : null;
+
     if (data.context) {
       // The league moved under the form; the caption redraws to the rules the entry will now be judged by
       rules.value = data.context as IResultFormContext;
     }
 
-    serverMessage.value =
-      typeof data.message === 'string' ? data.message : 'Pongifi could not record this result right now.';
+    serverMessage.value = typeof data.message === 'string' ? data.message : RECORD_REFUSED_MESSAGE;
   } finally {
     saving.value = false;
   }
 }
 
 /**
- * Whether the person has been asked about leaving a form they have typed in
- * @internal
- * @constant
- */
-const leaveAsking: Ref<boolean> = ref<boolean>(false);
-
-/**
- * Where they were going when they were asked
- * @internal
- * @constant
- */
-const leavingTo: Ref<string | null> = ref<string | null>(null);
-
-/**
- * Goes where they were going, now that they have said so
+ * Leaves the page, having asked once.
+ *
+ * The departure is marked before it is started, because the guard is about to see it: the draft is still dirty, and
+ * without the mark the page would ask the same question about the answer it was just given
  * @internal
  * @async
  * @function
  */
-async function leave(): Promise<void> {
-  const to: string = leavingTo.value ?? `/leagues/${props.leagueId}`;
+async function onLeave(): Promise<void> {
+  const destination: string | null = pendingDeparture.value;
 
-  leaveAsking.value = false;
-  leavingTo.value = null;
+  pendingDeparture.value = null;
+  departureOrigin = null;
 
-  await navigateTo(to);
+  if (destination !== null) {
+    departing = true;
+
+    await navigateTo(destination);
+  }
+}
+
+/**
+ * Closes the departure question, leaving the draft and the page exactly as they were
+ * @internal
+ * @function
+ */
+function onStay(): void {
+  const origin: HTMLElement | null = departureOrigin;
+
+  pendingDeparture.value = null;
+  departureOrigin = null;
+
+  // Focus goes back where the departure was attempted from, rather than to the top of the document
+  void nextTick((): void => origin?.focus());
 }
 
 /* ─── Lifecycle ──────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -429,15 +570,21 @@ layOut(gameType.value);
 
 watch([shown, settings], (): void => growRows());
 
-// The settings editor's rule, in the page rather than in a browser dialog: a form with work in it asks before it
-// is left, and a session that has ended is not a question anybody can usefully answer
+// The settings editor's rule, in the page rather than in a browser dialog: a form with work in it asks before it is
+// left, and a session that has ended is not a question anybody can usefully answer. An unanswered question is not
+// permission either — a second attempt while it stands is refused too, and only Leave departs
 onBeforeRouteLeave((to): boolean => {
-  if (!dirty.value || leaveAsking.value || to.path.startsWith(SIGN_IN_ROUTE)) {
+  if (departing || !dirty.value || to.path.startsWith(SIGN_IN_ROUTE)) {
     return true;
   }
 
-  leavingTo.value = to.fullPath;
-  leaveAsking.value = true;
+  if (pendingDeparture.value === null) {
+    departureOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    pendingDeparture.value = to.fullPath;
+
+    // The question is the page's own dialog, so focus moves into it on the safe answer
+    void nextTick((): void => stayButton.value?.focus());
+  }
 
   return false;
 });
@@ -525,8 +672,11 @@ onBeforeRouteLeave((to): boolean => {
           v-else
           class="flex gap-2"
         >
+          <!-- Named as well as prompted: a placeholder is the only label this field had, and it goes away the
+               moment somebody starts typing into it -->
           <input
             v-model="seat.guestName"
+            aria-label="Guest name"
             class="border-border bg-surface text-body w-full rounded-lg border p-2"
             :data-test="`guest-${seat.seat}`"
             inputmode="text"
@@ -558,18 +708,32 @@ onBeforeRouteLeave((to): boolean => {
     <fieldset class="mt-8">
       <legend class="text-body font-medium">Scores</legend>
 
+      <!-- Which box is which side, said once above the rows rather than repeated on every one. Each input carries
+           the same pairing as its own accessible name, because a column head is a sighted reading of the layout -->
+      <div
+        class="text-ink-subtle text-body-sm mt-2 flex items-center gap-2"
+        data-test="score-heads"
+      >
+        <span class="w-16"></span>
+
+        <span class="w-16">Side A</span>
+
+        <span class="w-16">Side B</span>
+      </div>
+
       <div
         v-for="(row, index) in visibleRows"
         :key="index"
         class="mt-2"
       >
-        <label class="text-body flex items-center gap-2">
+        <div class="text-body flex items-center gap-2">
           <span class="text-ink-subtle text-body-sm w-16">Game {{ index + 1 }}</span>
 
           <!-- Text with a numeric keypad, not type="number": Vue 3.5 casts a number input and a half-typed box
                would stop being the string it is -->
           <input
             v-model="row.a"
+            :aria-label="`Game ${index + 1}, Side A`"
             class="border-border bg-surface text-body w-16 rounded-lg border p-2"
             :data-test="`score-a-${index}`"
             inputmode="numeric"
@@ -578,12 +742,13 @@ onBeforeRouteLeave((to): boolean => {
 
           <input
             v-model="row.b"
+            :aria-label="`Game ${index + 1}, Side B`"
             class="border-border bg-surface text-body w-16 rounded-lg border p-2"
             :data-test="`score-b-${index}`"
             inputmode="numeric"
             type="text"
           />
-        </label>
+        </div>
 
         <p
           v-if="problems.rows[index]"
@@ -727,14 +892,27 @@ onBeforeRouteLeave((to): boolean => {
       </li>
     </ul>
 
+    <p
+      v-if="existing"
+      class="text-body-sm mt-2"
+      data-test="existing"
+    >
+      <NuxtLink
+        class="text-accent-strong hover:text-accent font-medium"
+        :to="`/leagues/${leagueId}/games/${existing.canonicalMatchId}`"
+      >
+        {{ RECORD_EXISTING_LINK }}
+      </NuxtLink>
+    </p>
+
     <div class="mt-8 flex gap-3">
       <button
         class="bg-accent-strong text-body rounded-lg px-4 py-2 font-medium text-white disabled:opacity-50"
         data-test="save"
-        :disabled="hasProblem || saving"
+        :disabled="saveBlocked"
         type="submit"
       >
-        Record result
+        {{ saveLabel }}
       </button>
 
       <NuxtLink
@@ -746,33 +924,49 @@ onBeforeRouteLeave((to): boolean => {
       </NuxtLink>
     </div>
 
-    <!-- Asked in the page rather than through the browser, as the settings editor does -->
+    <!-- Asked once, in the page, when a departure would take unsaved changes with it. The settings editor's dialog,
+         down to its words: two answers and two tab stops, so the cycle between them is the containment; Escape is
+         Stay, the answer that changes nothing -->
     <div
-      v-if="leaveAsking"
-      class="border-border bg-surface mt-4 rounded-lg border p-4"
+      v-if="pendingDeparture !== null"
+      aria-labelledby="record-leave-prompt"
+      aria-modal="true"
+      class="bg-ink/40 fixed inset-0 z-50 flex items-center justify-center p-6"
       data-test="leave-dialog"
-      role="alertdialog"
+      role="dialog"
+      @keydown.esc="onStay()"
     >
-      <p class="text-body">Leave without recording this result? What you have entered will be lost.</p>
-
-      <div class="mt-4 flex gap-3">
-        <button
-          class="text-body rounded-lg px-4 py-2 font-medium"
-          data-test="leave-confirm"
-          type="button"
-          @click="leave()"
+      <div class="border-border bg-surface w-full max-w-sm rounded-lg border p-6">
+        <p
+          id="record-leave-prompt"
+          class="text-ink text-body font-medium"
         >
-          Leave
-        </button>
+          {{ SETTINGS_LEAVE_PROMPT }}
+        </p>
 
-        <button
-          class="text-body text-ink-subtle hover:text-ink px-4 py-2 font-medium"
-          data-test="leave-cancel"
-          type="button"
-          @click="leaveAsking = false"
-        >
-          Keep editing
-        </button>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <button
+            ref="leaveButton"
+            class="bg-accent text-accent-ink hover:bg-accent-hover text-body-sm rounded-md px-5 py-2.5 font-medium transition-colors"
+            data-test="leave-confirm"
+            type="button"
+            @click="onLeave()"
+            @keydown.shift.tab.prevent="stayButton?.focus()"
+          >
+            Leave
+          </button>
+
+          <button
+            ref="stayButton"
+            class="border-border text-ink hover:border-accent text-body-sm rounded-md border px-5 py-2.5 font-medium transition-colors"
+            data-test="leave-cancel"
+            type="button"
+            @click="onStay()"
+            @keydown.exact.tab.prevent="leaveButton?.focus()"
+          >
+            Stay
+          </button>
+        </div>
       </div>
     </div>
   </form>
