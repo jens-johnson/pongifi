@@ -118,7 +118,11 @@ const amendRoute: ComputedRef<string> = computed(
  * @param which - What was pressed
  */
 async function press(which: ResultAction): Promise<void> {
-  if (which === ResultAction.VOID && !voidAsking.value) {
+  // Asked before it is sent, because void is the one action with no undo — but only for a fresh one. A void whose
+  // outcome nobody can be sure of has already been asked and already been answered, and its button now reads Check:
+  // that press is the earlier request again, not a new void. Asking again would reopen a question whose own yes is
+  // unavailable while an answer is held, leaving the request stranded behind a dialog nobody can answer
+  if (which === ResultAction.VOID && !voidAsking.value && !awaitingCheck(action.value, ResultAction.VOID)) {
     voidAsking.value = true;
 
     return;

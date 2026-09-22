@@ -453,6 +453,40 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(sent).toHaveLength(0);
   });
 
+  it('checks a held void rather than asking about it again, after the question was dismissed', async (): Promise<void> => {
+    // Cancel closes the question but not the answer: the void may already have landed, and its Check is on the
+    // button above. Reopening the question on that press would strand the held request behind a dialog whose own
+    // yes is unavailable while an answer is held — there would be no way left to resolve it at all
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 502);
+      answer = answerAccepted;
+
+      return { message: 'Pongifi could not save this right now.' };
+    };
+
+    const wrapper: VueWrapper = await mountActions({ mayVoid: true });
+
+    await pressButton(wrapper, 'void');
+    await pressButton(wrapper, 'void-confirm');
+
+    expect(at(wrapper, 'void').text()).toBe('Check');
+
+    await at(wrapper, 'void-cancel').trigger('click');
+    await nextTick();
+
+    expect(at(wrapper, 'void-dialog').exists()).toBe(false);
+
+    await pressButton(wrapper, 'void');
+
+    // The question stays shut and the press goes straight to the request the first attempt made
+    expect(at(wrapper, 'void-dialog').exists()).toBe(false);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+    expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
+    expect(paths[1]).toBe(paths[0]);
+    expect(wrapper.emitted('resolved')).toHaveLength(1);
+  });
+
   it('holds every other action while one outcome is unknown', async (): Promise<void> => {
     // Pressing Void while a Confirm may or may not have landed is how somebody ends up having done both
     answer = (event: H3Event): unknown => {
