@@ -152,8 +152,14 @@ export interface IReconstruction {
  * @public
  */
 export interface IResultFormContext {
-  /* Whether this account may record in this league at all, and the sentence to show when it may not */
-  authority: { may: boolean; who: string };
+  /**
+   * Whether this account may record in this league at all, the sentence to show when it may not, and whether it has
+   * to be seated in what it records.
+   *
+   * `mustPlay` is the server's answer rather than something the form reads out of the label: a commissioner or a
+   * manager records any match, and a player only reaches this form under a policy that also requires them to be in it
+   */
+  authority: { may: boolean; mustPlay: boolean; who: string };
 
   /* The league's configuration revision these rules came from; the save carries it back */
   configurationRevision: number;

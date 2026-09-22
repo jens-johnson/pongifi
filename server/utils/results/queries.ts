@@ -165,7 +165,11 @@ export async function readFormContext(leagueId: string, userId: string): Promise
   const role: LeagueRole = league.role as LeagueRole;
 
   return {
-    authority: { may: mayOpenForm(role, settings), who: RECORDER_LABEL[settings.whoCanRecordResults] ?? '' },
+    authority: {
+      may: mayOpenForm(role, settings),
+      mustPlay: role !== LeagueRole.COMMISSIONER && role !== LeagueRole.MANAGER,
+      who: RECORDER_LABEL[settings.whoCanRecordResults] ?? '',
+    },
     configurationRevision: league.configurationRevision,
     earliest: new Date(now.getTime() - settings.resultAmendmentWindow * HOUR_MS).toISOString(),
     formats: RECORDABLE_FORMATS.filter((format: GameType): boolean => settings.allowedGameTypes.includes(format)),

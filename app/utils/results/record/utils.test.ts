@@ -190,6 +190,32 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(rowsToShow(SETTINGS, draft({ rows: rows([11, 4], [6, 11], [11, 9]) }))).toBe(3);
     });
 
+    it('never shrinks below the minimum a format can take', (): void => {
+      // A best of five that has seen one finished game still has at least three rows; a form that shrank under
+      // somebody's hands would take away a row they were about to type in
+      for (const [matchFormat, minimum] of [
+        [1, 1],
+        [3, 2],
+        [5, 3],
+        [7, 4],
+      ] as [number, number][]) {
+        const settings: IMatchSettings = { ...SETTINGS, matchFormat };
+        const blank: IRecordDraft = draft({ rows: rows(['', ''], ['', ''], ['', ''], ['', '']) });
+        const started: IRecordDraft = draft({ rows: rows([11, 4], ['', ''], ['', ''], ['', '']) });
+
+        expect(rowsToShow(settings, blank)).toBe(minimum);
+        expect(rowsToShow(settings, started)).toBe(minimum);
+      }
+    });
+
+    it('grows past the minimum only once the games entered need it', (): void => {
+      const five: IMatchSettings = { ...SETTINGS, matchFormat: 5 };
+
+      expect(rowsToShow(five, draft({ rows: rows([11, 4], [11, 6], ['', '']) }))).toBe(3);
+      expect(rowsToShow(five, draft({ rows: rows([11, 4], [4, 11], [11, 6], ['', '']) }))).toBe(4);
+      expect(rowsToShow(five, draft({ rows: rows([11, 4], [11, 6], [11, 3]) }))).toBe(3);
+    });
+
     it('takes a withdrawal’s count from the person rather than deriving it', (): void => {
       // A match abandoned in its first game is one row, and nothing about the scores says so
       const retired: IRecordDraft = draft({
@@ -215,8 +241,26 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(toDerivedLine(SETTINGS, draft({ rows: rows([4, 11], [6, 11]) }), names)).toBe('Ben win 0-2');
     });
 
-    it('gives a withdrawn match to the other side, whatever the scoreboard says', (): void => {
-      // The retiring side loses however far ahead they were
+    it('credits the game somebody withdrew during to the side that stayed', (): void => {
+      // The spec's example: a retired best of 3 at 11-7, 4-6 gives game 1 to A on the scoreboard and game 2 to A by
+      // the withdrawal
+      const line: string = toDerivedLine(
+        SETTINGS,
+        draft({
+          ending: 'RETIRED',
+          gamesPlayed: 2,
+          retiredSeat: Seat.B1,
+          rows: rows([11, 7], [4, 6]),
+        }),
+        names,
+      );
+
+      expect(line).toBe('Ada win 2-0 · Ben retired');
+    });
+
+    it('lets a side that withdrew keep the games it had already won, and still lose', (): void => {
+      // 1-1 on games and the match is Ben's: every completed game keeps its winner, and the side that withdrew
+      // loses however far ahead it was
       const line: string = toDerivedLine(
         SETTINGS,
         draft({
@@ -228,7 +272,27 @@ describe(getTestFileName(import.meta.url), (): void => {
         names,
       );
 
-      expect(line).toBe('Ben win 1-0 · Ada retired');
+      expect(line).toBe('Ben win 1-1 · Ada retired');
+    });
+
+    it('credits a withdrawal in the first game at nil-nil', (): void => {
+      const line: string = toDerivedLine(
+        SETTINGS,
+        draft({
+          ending: 'RETIRED',
+          gamesPlayed: 1,
+          retiredSeat: Seat.B1,
+          rows: rows([0, 0]),
+        }),
+        names,
+      );
+
+      expect(line).toBe('Ada win 1-0 · Ben retired');
+    });
+
+    it('counts the games the form is showing, not the rows it happens to hold', (): void => {
+      // A third game after a 2-0 has already been dropped from the form; the line must not still be counting it
+      expect(toDerivedLine(SETTINGS, draft({ rows: rows([11, 4], [11, 6], [11, 3]) }), names)).toBe('Ada win 2-0');
     });
   });
 

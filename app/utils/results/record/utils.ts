@@ -192,10 +192,68 @@ export function rowsToShow(settings: IMatchSettings, draft: IRecordDraft): numbe
       return index + 1;
     }
 
-    shown = Math.min(index + 2, settings.matchFormat);
+    // Never below the minimum: a best of five that has seen one finished game still has at least three rows, and
+    // taking index + 2 alone would shrink the form under the person's hands
+    shown = Math.max(needed, Math.min(index + 2, settings.matchFormat));
   }
 
   return shown;
+}
+
+/**
+ * Which side, if either, withdrew
+ * @internal
+ * @function
+ * @param draft - The form
+ * @returns The side, or null when nobody did
+ */
+function retiredSideOf(draft: IRecordDraft): 'a' | 'b' | null {
+  if (draft.ending !== 'RETIRED' || draft.retiredSeat === null) {
+    return null;
+  }
+
+  return String(draft.retiredSeat).startsWith('A') ? 'a' : 'b';
+}
+
+/**
+ * How many games each side has won, over the rows the form is actually showing.
+ *
+ * Counting stops at the first row that cannot be read: a half-typed form has no more to say. A game that was played
+ * out keeps its own winner whoever withdrew afterwards, and the game somebody withdrew during goes to the side that
+ * stayed, whatever the score had reached
+ * @internal
+ * @function
+ * @param settings - The match's frozen rules
+ * @param draft - The form
+ * @returns The games won
+ */
+function countGamesWon(settings: IMatchSettings, draft: IRecordDraft): { a: number; b: number } {
+  const won: { a: number; b: number } = { a: 0, b: 0 };
+  const visible: IRecordRow[] = draft.rows.slice(0, rowsToShow(settings, draft));
+  const retired: 'a' | 'b' | null = retiredSideOf(draft);
+
+  for (const [index, row] of visible.entries()) {
+    const a = readScore(row.a);
+    const b = readScore(row.b);
+
+    if (!('score' in a) || !('score' in b)) {
+      break;
+    }
+
+    if (isFinishedGame(settings, draft.gameType, a.score, b.score)) {
+      won[a.score > b.score ? 'a' : 'b'] += 1;
+
+      continue;
+    }
+
+    if (retired !== null && index === visible.length - 1) {
+      won[retired === 'a' ? 'b' : 'a'] += 1;
+    }
+
+    break;
+  }
+
+  return won;
 }
 
 /**
@@ -208,31 +266,14 @@ export function rowsToShow(settings: IMatchSettings, draft: IRecordDraft): numbe
  * @returns The line
  */
 export function toDerivedLine(settings: IMatchSettings, draft: IRecordDraft, names: { a: string; b: string }): string {
+  const won: { a: number; b: number } = countGamesWon(settings, draft);
+  const retired: 'a' | 'b' | null = retiredSideOf(draft);
+
+  if (retired !== null) {
+    return `${retired === 'a' ? names.b : names.a} win ${won.a}-${won.b} · ${retired === 'a' ? names.a : names.b} retired`;
+  }
+
   const needed: number = gamesToWin(settings.matchFormat);
-  const won: { a: number; b: number } = { a: 0, b: 0 };
-
-  for (const row of draft.rows) {
-    const a = readScore(row.a);
-    const b = readScore(row.b);
-
-    if (!('score' in a) || !('score' in b) || !isFinishedGame(settings, draft.gameType, a.score, b.score)) {
-      break;
-    }
-
-    if (a.score > b.score) {
-      won.a += 1;
-    } else {
-      won.b += 1;
-    }
-  }
-
-  // A withdrawal decides the match whatever the scoreboard says, so the line names the other side
-  if (draft.ending === 'RETIRED' && draft.retiredSeat !== null) {
-    const withdrew: string = String(draft.retiredSeat).startsWith('A') ? names.a : names.b;
-    const winner: string = withdrew === names.a ? names.b : names.a;
-
-    return `${winner} win ${won.a}-${won.b} · ${withdrew} retired`;
-  }
 
   if (won.a >= needed || won.b >= needed) {
     return `${won.a > won.b ? names.a : names.b} win ${won.a}-${won.b}`;
