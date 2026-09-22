@@ -34,6 +34,7 @@ import {
   toRatingCell,
   toRatingLine,
   toResolutionLine,
+  toSeatMarker,
   toSideLabel,
   toSummary,
   toTitle,
@@ -400,6 +401,67 @@ describe(getTestFileName(import.meta.url), (): void => {
       });
 
       expect(toRatingCell(match(), lost)).toBe('1200 → 1188 (-12) · Provisional');
+    });
+
+    it('says nothing at all for any seat of a voided result', (): void => {
+      const voided: IMatchView = match({ state: ResultState.VOID });
+      const moved: IMatchViewParticipant = seat('Ada', Side.A, {
+        rating: {
+          after: 1216,
+          before: 1200,
+          delta: 16,
+          provisional: false,
+        },
+      });
+
+      // The seat a void found accepted, whose change the recomputed generation no longer holds, and one that was
+      // never rated at all: none of the three promises a change under a line saying the result does not count
+      expect(toRatingCell(voided, seat('Ben', Side.B))).toBe('');
+      expect(toRatingCell(voided, moved)).toBe('');
+      expect(
+        toRatingCell(match({ rating: { rated: false, unratedReason: 'GUEST' }, state: ResultState.VOID }), moved),
+      ).toBe('');
+    });
+  });
+
+  describe(symbolName(toSeatMarker), (): void => {
+    it('marks a guest, marks an account that has left, and leaves a current member unmarked', (): void => {
+      const guest: IMatchViewParticipant = seat('Priyanka', Side.B, {
+        identity: {
+          displayName: 'Priyanka',
+          guest: true,
+          id: null,
+          member: false,
+          removed: false,
+        },
+      });
+      const left: IMatchViewParticipant = seat('Ben', Side.B, {
+        identity: {
+          displayName: 'Ben',
+          guest: false,
+          id: 'Ben',
+          member: false,
+          removed: false,
+        },
+      });
+
+      expect(toSeatMarker(guest)).toBe('Guest');
+      expect(toSeatMarker(left)).toBe('No longer a member');
+      expect(toSeatMarker(seat('Ada', Side.A))).toBe('');
+    });
+
+    it('leaves a deleted account to the name that already says it is gone', (): void => {
+      const deleted: IMatchViewParticipant = seat(DELETED_ACCOUNT_NAME, Side.B, {
+        identity: {
+          displayName: DELETED_ACCOUNT_NAME,
+          guest: false,
+          id: 'Ben',
+          member: false,
+          removed: true,
+        },
+      });
+
+      expect(toSeatMarker(deleted)).toBe('');
     });
   });
 

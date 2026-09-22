@@ -19,6 +19,7 @@ import {
   toRatingCell,
   toRatingLine,
   toResolutionLine,
+  toSeatMarker,
   toSideLabel,
   toSummary,
   toTitle,
@@ -303,10 +304,11 @@ useHead({
           <!-- The side, because this list has no column headings to read it from and doubles is otherwise unreadable -->
           <span class="text-ink-subtle text-body-sm">{{ toSideLabel(participant) }}</span>
 
+          <!-- A guest seat, or an account that has left the league, which no other line says once a result is accepted -->
           <span
-            v-if="participant.identity.guest"
+            v-if="toSeatMarker(participant)"
             class="text-ink-subtle text-body-sm"
-            >Guest</span
+            >{{ toSeatMarker(participant) }}</span
           >
 
           <span
@@ -316,7 +318,11 @@ useHead({
             >✓</span
           >
 
-          <span class="text-ink-subtle text-body-sm">{{ toRatingCell(match, participant) }}</span>
+          <span
+            v-if="toRatingCell(match, participant)"
+            class="text-ink-subtle text-body-sm"
+            >{{ toRatingCell(match, participant) }}</span
+          >
         </li>
       </ul>
 

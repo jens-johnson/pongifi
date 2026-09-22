@@ -117,6 +117,31 @@ export function toSideLabel(participant: IMatchViewParticipant): string {
 }
 
 /**
+ * What is said beside a seat's name in the participants list: that it was a guest, or that the account has left
+ * the league.
+ *
+ * The status line names a departure only while a side is still waiting, and it leaves with acceptance; after that
+ * the list is the only place the name still appears, so the list has to carry it in every state. A deleted account
+ * is already named as deleted and takes no second marker, and a guest was never a member, so at most one of these
+ * ever applies (page spec, Participants)
+ * @public
+ * @function
+ * @param participant - The seat
+ * @returns The marker, or an empty string when there is nothing to say
+ */
+export function toSeatMarker(participant: IMatchViewParticipant): string {
+  if (participant.identity.guest) {
+    return 'Guest';
+  }
+
+  if (participant.identity.removed || participant.identity.member) {
+    return '';
+  }
+
+  return 'No longer a member';
+}
+
+/**
  * The line under the heading: the format, the length and the games won
  * @public
  * @function
@@ -238,14 +263,23 @@ export function toResolutionLine(match: IMatchView): string {
 }
 
 /**
- * What the rating column shows for one seat: a change, that one is owed, or that none is coming
+ * What the rating column shows for one seat: a change, that one is owed, or that none is coming.
+ *
+ * A voided result says nothing at all. It moved nobody's rating and never will, so "Pending" under a line saying
+ * the result does not count promises a change that is not coming — the same thing the heading stopped doing. An
+ * accepted match voided afterwards lands here too, because the recomputed generation no longer holds its change
+ * and the seat would otherwise fall through to "Pending" (page spec, Page Skeleton)
  * @public
  * @function
  * @param match - The match
  * @param participant - The seat
- * @returns The cell
+ * @returns The cell, or an empty string when the result was voided
  */
 export function toRatingCell(match: IMatchView, participant: IMatchViewParticipant): string {
+  if (match.state === ResultState.VOID) {
+    return '';
+  }
+
   if (!match.rating.rated) {
     return 'Unrated';
   }
