@@ -69,10 +69,11 @@ export function toLocalDateTime(instant: string | null | undefined): string {
 }
 
 /**
- * The heading: who beat whom once that is settled, and who played whom while it is not.
+ * The heading: who beat whom once the result is accepted, and who played whom every other time.
  *
- * A result somebody is still allowed to contest is not announced as a fact, which is why an unconfirmed and a
- * disputed match both read "v" (page spec, Page Skeleton)
+ * Only an accepted result is a fact about who won. An unconfirmed or disputed one is still open to be contested, and
+ * a voided one has stopped counting, so all three read "v" — a voided match headed "Ada beat Ben" over a line saying
+ * it does not count announces the very thing the void withdrew (page spec, Page Skeleton)
  * @public
  * @function
  * @param match - The match
@@ -82,7 +83,7 @@ export function toHeading(match: IMatchView): string {
   const a: string = namesOf(seatsOf(match, Side.A));
   const b: string = namesOf(seatsOf(match, Side.B));
 
-  if (match.state === ResultState.UNCONFIRMED || match.state === ResultState.DISPUTED) {
+  if (match.state !== ResultState.CONFIRMED) {
     return `${a} v ${b}`;
   }
 

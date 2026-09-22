@@ -163,6 +163,12 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(toHeading(match({ gamesWon: { a: 0, b: 2 }, state: ResultState.CONFIRMED }))).toBe('Ben beat Ada');
     });
 
+    it('stops announcing a winner once the result is voided', (): void => {
+      // A voided result has stopped counting: "Ada beat Ben" over a line saying it does not count announces the
+      // very thing the void withdrew
+      expect(toHeading(match({ state: ResultState.VOID }))).toBe('Ada v Ben');
+    });
+
     it('joins a doubles side the way the spec joins it', (): void => {
       const doubles: IMatchView = match({
         participants: [seat('Ada', Side.A), seat('Ben', Side.A), seat('Cara', Side.B), seat('Dan', Side.B)],
