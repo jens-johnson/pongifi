@@ -1,0 +1,1535 @@
+/**
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ *
+ *                                  ██████╗  ██████╗ ███╗   ██╗ ██████╗ ██╗███████╗██╗
+ *                                  ██╔══██╗██╔═══██╗████╗  ██║██╔════╝ ██║██╔════╝██║
+ *                                  ██████╔╝██║   ██║██╔██╗ ██║██║  ███╗██║█████╗  ██║
+ *                                  ██╔═══╝ ██║   ██║██║╚██╗██║██║   ██║██║██╔══╝  ██║
+ *                                  ██║     ╚██████╔╝██║ ╚████║╚██████╔╝██║██║     ██║
+ *                                  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝     ╚═╝
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ * ████████████████████████████████ scripts/spike/result-entry/scenarios-transaction.ts ████████████████████████████████
+ *
+ * Transaction-path, concurrency and recovery checks for the result-entry spike.
+ *
+ * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+ */
+
+import { randomUUID } from 'node:crypto';
+
+import { ResultAction, ResultState } from '#shared/results';
+import { withInteractiveTransaction } from '#utils/db/transaction';
+import type { IResultEffect, TResultOutcome } from '#utils/results';
+import {
+  answerResult,
+  recordResult,
+  redactNotesForAccount,
+  ResultRefusalError,
+  settleDueResults,
+} from '#utils/results';
+
+import { LEAGUE_ID, read, resetDatabase, seedLeague, settingsFixture } from './harness';
+import { amendOrThrow, disputeOne, doubles, ok, recordOrThrow, singles } from './scenarios-schema';
+import type { IScenario, IScenarioResult } from './types';
+import { PACKAGES } from './types';
+
+/**
+ * Answers a result, throwing on a refusal
+ * @internal
+ * @async
+ * @function
+ * @param transaction - The open transaction
+ * @param actorId - Who is answering
+ * @param request - The action and the operation's identity
+ * @returns What it did
+ */
+async function answerOrThrow(
+  transaction: Parameters<typeof answerResult>[0],
+  actorId: string,
+  request: Parameters<typeof answerResult>[2],
+): Promise<IResultEffect> {
+  return ok(await answerResult(transaction, actorId, request));
+}
+
+/**
+ * A latch two transactions use to meet at a chosen point, so an interleaving is arranged rather than hoped for
+ * @internal
+ * @function
+ * @returns The latch and the function that releases it
+ */
+export function latch(): { open: () => void; reached: Promise<void> } {
+  let open: () => void = (): void => undefined;
+  const reached: Promise<void> = new Promise<void>((resolve: () => void): void => {
+    open = resolve;
+  });
+
+  return { open, reached };
+}
+
+/**
+ * Reads what a thrown value was refused as
+ * @internal
+ * @function
+ * @param error - What was thrown
+ * @returns The refusal, or the message
+ */
+export function refusalOf(error: unknown): string {
+  if (error instanceof ResultRefusalError) {
+    return error.refusal;
+  }
+
+  return error instanceof Error ? error.message.split('\n')[0]! : String(error);
+}
+
+/**
+ * Records one confirmed singles result and answers with its match
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param recorder - Who records it
+ * @param seats - The two seated accounts
+ * @param rows - The scores
+ * @returns What the creation did
+ */
+export async function recordOne(
+  connectionString: string,
+  recorder: string,
+  seats: [string, string],
+  rows: [number, number][] = [[11, 4]],
+): Promise<IResultEffect> {
+  return withInteractiveTransaction(
+    (transaction) =>
+      recordOrThrow(transaction, recorder, {
+        clientOperationId: randomUUID(),
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles(rows, seats),
+      }),
+    { connectionString },
+  );
+}
+
+/**
+ * How long an arrangement waits for the connection it is arranging around to reach its lock
+ * @internal
+ * @constant
+ */
+const LOCK_WAIT_TIMEOUT_MS: number = 10000;
+
+/**
+ * How often it looks
+ * @internal
+ * @constant
+ */
+const LOCK_WAIT_POLL_MS: number = 25;
+
+/**
+ * Waits until another connection is actually blocked on a lock, or gives up saying so.
+ *
+ * A scenario that starts a second transaction and releases the first immediately proves nothing about overlap: the
+ * two may simply have run in order, and the case would pass for the wrong reason. This observes the second backend
+ * in the state the arrangement needs it to be in — waiting on a lock — before anything is released
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @param waiters - How many connections must be waiting
+ * @throws Error when no such wait appears in time, so the case fails rather than passing sequentially
+ */
+async function awaitLockWaiters(connectionString: string, waiters: number = 1): Promise<void> {
+  const deadline: number = Date.now() + LOCK_WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const [seen] = await read<{ waiting: number }>(
+      connectionString,
+      `SELECT count(*)::int AS waiting FROM "pg_stat_activity"
+       WHERE "datname" = current_database() AND "wait_event_type" = 'Lock' AND "pid" <> pg_backend_pid()`,
+    );
+
+    if ((seen?.waiting ?? 0) >= waiters) {
+      return;
+    }
+
+    await new Promise<void>((resolve: () => void): void => {
+      setTimeout(resolve, LOCK_WAIT_POLL_MS);
+    });
+  }
+
+  throw new Error(`no connection reached a lock wait within ${LOCK_WAIT_TIMEOUT_MS}ms; the case would prove nothing`);
+}
+
+/**
+ * Confirms a revision on its own connection, throwing on a refusal
+ * @internal
+ * @function
+ * @param connectionString - The disposable database
+ * @param actor - Who is confirming
+ * @param canonicalMatchId - The match
+ * @returns What the write did
+ */
+function confirmOne(connectionString: string, actor: string, canonicalMatchId: string): Promise<IResultEffect> {
+  return withInteractiveTransaction(
+    (transaction) =>
+      answerOrThrow(transaction, actor, {
+        action: ResultAction.CONFIRM,
+        canonicalMatchId,
+        clientOperationId: randomUUID(),
+        expectedRevision: 1,
+        note: null,
+      }),
+    { connectionString },
+  );
+}
+
+/**
+ * How many backends this database has open, so a transport can be shown to clean up after itself
+ * @internal
+ * @async
+ * @function
+ * @param connectionString - The disposable database
+ * @returns The number of connections other than the counting one
+ */
+async function openConnections(connectionString: string): Promise<number> {
+  const [row] = await read<{ n: number }>(
+    connectionString,
+    `SELECT count(*)::int AS n FROM "pg_stat_activity"
+     WHERE "datname" = current_database() AND "pid" <> pg_backend_pid()`,
+  );
+
+  return row!.n;
+}
+
+/**
+ * The real-transaction-path checks
+ * @public
+ * @constant
+ */
+export const TRANSACTION_SCENARIOS: readonly IScenario[] = [
+  {
+    package: PACKAGES.TRANSACTION,
+    name: 'a failure before commit leaves no result, no game rows and no rating generation',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      let thrown: string = 'none';
+
+      try {
+        await withInteractiveTransaction(
+          async (transaction) => {
+            await recordOrThrow(transaction, ids.Ada!, {
+              clientOperationId: randomUUID(),
+              expectedLeagueRevision: 1,
+              leagueId: LEAGUE_ID,
+              submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+            });
+
+            throw new Error('the function died before its answer');
+          },
+          { connectionString },
+        );
+      } catch (error: unknown) {
+        thrown = refusalOf(error);
+      }
+
+      const [counts] = await read<{ games: number; generations: number; revisions: number; snapshots: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "games") AS games,
+                (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "rating_generations") AS generations,
+                (SELECT count(*)::int FROM "rating_snapshots") AS snapshots`,
+      );
+
+      return {
+        detail: `threw "${thrown}"; ${counts!.revisions} revisions, ${counts!.games} games, ${counts!.generations} generations, ${counts!.snapshots} snapshots`,
+        passed: counts!.revisions === 0 && counts!.games === 0 && counts!.generations === 0 && counts!.snapshots === 0,
+      };
+    },
+  },
+  {
+    package: PACKAGES.TRANSACTION,
+    name: 'a second writer meets the league lock and is refused by the lock timeout rather than interleaving',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const holding = latch();
+      const release = latch();
+
+      const first: Promise<IResultEffect> = withInteractiveTransaction(
+        async (transaction) => {
+          const effect = await recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+          });
+
+          holding.open();
+          await release.reached;
+
+          return effect;
+        },
+        { connectionString },
+      );
+
+      await holding.reached;
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction(
+          (transaction) =>
+            recordOrThrow(transaction, ids.Ada!, {
+              clientOperationId: randomUUID(),
+              expectedLeagueRevision: 1,
+              leagueId: LEAGUE_ID,
+              submission: singles([[11, 6]], [ids.Ada!, ids.Ben!]),
+            }),
+          { connectionString, limits: { lockTimeoutMs: 700 } },
+        );
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      release.open();
+      await first;
+
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `second writer refused with "${refusal}"; ${counts!.revisions} result recorded`,
+        passed: refusal.includes('lock timeout') && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.TRANSACTION,
+    name: 'the transport leaves no connection behind after twenty transactions',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(
+        connectionString,
+        ['Ada', 'Ben'],
+        settingsFixture({ requireConfirmation: false }),
+      );
+      const before: number = await openConnections(connectionString);
+
+      for (let index = 0; index < 20; index += 1) {
+        await recordOne(connectionString, ids.Ada!, [ids.Ada!, ids.Ben!], [[11, index % 10]]);
+      }
+
+      // The driver closes asynchronously, so a moment is allowed before the backends are counted
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 500);
+      });
+
+      const after: number = await openConnections(connectionString);
+
+      return {
+        detail: `${before} connections before, ${after} after twenty committed transactions`,
+        passed: after <= before,
+      };
+    },
+  },
+  {
+    package: PACKAGES.TRANSACTION,
+    name: 'a statement that outruns its limit ends the transaction visibly rather than half-writing',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+      await seedLeague(connectionString, ['Ada', 'Ben']);
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction(
+          async (transaction) => {
+            await transaction.query(`UPDATE "leagues" SET "name" = 'renamed' WHERE "id" = $1`, [LEAGUE_ID]);
+            await transaction.query('SELECT pg_sleep(2)');
+          },
+          { connectionString, limits: { statementTimeoutMs: 300 } },
+        );
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      const [league] = await read<{ name: string }>(connectionString, `SELECT "name" FROM "leagues" WHERE "id" = $1`, [
+        LEAGUE_ID,
+      ]);
+
+      return {
+        detail: `refused with "${refusal}"; league name is still "${league!.name}"`,
+        passed: refusal.includes('statement timeout') && league!.name === 'Spike League',
+      };
+    },
+  },
+];
+
+/**
+ * The concurrency and recovery checks, every one of them across independent connections
+ * @public
+ * @constant
+ */
+export const CONCURRENCY_SCENARIOS: readonly IScenario[] = [
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'two identical creates under one operation key write one result and return one receipt',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const clientOperationId: string = randomUUID();
+      const request = {
+        clientOperationId,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+      };
+      const both: PromiseSettledResult<IResultEffect>[] = await Promise.allSettled([
+        withInteractiveTransaction((transaction) => recordOrThrow(transaction, ids.Ada!, request), {
+          connectionString,
+        }),
+        withInteractiveTransaction((transaction) => recordOrThrow(transaction, ids.Ada!, request), {
+          connectionString,
+        }),
+      ]);
+      const [counts] = await read<{ receipts: number; revisions: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "result_operations") AS receipts`,
+      );
+      const effects: string[] = both.map((outcome) =>
+        outcome.status === 'fulfilled' ? outcome.value.resultRevisionId : `rejected: ${refusalOf(outcome.reason)}`,
+      );
+
+      return {
+        detail: `${counts!.revisions} revision, ${counts!.receipts} receipt; both answers ${effects[0] === effects[1] ? 'identical' : `differ (${effects.join(' vs ')})`}`,
+        passed: counts!.revisions === 1 && counts!.receipts === 1 && effects[0] === effects[1],
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'the same key with a changed body conflicts instead of writing a second result',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const clientOperationId: string = randomUUID();
+
+      await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId,
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+          }),
+        { connectionString },
+      );
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction(
+          (transaction) =>
+            recordOrThrow(transaction, ids.Ada!, {
+              clientOperationId,
+              expectedLeagueRevision: 1,
+              leagueId: LEAGUE_ID,
+              submission: singles([[11, 9]], [ids.Ada!, ids.Ben!]),
+            }),
+          { connectionString },
+        );
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `refused as ${refusal}; ${counts!.revisions} revision written`,
+        passed: refusal === 'OPERATION_BODY_CHANGED' && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a lost answer is resolved by replaying the identical action, not by writing a second one',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const clientOperationId: string = randomUUID();
+      const request = {
+        clientOperationId,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+      };
+      const first: IResultEffect = await withInteractiveTransaction(
+        (transaction) => recordOrThrow(transaction, ids.Ada!, request),
+        { connectionString },
+      );
+      const retry: IResultEffect = await withInteractiveTransaction(
+        (transaction) => recordOrThrow(transaction, ids.Ada!, request),
+        { connectionString },
+      );
+      const [counts] = await read<{ generations: number; revisions: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "rating_generations") AS generations`,
+      );
+
+      return {
+        detail: `retry answered ${retry.resultRevisionId === first.resultRevisionId ? 'with the original receipt' : 'with something else'}; ${counts!.revisions} revision, ${counts!.generations} generation`,
+        passed:
+          retry.resultRevisionId === first.resultRevisionId && counts!.revisions === 1 && counts!.generations === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'two final confirmations racing settle the result once and publish one ladder',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+      const confirm = (actor: string): Promise<IResultEffect> =>
+        confirmOne(connectionString, actor, created.canonicalMatchId);
+      const both: PromiseSettledResult<IResultEffect>[] = await Promise.allSettled([
+        confirm(ids.Ben!),
+        confirm(ids.Cara!),
+      ]);
+      const [state] = await read<{ generations: number; reason: string; settled: number; state: string }>(
+        connectionString,
+        `SELECT r."state", r."settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'CONFIRM') AS settled,
+                (SELECT count(*)::int FROM "rating_generations") AS generations
+         FROM "result_revisions" r WHERE r."id" = $1`,
+        [created.resultRevisionId],
+      );
+      const settledCount: number = both.filter(
+        (outcome) => outcome.status === 'fulfilled' && outcome.value.state === ResultState.CONFIRMED,
+      ).length;
+
+      return {
+        detail: `${state!.state} by ${state!.reason}, ${state!.settled} confirmations, ${settledCount} of two answers reported the settlement, ${state!.generations} generations`,
+        passed:
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'CONFIRMED_BY_ALL' &&
+          state!.settled === 2 &&
+          settledCount === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a retry that overlaps its original is answered from the receipt, never warned about its own match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const operation: string = randomUUID();
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const request = {
+        clientOperationId: operation,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: entry,
+      };
+      const holding = latch();
+      const release = latch();
+
+      // The original, held open after it has written its match and its receipt but before it commits
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, request);
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // The retry, which finds no receipt yet and queues on the league's row. Everything it needs to answer
+      // correctly — the receipt, and the match the original is about to commit — appears while it waits
+      const retrying: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) => recordResult(transaction, ids.Ada!, request),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      // Observed, not assumed: without this the two could simply run in order and the case would pass for the wrong
+      // reason. Released in a `finally`, so a wait that never appears fails the case instead of hanging the harness
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
+
+      const first: TResultOutcome = await original;
+      const second: TResultOutcome = await retrying;
+      const [counts] = await read<{ receipts: number; revisions: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "result_operations") AS receipts`,
+      );
+      const replayed: boolean = second.ok && second.replayed;
+      const warned: string = second.ok ? 'none' : second.refusal;
+
+      return {
+        detail: `the retry answered ${replayed ? 'from the receipt' : `with "${warned}"`}; ${counts!.revisions} revision and ${counts!.receipts} receipt`,
+        passed: first.ok && replayed && counts!.revisions === 1 && counts!.receipts === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a changed body under a key whose original was still in flight conflicts on the key, not on a duplicate',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const operation: string = randomUUID();
+      const request = {
+        clientOperationId: operation,
+        expectedLeagueRevision: 1,
+        leagueId: LEAGUE_ID,
+        submission: singles([[11, 4]], [ids.Ada!, ids.Ben!]),
+      };
+      const holding = latch();
+      const release = latch();
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, request);
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      const edited: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, { ...request, submission: singles([[11, 6]], [ids.Ada!, ids.Ben!]) }),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
+
+      await original;
+
+      const outcome: TResultOutcome = await edited;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const named: string | undefined = outcome.ok ? undefined : outcome.details?.existing?.canonicalMatchId;
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `refused as "${refusal}"${named ? ', naming the result that exists' : ''}; ${counts!.revisions} revision`,
+        passed: refusal === 'OPERATION_BODY_CHANGED' && named !== undefined && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a fresh operation that overlaps an identical entry is warned rather than writing a second match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+      const holding = latch();
+      const release = latch();
+      const original: Promise<TResultOutcome> = withInteractiveTransaction(
+        async (transaction) => {
+          const outcome: TResultOutcome = await recordResult(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          });
+
+          holding.open();
+          await release.reached;
+
+          return outcome;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // A different operation id: this is somebody entering the same match again, not a retry of the first
+      const second: Promise<TResultOutcome> = withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString, limits: { lockTimeoutMs: 20000, operationTimeoutMs: 30000 } },
+      );
+
+      try {
+        await awaitLockWaiters(connectionString);
+      } finally {
+        release.open();
+      }
+
+      await original;
+
+      const outcome: TResultOutcome = await second;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const candidates: number = outcome.ok ? 0 : (outcome.details?.candidates?.length ?? 0);
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `refused as "${refusal}" naming ${candidates} candidate; ${counts!.revisions} revision written`,
+        passed: refusal === 'PROBABLE_DUPLICATE' && candidates === 1 && counts!.revisions === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'the same entry recorded again, acknowledged under the operation that was warned, writes the second match',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const entry = singles([[11, 4]], [ids.Ada!, ids.Ben!]);
+
+      await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+
+      // One operation id from the warning through to the save it becomes, which is what the page does: the person
+      // presses Record, is warned, and presses again without the form having started a new operation
+      const operation: string = randomUUID();
+      const warned: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            clientOperationId: operation,
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+      const acknowledgement: string | undefined = warned.ok ? undefined : warned.details?.acknowledgement;
+      const recorded: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgement,
+            clientOperationId: operation,
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: entry,
+          }),
+        { connectionString },
+      );
+      // The same token against a result edited by a minute: what the person acknowledged is no longer what they are
+      // recording, so it is a fresh warning rather than a save
+      const edited: TResultOutcome = await withInteractiveTransaction(
+        (transaction) =>
+          recordResult(transaction, ids.Ada!, {
+            acknowledgement,
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: {
+              ...entry,
+              playedAt: new Date(Date.parse(entry.playedAt) - 60 * 1000).toISOString(),
+            },
+          }),
+        { connectionString },
+      );
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `warned, then recorded under the same operation id; the same token against an edited result was ${edited.ok ? 'accepted' : `refused as "${edited.refusal}"`}; ${counts!.revisions} revisions`,
+        passed:
+          !warned.ok &&
+          warned.refusal === 'PROBABLE_DUPLICATE' &&
+          recorded.ok &&
+          !edited.ok &&
+          edited.refusal === 'PROBABLE_DUPLICATE' &&
+          counts!.revisions === 2,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'two members of one side confirming at once answer for it once, and the first of them is the confirmer',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara', 'Dan', 'Eve']);
+      /* Ada is not seated, so both sides owe an answer and neither confirmation below can settle the match alone */
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: doubles([ids.Ben!, ids.Cara!, ids.Dan!, ids.Eve!]),
+          }),
+        { connectionString },
+      );
+      const confirm = (actor: string): Promise<IResultEffect> =>
+        confirmOne(connectionString, actor, created.canonicalMatchId);
+
+      await Promise.allSettled([confirm(ids.Ben!), confirm(ids.Cara!)]);
+
+      const [state] = await read<{
+        confirmed_by: string | null;
+        confirmations: number;
+        pending: number;
+        state: string;
+      }>(
+        connectionString,
+        `SELECT r."state",
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'CONFIRM') AS confirmations,
+                (SELECT count(*)::int FROM "result_revision_sides"
+                 WHERE "result_revision_id" = r."id" AND "satisfied_by" = 'PENDING') AS pending,
+                (SELECT "confirmed_by_user_id" FROM "result_revision_sides"
+                 WHERE "result_revision_id" = r."id" AND "side" = 'A') AS confirmed_by
+         FROM "result_revisions" r WHERE r."id" = $1`,
+        [created.resultRevisionId],
+      );
+      const attributed: boolean = state!.confirmed_by === ids.Ben! || state!.confirmed_by === ids.Cara!;
+
+      return {
+        detail: `${state!.confirmations} confirmation recorded for the side, attributed to ${attributed ? 'one of the two accounts that raced' : 'nobody the race involved'}; ${state!.pending} side still pending and the result is ${state!.state}`,
+        passed: state!.confirmations === 1 && attributed && state!.pending === 1 && state!.state === 'UNCONFIRMED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a confirmation and a dispute racing leave one state, never a confirmed result with a dispute on it',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+      const act = (actor: string, action: ResultAction): Promise<IResultEffect> =>
+        withInteractiveTransaction(
+          (transaction) =>
+            answerOrThrow(transaction, actor, {
+              action,
+              canonicalMatchId: created.canonicalMatchId,
+              clientOperationId: randomUUID(),
+              expectedRevision: 1,
+              note: action === ResultAction.DISPUTE ? 'that was not the score' : null,
+            }),
+          { connectionString },
+        );
+      const both: PromiseSettledResult<IResultEffect>[] = await Promise.allSettled([
+        act(ids.Ben!, ResultAction.CONFIRM),
+        act(ids.Cara!, ResultAction.DISPUTE),
+      ]);
+      const [state] = await read<{ games: string; state: string }>(
+        connectionString,
+        `SELECT r."state",
+                (SELECT string_agg(DISTINCT g."confirmation_status"::text, ',') FROM "games" g WHERE g."result_revision_id" = r."id") AS games
+         FROM "result_revisions" r WHERE r."id" = $1`,
+        [created.resultRevisionId],
+      );
+      const outcomes: string[] = both.map((outcome) =>
+        outcome.status === 'fulfilled' ? outcome.value.state : `rejected: ${refusalOf(outcome.reason)}`,
+      );
+
+      return {
+        detail: `revision ${state!.state}, game rows ${state!.games}; answers ${outcomes.join(' and ')}`,
+        passed: state!.state === state!.games && ['DISPUTED', 'UNCONFIRMED'].includes(state!.state),
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a dispute that arrives after the deadline meets a result already settled by it',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute' WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      // Deliberately not unwrapped: the point is that the transaction commits the settlement it did on the way in,
+      // while the action itself is refused
+      const outcome = await withInteractiveTransaction(
+        (transaction) =>
+          answerResult(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'too late',
+          }),
+        { connectionString },
+      );
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+
+      const [state] = await read<{ disputes: number; reason: string; state: string }>(
+        connectionString,
+        `SELECT "state", "settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'DISPUTE') AS disputes
+         FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `${state!.state} by ${state!.reason}; the late dispute was refused as ${refusal} and wrote ${state!.disputes} rows`,
+        passed:
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'DEADLINE_PASSED' &&
+          state!.disputes === 0 &&
+          refusal === 'STALE_RESULT',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a dispute that crossed the deadline while queued behind the league lock is late, not early',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Ben!, ids.Cara!]);
+      const holding = latch();
+      const release = latch();
+      const begun = latch();
+      const armed = latch();
+      /* Set from the database's own clock once the dispute has begun, so the arrangement holds at any latency */
+      let deadline: Date | undefined = undefined;
+
+      // A third party holds the league's lock, which is the row every result write in the league has to pass through
+      const blocker: Promise<void> = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query(`SELECT "id" FROM "leagues" WHERE "id" = $1 FOR UPDATE`, [LEAGUE_ID]);
+          holding.open();
+          await release.reached;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      // Begins inside the confirmation window and will not see the lock until the blocker lets go of it. Its own
+      // `now()` is fixed at `BEGIN`, so the window is opened after that rather than timed against a round trip
+      const disputing = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query('SELECT 1');
+
+          begun.open();
+          // Nothing is locked yet, so the window can be opened against this transaction's own start time without the
+          // arrangement queuing behind the locks the dispute is about to take
+          await armed.reached;
+
+          const outcome: TResultOutcome = await answerResult(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'I disagree',
+          });
+          const { rows } = await transaction.query<{ crossed: boolean; started: boolean }>(
+            `SELECT now() < $1::timestamptz AS "started", clock_timestamp() > $1::timestamptz AS "crossed"`,
+            [deadline!],
+          );
+
+          return { clock: rows[0]!, outcome };
+        },
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 10000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 10000,
+          },
+        },
+      );
+
+      await begun.reached;
+
+      const [revision] = await read<{ deadline: Date }>(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = clock_timestamp() + interval '300 milliseconds'
+         WHERE "id" = $1 RETURNING "confirmation_deadline" AS deadline`,
+        [created.resultRevisionId],
+      );
+
+      deadline = revision!.deadline;
+
+      armed.open();
+
+      // The deadline passes while the dispute is still queued
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 1000);
+      });
+
+      release.open();
+      await blocker;
+
+      const { clock, outcome } = await disputing;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const [state] = await read<{ disputes: number; reason: string; state: string }>(
+        connectionString,
+        `SELECT "state", "settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'DISPUTE') AS disputes
+         FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `the transaction began ${clock.started ? 'before' : 'after'} the deadline and held its locks ${clock.crossed ? 'after' : 'before'} it; the dispute was refused as ${refusal} and wrote ${state!.disputes} rows, leaving ${state!.state} by ${state!.reason}`,
+        passed:
+          clock.started &&
+          clock.crossed &&
+          refusal === 'STALE_RESULT' &&
+          state!.disputes === 0 &&
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'DEADLINE_PASSED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a dispute carrying a note is late when the deadline passed while it queued for the account lock',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Ben!, ids.Cara!]);
+      const holding = latch();
+      const release = latch();
+      const begun = latch();
+      const armed = latch();
+      /* Opened from the database's own clock once the dispute has begun, so the arrangement holds at any latency */
+      let deadline: Date | undefined = undefined;
+
+      // The league's lock is free and the revision's lock is free. What is held is a seated player's account row,
+      // which only a note-bearing dispute ever waited on — and it used to wait on it after it had already read the
+      // clock and decided the action was in time
+      const blocker: Promise<void> = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query(`SELECT "id" FROM "users" WHERE "id" = $1 FOR UPDATE`, [ids.Cara!]);
+          holding.open();
+          await release.reached;
+        },
+        { connectionString, limits: { idleTimeoutMs: 30000, operationTimeoutMs: 30000 } },
+      );
+
+      await holding.reached;
+
+      const disputing = withInteractiveTransaction(
+        async (transaction) => {
+          await transaction.query('SELECT 1');
+
+          begun.open();
+          // Nothing is locked yet, so the window can be opened against this transaction's own start time without the
+          // arrangement queuing behind the locks the dispute is about to take
+          await armed.reached;
+
+          const outcome: TResultOutcome = await answerResult(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'I disagree',
+          });
+          const { rows } = await transaction.query<{ crossed: boolean; started: boolean }>(
+            `SELECT now() < $1::timestamptz AS "started", clock_timestamp() > $1::timestamptz AS "crossed"`,
+            [deadline!],
+          );
+
+          return { clock: rows[0]!, outcome };
+        },
+        {
+          connectionString,
+          limits: {
+            lockTimeoutMs: 10000,
+            operationTimeoutMs: 30000,
+            statementTimeoutMs: 10000,
+          },
+        },
+      );
+
+      await begun.reached;
+
+      const [revision] = await read<{ deadline: Date }>(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = clock_timestamp() + interval '300 milliseconds'
+         WHERE "id" = $1 RETURNING "confirmation_deadline" AS deadline`,
+        [created.resultRevisionId],
+      );
+
+      deadline = revision!.deadline;
+
+      armed.open();
+
+      await new Promise<void>((resolve: () => void): void => {
+        setTimeout(resolve, 1000);
+      });
+
+      release.open();
+      await blocker;
+
+      const { clock, outcome } = await disputing;
+      const refusal: string = outcome.ok ? 'none' : outcome.refusal;
+      const [state] = await read<{ disputes: number; notes: number; reason: string; state: string }>(
+        connectionString,
+        `SELECT "state", "settled_reason" AS reason,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'DISPUTE') AS disputes,
+                (SELECT count(*)::int FROM "result_dispute_notes") AS notes
+         FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `the transaction began ${clock.started ? 'before' : 'after'} the deadline and reached the account lock ${clock.crossed ? 'after' : 'before'} it; the dispute was refused as ${refusal}, writing ${state!.disputes} actions and ${state!.notes} notes, leaving ${state!.state} by ${state!.reason}`,
+        passed:
+          clock.started &&
+          clock.crossed &&
+          refusal === 'STALE_RESULT' &&
+          state!.disputes === 0 &&
+          state!.notes === 0 &&
+          state!.state === 'CONFIRMED' &&
+          state!.reason === 'DEADLINE_PASSED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a dispute committed before the deadline stops the deadline settling it, even across a held transaction',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+      const disputing = latch();
+      const passed = latch();
+
+      const dispute: Promise<IResultEffect> = withInteractiveTransaction(
+        async (transaction) => {
+          const effect = await answerOrThrow(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'in time',
+          });
+
+          disputing.open();
+          await passed.reached;
+
+          return effect;
+        },
+        { connectionString },
+      );
+
+      await disputing.reached;
+
+      // The deadline lapses while the dispute is still uncommitted; the sweep still has to wait for that transaction
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute' WHERE "id" = $1 AND false`,
+        [created.resultRevisionId],
+      );
+
+      passed.open();
+      await dispute;
+
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute' WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      const swept: number = await withInteractiveTransaction(
+        (transaction) => settleDueResults(transaction, LEAGUE_ID),
+        { connectionString },
+      );
+      const [state] = await read<{ state: string }>(
+        connectionString,
+        `SELECT "state" FROM "result_revisions" WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `dispute committed, sweep settled ${swept} results, revision is ${state!.state}`,
+        passed: swept === 0 && state!.state === 'DISPUTED',
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a confirmation aimed at a revision an amendment has replaced is refused as stale',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+
+      await disputeOne(connectionString, ids.Ben!, created.canonicalMatchId);
+      await withInteractiveTransaction(
+        (transaction) =>
+          amendOrThrow(transaction, ids.Ada!, {
+            canonicalMatchId: created.canonicalMatchId,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            submission: singles([[11, 6]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction(
+          (transaction) =>
+            answerOrThrow(transaction, ids.Cara!, {
+              action: ResultAction.CONFIRM,
+              canonicalMatchId: created.canonicalMatchId,
+              clientOperationId: randomUUID(),
+              expectedRevision: 1,
+              note: null,
+            }),
+          { connectionString },
+        );
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      const [counts] = await read<{ confirmations: number; revisions: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions") AS revisions,
+                (SELECT count(*)::int FROM "result_actions" WHERE "type" = 'CONFIRM') AS confirmations`,
+      );
+
+      return {
+        detail: `refused as ${refusal}; ${counts!.revisions} revisions and ${counts!.confirmations} confirmations`,
+        passed: refusal === 'STALE_RESULT' && counts!.revisions === 2 && counts!.confirmations === 0,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a void racing a deadline settlement leaves one effective outcome and one active ladder',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara']);
+      const created: IResultEffect = await withInteractiveTransaction(
+        (transaction) =>
+          recordOrThrow(transaction, ids.Ada!, {
+            clientOperationId: randomUUID(),
+            expectedLeagueRevision: 1,
+            leagueId: LEAGUE_ID,
+            submission: singles([[11, 4]], [ids.Ben!, ids.Cara!]),
+          }),
+        { connectionString },
+      );
+
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute' WHERE "id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      const both: PromiseSettledResult<unknown>[] = await Promise.allSettled([
+        withInteractiveTransaction((transaction) => settleDueResults(transaction, LEAGUE_ID), { connectionString }),
+        withInteractiveTransaction(
+          (transaction) =>
+            answerOrThrow(transaction, ids.Ada!, {
+              action: ResultAction.VOID,
+              canonicalMatchId: created.canonicalMatchId,
+              clientOperationId: randomUUID(),
+              expectedRevision: 1,
+              note: null,
+            }),
+          { connectionString },
+        ),
+      ]);
+      const [state] = await read<{ live: number; pointers: number; state: string }>(
+        connectionString,
+        `SELECT r."state",
+                (SELECT count(*)::int FROM "games" WHERE "superseded_at" IS NULL AND "status" = 'COMPLETE') AS live,
+                (SELECT count(*)::int FROM "active_rating_generations") AS pointers
+         FROM "result_revisions" r WHERE r."id" = $1`,
+        [created.resultRevisionId],
+      );
+
+      return {
+        detail: `revision ${state!.state}, ${state!.live} live game rows, ${state!.pointers} active pointer; answers ${both.map((outcome) => outcome.status).join(' and ')}`,
+        passed: state!.state === 'VOID' && state!.live === 0 && state!.pointers === 1,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'two results in one league settling at once are serialized into one final ladder',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben', 'Cara', 'Dan']);
+      const first: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Ben!, ids.Cara!]);
+      const second: IResultEffect = await recordOne(connectionString, ids.Ada!, [ids.Cara!, ids.Dan!]);
+
+      await read(
+        connectionString,
+        `UPDATE "result_revisions" SET "confirmation_deadline" = now() - interval '1 minute' WHERE "id" = ANY($1)`,
+        [[first.resultRevisionId, second.resultRevisionId]],
+      );
+
+      await Promise.allSettled([
+        withInteractiveTransaction((transaction) => settleDueResults(transaction, LEAGUE_ID), { connectionString }),
+        withInteractiveTransaction((transaction) => settleDueResults(transaction, LEAGUE_ID), { connectionString }),
+      ]);
+
+      const [state] = await read<{ active_rows: number; pointers: number; settled: number }>(
+        connectionString,
+        `SELECT (SELECT count(*)::int FROM "result_revisions" WHERE "state" = 'CONFIRMED') AS settled,
+                (SELECT count(*)::int FROM "active_rating_generations") AS pointers,
+                (SELECT count(*)::int FROM "rating_snapshots" s
+                 JOIN "active_rating_generations" a ON a."rating_generation_id" = s."rating_generation_id") AS active_rows`,
+      );
+
+      return {
+        detail: `${state!.settled} results settled, ${state!.pointers} active pointer, ${state!.active_rows} snapshots in the active ladder`,
+        passed: state!.settled === 2 && state!.pointers === 1 && state!.active_rows === 4,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'an amendment holds the accounts it names, so a deletion’s redaction waits rather than erasing under it',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const match: string = (await recordOne(connectionString, ids.Ada!, [ids.Ada!, ids.Ben!])).canonicalMatchId;
+
+      await withInteractiveTransaction(
+        (transaction) =>
+          answerOrThrow(transaction, ids.Ben!, {
+            action: ResultAction.DISPUTE,
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            note: 'Ben says the third game finished 11-9',
+          }),
+        { connectionString },
+      );
+
+      const holding = latch();
+      const release = latch();
+      const amending: Promise<IResultEffect> = withInteractiveTransaction(
+        async (transaction) => {
+          const effect: IResultEffect = await amendOrThrow(transaction, ids.Ada!, {
+            canonicalMatchId: match,
+            clientOperationId: randomUUID(),
+            expectedRevision: 1,
+            submission: singles([[11, 9]], [ids.Ada!, ids.Ben!]),
+          });
+
+          holding.open();
+          await release.reached;
+
+          return effect;
+        },
+        { connectionString },
+      );
+
+      await holding.reached;
+
+      let refusal: string = 'none';
+
+      try {
+        await withInteractiveTransaction((transaction) => redactNotesForAccount(transaction, ids.Ben!), {
+          connectionString,
+          limits: { lockTimeoutMs: 700 },
+        });
+      } catch (error: unknown) {
+        refusal = refusalOf(error);
+      }
+
+      release.open();
+      await amending;
+
+      const redacted: number = await withInteractiveTransaction(
+        (transaction) => redactNotesForAccount(transaction, ids.Ben!),
+        { connectionString },
+      );
+      const [notes] = await read<{ legible: number; total: number }>(
+        connectionString,
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE "body" IS NOT NULL)::int AS legible
+         FROM "result_dispute_notes"`,
+      );
+
+      return {
+        detail: `the deletion was refused with "${refusal}" while the amendment held the seat, then redacted ${redacted} of ${notes!.total} notes once it committed; ${notes!.legible} still legible`,
+        passed: refusal.includes('lock timeout') && redacted === 1 && notes!.legible === 0,
+      };
+    },
+  },
+  {
+    package: PACKAGES.CONCURRENCY,
+    name: 'a deletion in flight holds the seat, so an amendment naming it waits and is then refused outright',
+    run: async (connectionString: string): Promise<IScenarioResult> => {
+      await resetDatabase(connectionString);
+
+      const ids: Record<string, string> = await seedLeague(connectionString, ['Ada', 'Ben']);
+      const match: string = (await recordOne(connectionString, ids.Ada!, [ids.Ada!, ids.Ben!])).canonicalMatchId;
+
+      await disputeOne(connectionString, ids.Ben!, match);
+
+      const holding = latch();
+      const release = latch();
+      const correction = (limits?: { lockTimeoutMs: number }): Promise<IResultEffect> =>
+        withInteractiveTransaction(
+          (transaction) =>
+            amendOrThrow(transaction, ids.Ada!, {
+              canonicalMatchId: match,
+              clientOperationId: randomUUID(),
+              expectedRevision: 1,
+              submission: singles([[11, 9]], [ids.Ada!, ids.Ben!]),
+            }),
+          { connectionString, limits },
+        );
+
+      /* The deletion the account-deletion path will be: the account's own row first, then everything hanging off it */
+      const deleting: Promise<void> = withInteractiveTransaction(
+        async (transaction): Promise<void> => {
+          await redactNotesForAccount(transaction, ids.Ben!);
+          await transaction.query(`UPDATE "users" SET "deleted_at" = now() WHERE "id" = $1`, [ids.Ben!]);
+          await transaction.query(`DELETE FROM "memberships" WHERE "user_id" = $1`, [ids.Ben!]);
+
+          holding.open();
+          await release.reached;
+        },
+        { connectionString },
+      );
+
+      await holding.reached;
+
+      let waited: string = 'none';
+
+      try {
+        await correction({ lockTimeoutMs: 700 });
+      } catch (error: unknown) {
+        waited = refusalOf(error);
+      }
+
+      release.open();
+      await deleting;
+
+      let afterwards: string = 'none';
+
+      try {
+        await correction();
+      } catch (error: unknown) {
+        afterwards = refusalOf(error);
+      }
+
+      const [counts] = await read<{ revisions: number }>(
+        connectionString,
+        `SELECT count(*)::int AS revisions FROM "result_revisions"`,
+      );
+
+      return {
+        detail: `the correction waited and was refused with "${waited}" while the deletion held the seat, and with "${afterwards}" once it had committed; ${counts!.revisions} revision`,
+        passed: waited.includes('lock timeout') && afterwards !== 'none' && counts!.revisions === 1,
+      };
+    },
+  },
+];

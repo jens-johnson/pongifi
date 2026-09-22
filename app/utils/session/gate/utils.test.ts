@@ -121,14 +121,43 @@ describe(getTestFileName(import.meta.url), (): void => {
       ).toBe('/welcome?redirect=%2Fleagues%2Fnot-a-uuid%2Fsettings');
     });
 
+    it('gates a result page by its own shape, with its trailing slash', (): void => {
+      expect(resolveSessionGate(visitor({ path: '/leagues/not-a-uuid/games/not-a-uuid' }))).toBe(
+        '/sign-in?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnot-a-uuid',
+      );
+      expect(resolveSessionGate(visitor({ path: '/leagues/not-a-uuid/games/not-a-uuid/' }))).toBe(
+        '/sign-in?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnot-a-uuid%2F',
+      );
+      expect(
+        resolveSessionGate(
+          visitor({
+            loggedIn: true,
+            needsWelcome: true,
+            path: '/leagues/not-a-uuid/games/not-a-uuid',
+          }),
+        ),
+      ).toBe('/welcome?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnot-a-uuid');
+    });
+
+    it('gates the record page, which shares the result page’s shape', (): void => {
+      // Covered by the same pattern rather than one of its own; asserted so narrowing that pattern cannot quietly
+      // leave the form open to somebody signed out
+      expect(resolveSessionGate(visitor({ path: '/leagues/not-a-uuid/games/new' }))).toBe(
+        '/sign-in?redirect=%2Fleagues%2Fnot-a-uuid%2Fgames%2Fnew',
+      );
+    });
+
     it('leaves the bare league prefix, every other deeper league path and the invite landing ungated', (): void => {
       expect(resolveSessionGate(visitor({ path: '/leagues/' }))).toBeNull();
       expect(resolveSessionGate(visitor({ path: '/invite/abc' }))).toBeNull();
 
-      // Only the settings shape was added; a path that names no page must still 404 rather than ask for a sign-in
+      // Only the settings and result shapes were added; a path that names no page must still 404 rather than ask
+      // for a sign-in
       expect(resolveSessionGate(visitor({ path: '/leagues/x/y' }))).toBeNull();
       expect(resolveSessionGate(visitor({ path: '/leagues/x/settings/z' }))).toBeNull();
       expect(resolveSessionGate(visitor({ path: '/leagues/x/y/settings' }))).toBeNull();
+      expect(resolveSessionGate(visitor({ path: '/leagues/x/games' }))).toBeNull();
+      expect(resolveSessionGate(visitor({ path: '/leagues/x/games/y/z' }))).toBeNull();
     });
 
     it('lets a signed-out visitor see the landing page', (): void => {

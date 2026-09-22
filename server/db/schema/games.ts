@@ -31,6 +31,7 @@ import {
   recordingModeEnum,
 } from './enums';
 import { leagues } from './leagues';
+import { resultRevisions } from './results';
 import { users } from './users';
 
 /**
@@ -68,6 +69,18 @@ export const games = pgTable(
     durationMs: integer('duration_ms'),
     /* Incremented by an amendment, which appends a revision rather than mutating the original (III.II.X.IV) */
     revision: integer('revision').notNull().default(1),
+    /**
+     * The result revision that owns this row, for a game entered as a final score. Null for a live game, which is its
+     * own record. Every revision writes its own game rows, so a correction that changes a match from two games to
+     * three never rewrites the two that were already there
+     */
+    resultRevisionId: uuid('result_revision_id').references(() => resultRevisions.id, { onDelete: 'restrict' }),
+    /**
+     * Set when a later revision replaced this row. A superseded row is still readable, still addressable and still
+     * redirects to its match, but it is not a game any count, list or ladder may include again — every predicate that
+     * counts games has to say so, which is why this is a column rather than a join nobody remembers to write
+     */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -79,6 +92,9 @@ export const games = pgTable(
     index('games_match_idx').on(table.matchId, table.gameNumber),
     /* The confirmation queue and the auto-confirmation sweep both read unconfirmed completions */
     index('games_confirmation_idx').on(table.confirmationStatus, table.endedAt),
+    /* Every current-state read filters supersession first, so it leads the index a league's live games are read by */
+    index('games_live_league_idx').on(table.supersededAt, table.leagueId, table.status),
+    index('games_result_revision_idx').on(table.resultRevisionId),
     check('games_game_number_positive', sql`${table.gameNumber} >= 1`),
   ],
 );
@@ -111,6 +127,10 @@ export const gameParticipants = pgTable(
     outcome: participantOutcomeEnum('outcome'),
     confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     disputedAt: timestamp('disputed_at', { withTimezone: true }),
+    /* The result revision this seat belongs to; null for a live game */
+    resultRevisionId: uuid('result_revision_id'),
+    /* Which seat of the reconstruction this row is, so a score always has a stable home across revisions */
+    seat: text('seat'),
   },
   (table) => [
     index('game_participants_game_idx').on(table.gameId),
@@ -148,6 +168,12 @@ export const gameEvents = pgTable(
     detail: jsonb('detail').$type<TMatchEvent>(),
     /* Which revision of the event taxonomy this row was written under, so changing the enums needs no backfill */
     detailVersion: integer('detail_version').notNull().default(1),
+    /**
+     * The result revision this event was reconstructed for; null for a live game. Uniqueness stays on the game and
+     * sequence, which is strictly stronger: a revision owns its game rows outright, so no two revisions can ever write
+     * the same game id
+     */
+    resultRevisionId: uuid('result_revision_id'),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
   },

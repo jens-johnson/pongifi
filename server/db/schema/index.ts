@@ -21,4 +21,5 @@ export * from './games';
 export * from './leagues';
 export * from './notifications';
 export * from './ratings';
+export * from './results';
 export * from './users';

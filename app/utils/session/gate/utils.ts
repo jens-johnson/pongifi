@@ -20,7 +20,12 @@ import { defineSymbol } from '#shared/utils/symbol';
 
 import { HOME_ROUTE, SIGN_IN_ROUTE, WELCOME_ROUTE } from '../../marketing/routes';
 import { resolveWelcomeRedirect } from '../../sign-in/redirect';
-import { GATED_LEAGUE_PATH_PATTERN, GATED_LEAGUE_SETTINGS_PATH_PATTERN, GATED_ROUTES } from './constants';
+import {
+  GATED_LEAGUE_GAME_PATH_PATTERN,
+  GATED_LEAGUE_PATH_PATTERN,
+  GATED_LEAGUE_SETTINGS_PATH_PATTERN,
+  GATED_ROUTES,
+} from './constants';
 import type { ISessionGateInput } from './types';
 
 /**
@@ -44,9 +49,10 @@ export function buildGatedReturnPath(route: string, returnPath: string): string 
  *
  * Gating follows the session rather than the URL: signed out, `/` is the public landing and never gates; signed in,
  * `/` is the dashboard and gates exactly as `/profile` and `/leagues` do. A league page is gated by its path's shape
- * ({@link GATED_LEAGUE_PATH_PATTERN}), since its id cannot be listed, and its settings page by one more explicit
- * shape ({@link GATED_LEAGUE_SETTINGS_PATH_PATTERN}) rather than by a wildcard, so a deeper path that names no page
- * still 404s instead of asking for a sign-in. Public informational pages, and the invite landing that has to render
+ * ({@link GATED_LEAGUE_PATH_PATTERN}), since its id cannot be listed, and its settings page
+ * ({@link GATED_LEAGUE_SETTINGS_PATH_PATTERN}) and result page ({@link GATED_LEAGUE_GAME_PATH_PATTERN}) by one
+ * more explicit shape each rather than by a wildcard, so a deeper path that names no page still 404s instead of
+ * asking for a sign-in. Public informational pages, and the invite landing that has to render
  * signed out, are absent from all of them, so a player part-way through onboarding can still read them
  * @public
  * @function
@@ -55,7 +61,9 @@ export function buildGatedReturnPath(route: string, returnPath: string): string 
  */
 export function resolveSessionGate(input: ISessionGateInput): string | null {
   const gatedLeaguePath: boolean =
-    GATED_LEAGUE_PATH_PATTERN.test(input.path) || GATED_LEAGUE_SETTINGS_PATH_PATTERN.test(input.path);
+    GATED_LEAGUE_PATH_PATTERN.test(input.path) ||
+    GATED_LEAGUE_SETTINGS_PATH_PATTERN.test(input.path) ||
+    GATED_LEAGUE_GAME_PATH_PATTERN.test(input.path);
 
   if (!GATED_ROUTES.includes(input.path) && !gatedLeaguePath) {
     return null;

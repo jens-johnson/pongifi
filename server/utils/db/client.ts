@@ -19,7 +19,8 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 
-import type { TDatabase } from './types';
+import { withInteractiveTransaction } from './transaction';
+import type { IInteractiveTransaction, ITransactionLimits, TDatabase } from './types';
 
 /**
  * The memoized database handle; Fluid Compute reuses function instances, so the client is built once per instance
@@ -52,4 +53,31 @@ export function useDatabase(): TDatabase {
   database = drizzle(neon(databaseUrl));
 
   return database;
+}
+
+/**
+ * Runs one result transition inside an interactive transaction on this deployment's database.
+ *
+ * The deployed entry point to {@link withInteractiveTransaction}: it supplies the connection string from Nuxt's
+ * runtime config, which keeps the transport itself free of any Nuxt dependency and lets a fixture dial a disposable
+ * database without touching the deployed configuration
+ * @public
+ * @async
+ * @function
+ * @param body - What to run inside the transaction
+ * @param limits - The limits to bound it by, when they are not the defaults
+ * @throws Error when DATABASE_URL is absent, or whatever the body throws after a rollback
+ * @returns The body's value
+ */
+export async function useResultTransaction<TResult>(
+  body: (transaction: IInteractiveTransaction) => Promise<TResult>,
+  limits?: Partial<ITransactionLimits>,
+): Promise<TResult> {
+  const { databaseUrl } = useRuntimeConfig();
+
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is not configured; an interactive transaction has nowhere to run.');
+  }
+
+  return withInteractiveTransaction(body, { connectionString: databaseUrl, limits });
 }

@@ -69,6 +69,21 @@ export default defineNuxtConfig({
   },
 
   /**
+   * `@nuxt/fonts` configuration. Both families this app uses are vendored under `public/fonts/` and declared by hand
+   * in `main.css` — the Fonts section there has the reasoning — so each is marked `provider: 'none'`: the module must
+   * not resolve them again and emit a second, competing set of `@font-face` rules. `provider: 'local'` then switches
+   * off every remote provider, so no family, this one or a later one, can reach a third-party host during a build.
+   * @see {@link https://fonts.nuxt.com/get-started/configuration}
+   */
+  fonts: {
+    families: [
+      { name: 'Google Sans Flex', provider: 'none' },
+      { name: 'Google Sans Code', provider: 'none' },
+    ],
+    provider: 'local',
+  },
+
+  /**
    * Auto-import scan directories. Composables and utils follow the barrel-directory convention
    * (`use-x/{index,composable,types}.ts`, `utils/<group>/<name>/{index,...}.ts`), so the default top-level-only
    * scan misses them. The recursive globs register every nested implementation file; barrel `index.ts` files use
@@ -146,11 +161,14 @@ export default defineNuxtConfig({
    * instead, because it is the one route that is public or private depending on the session behind it, and the
    * signed-out landing keeps its ordinary caching. The private API responses set it in their handlers, beside the
    * session check that makes them private. The invite landing, and the sign-in, welcome and Google responses whose
-   * return path can carry an invite, also send no referrer, so a token in the address bar never leaves in a Referer
+   * return path can carry an invite, also send no referrer, so a token in the address bar never leaves in a Referer.
+   * The vendored fonts are the one public rule in the list: each filename carries the font's version, so the bytes at
+   * a given address never change and a browser can hold them indefinitely
    * @see {@link https://nuxt.com/docs/4.x/api/nuxt-config#routerules}
    */
   routeRules: {
     '/auth/google': { headers: PRIVATE_NO_REFERRER_HEADERS },
+    '/fonts/**': { headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } },
     '/invite/**': { headers: { ...PRIVATE_NO_REFERRER_HEADERS, 'X-Robots-Tag': 'noindex' } },
     '/leagues': { headers: PRIVATE_HEADERS },
     '/leagues/**': { headers: PRIVATE_HEADERS },

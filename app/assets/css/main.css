@@ -19,6 +19,85 @@
 @import 'tailwindcss';
 
 /**
+ * ─── Fonts ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Both families are vendored under `public/fonts/` and declared here by hand rather than resolved at build time by
+ * `@nuxt/fonts`. Two reasons:
+ *
+ *   • Weights. `fontless`, the engine under `@nuxt/fonts`, defaults to `weights: [400]`, so its Google provider asked
+ *     for `wght@400` and was served *static* 400-only instances of what are variable families. Everything at 600 and
+ *     above then came out as browser-synthesised faux bold, and `font-medium` (500 — by a wide margin this app's most
+ *     used weight) rendered identically to regular, because browsers synthesise bold only from 600 up. The files
+ *     below carry a real `wght` axis, which is what the `font-weight: 400 700` descriptor declares.
+ *   • Build reliability. Resolving a family reaches third-party font hosts at build time with no retry on the asset
+ *     download, which has failed the Vercel build with `ETIMEDOUT` more than once. Nothing here touches the network.
+ *
+ * `local()` sources are deliberately omitted. A visitor with a static Google Sans Flex installed would otherwise be
+ * served their own 400-only copy and land straight back in the first problem.
+ *
+ * Declaring the faces here also gives up the metric-adjusted fallback faces the module used to generate. Self-hosting
+ * is the better trade: these are same-origin woff2 files under 40 KB, fetched on a connection the document has
+ * already opened, so the `swap` window those overrides were smoothing is far shorter than a cold third-party fetch.
+ *
+ * ─── Provenance ──────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Unmodified subsets from the Google Fonts CSS API, fetched 2026-09-22:
+ *
+ *   • https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400..700&display=swap  (googlesansflex, v22)
+ *   • https://fonts.googleapis.com/css2?family=Google+Sans+Code:wght@400..700&display=swap  (googlesanscode, v20)
+ *
+ * The `latin` and `latin-ext` subsets are vendored, and the unicode ranges below are copied from that stylesheet
+ * verbatim. Both families are under the SIL Open Font License 1.1, which travels with them in `public/fonts/OFL.txt`.
+ * Google's version number is part of each filename, which is what lets `nuxt.config.ts` cache `/fonts/**` immutably:
+ * refreshing a font means a new filename, never new bytes at an address someone already holds.
+ */
+@font-face {
+  font-family: 'Google Sans Flex';
+  font-style: normal;
+  font-weight: 400 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url('/fonts/google-sans-flex-v22-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC,
+    U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Google Sans Flex';
+  font-style: normal;
+  font-weight: 400 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url('/fonts/google-sans-flex-v22-latin-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Google Sans Code';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/google-sans-code-v20-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC,
+    U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Google Sans Code';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/google-sans-code-v20-latin-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/**
  * ─── Dark Variant ────────────────────────────────────────────────────────────────────────────────────────────────────
  *
  * Themes switch on a `data-theme` attribute rather than `prefers-color-scheme`, so `dark:` has to be taught the same
