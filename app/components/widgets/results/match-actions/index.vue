@@ -118,15 +118,20 @@ const amendRoute: ComputedRef<string> = computed(
  * @param which - What was pressed
  */
 async function press(which: ResultAction): Promise<void> {
-  // Asked before it is sent, because void is the one action with no undo — but only for a fresh one. A void whose
-  // outcome nobody can be sure of has already been asked and already been answered, and its button now reads Check:
-  // that press is the earlier request again, not a new void. Asking again would reopen a question whose own yes is
-  // unavailable while an answer is held, leaving the request stranded behind a dialog nobody can answer
+  // Asked before it is sent, because void is the one action with no undo — and asked once. A void whose outcome
+  // nobody can be sure of has already been asked and already been answered, and its button now reads Check: that
+  // press is the earlier request again, not a new void, so it must not meet the question a second time
   if (which === ResultAction.VOID && !voidAsking.value && !awaitingCheck(action.value, ResultAction.VOID)) {
     voidAsking.value = true;
 
     return;
   }
+
+  // The press of the yes is the answer, so the question goes now rather than when the request comes back. From here
+  // an uncertain void is carried the way an uncertain confirm is — the message above the actions and Check on the
+  // button that made it — and a question whose own yes is unavailable for as long as the answer is held is not a
+  // question. A refusal leaves nothing held, so the press after one is a fresh void and is asked about again
+  voidAsking.value = false;
 
   // The request this press would make, if it is a new one. `startAction` keeps the earlier request instead when
   // this is a retry, so a check re-sends what the first attempt sent rather than what the page is showing now
@@ -150,7 +155,6 @@ async function press(which: ResultAction): Promise<void> {
 
     action.value = idleAction();
     note.value = '';
-    voidAsking.value = false;
 
     emit('resolved');
   } catch (failure: unknown) {
@@ -159,8 +163,6 @@ async function press(which: ResultAction): Promise<void> {
     // A conflict is the result having moved, not the request having failed: redraw to what is actually there and
     // let the person choose again from the actions that still apply
     if (action.value.phase === ResultActionPhase.CONFLICT) {
-      voidAsking.value = false;
-
       emit('resolved');
 
       return;

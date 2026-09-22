@@ -453,10 +453,10 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(sent).toHaveLength(0);
   });
 
-  it('checks a held void rather than asking about it again, after the question was dismissed', async (): Promise<void> => {
-    // Cancel closes the question but not the answer: the void may already have landed, and its Check is on the
-    // button above. Reopening the question on that press would strand the held request behind a dialog whose own
-    // yes is unavailable while an answer is held — there would be no way left to resolve it at all
+  it('carries an uncertain void with no question on the page, and checks it without asking again', async (): Promise<void> => {
+    // The press of the yes is the answer. From there the void is carried the way an uncertain confirm is — the
+    // message above the actions and Check on the button that made it — because a question whose own yes is
+    // unavailable for as long as the answer is held is not a question anybody can answer
     answer = (event: H3Event): unknown => {
       setResponseStatus(event, 502);
       answer = answerAccepted;
@@ -469,12 +469,9 @@ describe(getTestFileName(import.meta.url), (): void => {
     await pressButton(wrapper, 'void');
     await pressButton(wrapper, 'void-confirm');
 
-    expect(at(wrapper, 'void').text()).toBe('Check');
-
-    await at(wrapper, 'void-cancel').trigger('click');
-    await nextTick();
-
     expect(at(wrapper, 'void-dialog').exists()).toBe(false);
+    expect(at(wrapper, MESSAGE).text()).toBe(UNCERTAIN_MESSAGE);
+    expect(at(wrapper, 'void').text()).toBe('Check');
 
     await pressButton(wrapper, 'void');
 
@@ -485,6 +482,36 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
     expect(paths[1]).toBe(paths[0]);
     expect(wrapper.emitted('resolved')).toHaveLength(1);
+  });
+
+  it('asks again after a refusal, because a press after one is a new void', async (): Promise<void> => {
+    // A refusal leaves nothing held: the answer did not land, and the next press is a fresh void rather than a
+    // check, so it earns the question and a new operation id
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 403);
+      answer = answerAccepted;
+
+      return { message: ROLE_REFUSED };
+    };
+
+    const wrapper: VueWrapper = await mountActions({ mayVoid: true });
+
+    await pressButton(wrapper, 'void');
+    await pressButton(wrapper, 'void-confirm');
+
+    expect(at(wrapper, MESSAGE).text()).toBe(ROLE_REFUSED);
+    expect(at(wrapper, 'void-dialog').exists()).toBe(false);
+    expect(at(wrapper, 'void').text()).toBe('Void this result');
+
+    await pressButton(wrapper, 'void');
+
+    expect(at(wrapper, 'void-dialog').text()).toContain(VOID_QUESTION);
+    expect(sent).toHaveLength(1);
+
+    await pressButton(wrapper, 'void-confirm');
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
   });
 
   it('holds every other action while one outcome is unknown', async (): Promise<void> => {
