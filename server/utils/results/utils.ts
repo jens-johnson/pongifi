@@ -48,7 +48,7 @@ import { GameType, Side } from '#shared/rules-engine';
 import { defineSymbol } from '#shared/utils/symbol';
 
 import type { IInteractiveTransaction } from '../db/types';
-import { ADMIN_ROLES, DUPLICATE_SCAN_LIMIT, HOUR_MS, SETTLEMENT_BATCH } from './constants';
+import { ADMIN_ROLES, DUPLICATE_SCAN_LIMIT, HOUR_MS, PLAY_TIME_PROBLEMS, SETTLEMENT_BATCH } from './constants';
 import { ResultRefusal } from './enums';
 import { publishRatingGeneration } from './replay';
 import type {
@@ -643,7 +643,11 @@ async function refusable(
 
     await transaction.query('ROLLBACK TO SAVEPOINT result_action');
 
+    // Whatever the refusal was carrying travels with it. The refusals thrown from inside the write are the ones
+    // whose sentence states a number the write itself read — the window a play time was measured against — and a
+    // rollback is no reason to answer with a sentence that has a hole in it
     return {
+      details: error.details,
       ok: false,
       refusal: error.refusal,
       state,
@@ -712,6 +716,30 @@ async function replayed(transaction: IInteractiveTransaction, effect: IResultEff
 }
 
 /**
+ * The refusal a rejected submission earns, and the window its sentence states.
+ *
+ * Only the two play-time bounds are answered with a sentence that names a window, because they are the only two the
+ * form states a window for: the page shows its own copy of the bound before anything is sent, and the server's
+ * sentence is read when the two disagree. Each route passes its own bound's refusal, because the rule is not the
+ * same one — an entry's window runs back from now, a correction's from the play time the first revision stated
+ * @internal
+ * @function
+ * @param problem - What the submission was rejected for
+ * @param refusal - The play-time refusal this route answers with
+ * @param windowHours - The window the play time was measured against
+ * @returns The refusal to throw
+ */
+function playTimeOrInvalid(
+  problem: SubmissionProblem,
+  refusal: ResultRefusal,
+  windowHours: number,
+): ResultRefusalError {
+  return PLAY_TIME_PROBLEMS.includes(problem)
+    ? new ResultRefusalError(refusal, { windowHours })
+    : new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
+}
+
+/**
  * Writes the result, its rows and the ladder it changes, once access and the operation's identity are established
  * @internal
  * @async
@@ -745,7 +773,7 @@ async function applyRecordResult(
   });
 
   if (problem) {
-    throw new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
+    throw playTimeOrInvalid(problem, ResultRefusal.ENTRY_PLAY_TIME, policy.resultAmendmentWindow);
   }
 
   const submission: IResultSubmission = context.submission;
@@ -2040,7 +2068,7 @@ async function applyAmendment(
   });
 
   if (problem) {
-    throw new ResultRefusalError(ResultRefusal.INVALID_SUBMISSION);
+    throw playTimeOrInvalid(problem, ResultRefusal.AMENDMENT_PLAY_TIME, current.policySnapshot.resultAmendmentWindow);
   }
 
   // The frozen format wins over whatever the corrected body claims: a correction is not a way onto other rules

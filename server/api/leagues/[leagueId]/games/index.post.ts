@@ -170,7 +170,9 @@ export default defineEventHandler(
     // settlement the same operation performed on its way in, and throwing would roll that settlement back with it
     if (!outcome.ok) {
       return {
-        ...answerResultRefusal(event, outcome.refusal, null),
+        // The details are given to the answer as well as spread onto it: a 422 is thrown rather than returned, so a
+        // refusal whose sentence states the league's window has to carry it in before the throw
+        ...answerResultRefusal(event, outcome.refusal, null, outcome.details),
         // What the refusal decided under the lock, never a snapshot read before it: an overlapping request is
         // exactly what invalidates a candidate list or an existing-result link taken a moment earlier
         ...(outcome.details ?? {}),

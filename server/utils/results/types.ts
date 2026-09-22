@@ -65,6 +65,9 @@ export interface IResultRefusalDetails {
 
   /* The result this operation already wrote, when a reused key arrived with a different body */
   existing?: { canonicalMatchId: string };
+
+  /* The frozen amendment window the correction was measured against, for the sentence that states it in hours */
+  windowHours?: number;
 }
 
 /**

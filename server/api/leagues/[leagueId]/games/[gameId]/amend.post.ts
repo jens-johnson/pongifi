@@ -132,7 +132,9 @@ export default defineEventHandler(async (event: H3Event): Promise<IAmendedResult
   // operation performed on its way in, and throwing would roll that settlement back with it
   if (!outcome.ok) {
     return {
-      ...answerResultRefusal(event, outcome.refusal, null),
+      // The details are given to the answer as well as spread onto it: a 422 is thrown rather than returned, so a
+      // refusal whose sentence states the frozen window has to carry it in before the throw
+      ...answerResultRefusal(event, outcome.refusal, null, outcome.details),
       ...(outcome.details ?? {}),
     };
   }

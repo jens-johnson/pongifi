@@ -17,6 +17,7 @@
  */
 
 import { RatingScope } from '#shared/domain';
+import { SubmissionProblem } from '#shared/results';
 
 /**
  * The one ladder this slice writes. Sub-ratings by format are a later slice, and computing them here would publish a
@@ -55,3 +56,17 @@ export const SETTLEMENT_BATCH: number = 50;
  * @constant
  */
 export const DUPLICATE_SCAN_LIMIT: number = 50;
+
+/**
+ * The submission problems that are about when the match was played rather than about what was entered.
+ *
+ * The two bounds a result write measures against a window, and the only two whose refusal states that window back.
+ * Every other problem keeps the general validation sentence: telling somebody with an impossible score that their
+ * play time was wrong is worse than telling them nothing
+ * @public
+ * @constant
+ */
+export const PLAY_TIME_PROBLEMS: readonly SubmissionProblem[] = [
+  SubmissionProblem.PLAYED_AT_FUTURE,
+  SubmissionProblem.PLAYED_AT_STALE,
+];

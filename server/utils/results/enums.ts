@@ -31,6 +31,20 @@ export enum ResultRefusal {
   /* The body breaks one of the form's own bounds: a score, a seat, a guest label, a note or the stated play time */
   INVALID_SUBMISSION = 'INVALID_SUBMISSION',
 
+  /**
+   * An entry states a play time the league's window no longer accepts, or one the database's clock has not reached.
+   * Separate from the bound above because the page has a sentence that states the window in hours, and the general
+   * validation message would tell somebody with a late play time that their scores were wrong
+   */
+  ENTRY_PLAY_TIME = 'ENTRY_PLAY_TIME',
+
+  /**
+   * A correction states a play time outside the window the match was recorded under. Separate from the entry bound
+   * because the rule is a different one — measured from the play time the first revision stated rather than from
+   * now — and its sentence says so
+   */
+  AMENDMENT_PLAY_TIME = 'AMENDMENT_PLAY_TIME',
+
   /* A seat names somebody who is not an active member of this league, or an account that has been deleted */
   SEAT_NOT_A_MEMBER = 'SEAT_NOT_A_MEMBER',
 

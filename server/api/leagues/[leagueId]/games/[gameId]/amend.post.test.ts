@@ -22,7 +22,7 @@ import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IResultSubmission } from '#shared/results';
-import { ResultEnding, ResultState, Seat } from '#shared/results';
+import { AMENDED_PLAYED_AT_MESSAGE, ResultEnding, ResultState, Seat } from '#shared/results';
 import type { TResultOutcome } from '#utils/results';
 import { ResultRefusal } from '#utils/results';
 
@@ -428,6 +428,25 @@ describe(getTestFileName(import.meta.url), (): void => {
     // The refusal helper reaches h3 directly rather than the auto-imported global, so the response itself is what
     // carries the status
     expect(event.node.res.statusCode).toBe(409);
+  });
+
+  it('carries the frozen window into the sentence a thrown play-time refusal states', async (): Promise<void> => {
+    // A 422 is thrown rather than returned, so the details have to reach the answer before the throw: without that
+    // the sentence falls back to one that names no window at all
+    amendResultMock.mockResolvedValue({
+      details: { windowHours: 6 },
+      ok: false,
+      refusal: ResultRefusal.AMENDMENT_PLAY_TIME,
+      state: ResultState.DISPUTED,
+    });
+
+    try {
+      await handler(buildEvent());
+      expect.unreachable('the refusal should have been thrown');
+    } catch (error: unknown) {
+      expect((error as H3Error).statusCode).toBe(422);
+      expect((error as H3Error).statusMessage).toBe(AMENDED_PLAYED_AT_MESSAGE(6));
+    }
   });
 
   it('throws a refusal that is not a conflict', async (): Promise<void> => {

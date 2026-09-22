@@ -129,3 +129,34 @@ export const REDACTED_NOTE_TEXT: string = 'Note removed';
  * @constant
  */
 export const DELETED_ACCOUNT_NAME: string = 'Deleted account';
+
+/**
+ * What a play time outside the league's entry window says.
+ *
+ * Shared between the form and the record route so one rule is stated in one sentence. The window is given in hours
+ * rather than as two instants, because the person is deciding whether the match they are thinking of is still
+ * enterable, not reading a range
+ * @public
+ * @function
+ * @param windowHours - The league's entry window, in hours
+ * @returns The sentence
+ */
+export function RECORDED_PLAYED_AT_MESSAGE(windowHours: number): string {
+  return `Results can be recorded up to ${windowHours} hours after they were played.`;
+}
+
+/**
+ * What a corrected play time outside the frozen window says.
+ *
+ * Shared between the form and the amend route so one rule is stated in one sentence: the correction's bound is not
+ * the entry bound at all, because it runs from the play time the first revision stated — back by the window the
+ * match was recorded under, and forward only as far as now. Saying "recorded up to n hours after they were played"
+ * on a correction names a rule this write does not apply
+ * @public
+ * @function
+ * @param windowHours - The frozen amendment window, in hours
+ * @returns The sentence
+ */
+export function AMENDED_PLAYED_AT_MESSAGE(windowHours: number): string {
+  return `A corrected play time must be within ${windowHours} hours of the time first recorded, and not in the future.`;
+}

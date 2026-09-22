@@ -20,6 +20,7 @@ import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
 import type { H3Error, H3Event } from 'h3';
 import { describe, expect, it, vi } from 'vitest';
 
+import { AMENDED_PLAYED_AT_MESSAGE, RECORDED_PLAYED_AT_MESSAGE } from '#shared/results';
 import { symbolName } from '#shared/utils/symbol';
 
 import { ResultRefusal } from './enums';
@@ -106,6 +107,46 @@ describe(getTestFileName(import.meta.url), (): void => {
         expect(RESULT_REFUSAL_STATUS[refusal]).toBeTypeOf('number');
         expect(RESULT_REFUSAL_MESSAGE[refusal]?.length).toBeGreaterThan(0);
       }
+    });
+
+    it('states the window a play time was measured against, in the words the rule is written in', (): void => {
+      // Two different rules rather than two wordings: an entry's window runs back from now, a correction's from the
+      // play time the first revision stated. Each of them is the sentence the form shows before anything is sent,
+      // which is the only reason the two must not drift
+      expect((): unknown =>
+        answerResultRefusal(buildEvent(), ResultRefusal.ENTRY_PLAY_TIME, null, { windowHours: 48 }),
+      ).toThrowError(
+        expect.objectContaining({
+          statusCode: 422,
+          statusMessage: RECORDED_PLAYED_AT_MESSAGE(48),
+        } satisfies Partial<H3Error>),
+      );
+      expect((): unknown =>
+        answerResultRefusal(buildEvent(), ResultRefusal.AMENDMENT_PLAY_TIME, null, { windowHours: 6 }),
+      ).toThrowError(
+        expect.objectContaining({
+          statusCode: 422,
+          statusMessage: AMENDED_PLAYED_AT_MESSAGE(6),
+        } satisfies Partial<H3Error>),
+      );
+    });
+
+    it('never prints a hole where a window should be, and states no window on any other refusal', (): void => {
+      // A play-time refusal that reached here without its window falls back to a sentence that needs none, rather
+      // than telling somebody their play time must be within "undefined" hours
+      expect((): unknown => answerResultRefusal(buildEvent(), ResultRefusal.AMENDMENT_PLAY_TIME)).toThrowError(
+        expect.objectContaining({
+          statusMessage: RESULT_REFUSAL_MESSAGE[ResultRefusal.AMENDMENT_PLAY_TIME],
+        } satisfies Partial<H3Error>),
+      );
+      // And a window carried by something that is not a play-time refusal changes nothing it says
+      expect((): unknown =>
+        answerResultRefusal(buildEvent(), ResultRefusal.INVALID_SUBMISSION, null, { windowHours: 48 }),
+      ).toThrowError(
+        expect.objectContaining({
+          statusMessage: RESULT_REFUSAL_MESSAGE[ResultRefusal.INVALID_SUBMISSION],
+        } satisfies Partial<H3Error>),
+      );
     });
 
     it('says nothing about a match the caller may not see', (): void => {

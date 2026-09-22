@@ -569,6 +569,17 @@ function refusalOf(outcome: TResultOutcome): ResultRefusal | 'none' {
   return outcome.ok ? 'none' : outcome.refusal;
 }
 
+/**
+ * The window a refusal states back, for the two bounds whose sentence names one
+ * @internal
+ * @function
+ * @param outcome - What the write answered
+ * @returns The window in hours, or null when the refusal carried none
+ */
+function windowOf(outcome: TResultOutcome): number | null {
+  return outcome.ok ? null : (outcome.details?.windowHours ?? null);
+}
+
 /* ─── Tests ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 
 describe(getTestFileName(import.meta.url), (): void => {
@@ -805,19 +816,35 @@ describe(getTestFileName(import.meta.url), (): void => {
         stale: singles([[11, 4]], seats, { playedAt: new Date(Date.now() - 49 * HOUR_MS).toISOString() }),
       };
       const refusals: Record<string, string> = {};
+      const windows: Record<string, number | null> = {};
 
       for (const [name, submission] of Object.entries(bad)) {
-        refusals[name] = refusalOf(await record(ids.Ada!, submission));
+        const outcome: TResultOutcome = await record(ids.Ada!, submission);
+
+        refusals[name] = refusalOf(outcome);
+        windows[name] = windowOf(outcome);
       }
 
+      // The two bounds measured against a window are answered with the refusal whose sentence states one, and every
+      // other problem keeps the general one: a person with an impossible score is not told their play time is wrong
       expect(refusals).toEqual({
         duplicateMember: ResultRefusal.INVALID_SUBMISSION,
         emptyGuest: ResultRefusal.INVALID_SUBMISSION,
-        future: ResultRefusal.INVALID_SUBMISSION,
+        future: ResultRefusal.ENTRY_PLAY_TIME,
         longGuest: ResultRefusal.INVALID_SUBMISSION,
         noMember: ResultRefusal.INVALID_SUBMISSION,
         overRange: ResultRefusal.INVALID_SUBMISSION,
-        stale: ResultRefusal.INVALID_SUBMISSION,
+        stale: ResultRefusal.ENTRY_PLAY_TIME,
+      });
+      // The league's window travels with the two that state one, and with nothing else
+      expect(windows).toEqual({
+        duplicateMember: null,
+        emptyGuest: null,
+        future: 48,
+        longGuest: null,
+        noMember: null,
+        overRange: null,
+        stale: 48,
       });
       expect(await read(`SELECT 1 FROM "result_revisions"`)).toHaveLength(0);
     });
@@ -1672,22 +1699,52 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     it('refuses a correction that moves the play time into the future or outside the frozen window', async (): Promise<void> => {
       const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
-      const future: string = refusalOf(
-        await amend(
-          ids.Ada!,
-          match,
-          singles([[11, 6]], [ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() + HOUR_MS).toISOString() }),
-        ),
+      const future: TResultOutcome = await amend(
+        ids.Ada!,
+        match,
+        singles([[11, 6]], [ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() + HOUR_MS).toISOString() }),
       );
-      const ancient: string = refusalOf(
-        await amend(
-          ids.Ada!,
-          match,
-          singles([[11, 6]], [ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() - 96 * HOUR_MS).toISOString() }),
-        ),
+      const ancient: TResultOutcome = await amend(
+        ids.Ada!,
+        match,
+        singles([[11, 6]], [ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() - 96 * HOUR_MS).toISOString() }),
+      );
+      // A score nobody could have played is not a play-time problem, and must not be answered with a play-time
+      // sentence: the refusal that names a window is for the two bounds measured against one
+      const impossible: TResultOutcome = await amend(
+        ids.Ada!,
+        match,
+        singles([[MAX_ENTERED_SCORE + 1, 6]], [ids.Ada!, ids.Ben!]),
       );
 
-      expect([future, ancient]).toEqual([ResultRefusal.INVALID_SUBMISSION, ResultRefusal.INVALID_SUBMISSION]);
+      expect([refusalOf(future), refusalOf(ancient), refusalOf(impossible)]).toEqual([
+        ResultRefusal.AMENDMENT_PLAY_TIME,
+        ResultRefusal.AMENDMENT_PLAY_TIME,
+        ResultRefusal.INVALID_SUBMISSION,
+      ]);
+      // The window travels with the refusal, because it is the number the sentence states and only the write that
+      // read the snapshot knows it
+      expect([windowOf(future), windowOf(ancient), windowOf(impossible)]).toEqual([48, 48, null]);
+    });
+
+    it('states the window the correction was measured against, not the one the league keeps now', async (): Promise<void> => {
+      const match: string = await disputed(ids.Ada!, [ids.Ada!, ids.Ben!]);
+
+      // The league shortens its window after the match was recorded. The correction is still judged by the window
+      // frozen onto the revision, so the sentence the person reads has to state that one
+      await read(`UPDATE "leagues" SET "settings" = $1 WHERE "id" = $2`, [
+        JSON.stringify(settingsFixture({ resultAmendmentWindow: 6 })),
+        LEAGUE_ID,
+      ]);
+
+      const refused: TResultOutcome = await amend(
+        ids.Ada!,
+        match,
+        singles([[11, 6]], [ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() + HOUR_MS).toISOString() }),
+      );
+
+      expect(refusalOf(refused)).toBe(ResultRefusal.AMENDMENT_PLAY_TIME);
+      expect(windowOf(refused)).toBe(48);
     });
   });
 
