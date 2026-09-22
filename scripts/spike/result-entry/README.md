@@ -7,8 +7,10 @@ It is a spike harness, not part of the deployed application. Nothing here is imp
 
 ## Running it
 
-The harness rebuilds the `public` schema of whatever it is pointed at, so it refuses to guess a target. Bring up a
-disposable PostgreSQL and the WebSocket proxy the Neon serverless driver dials, then run it:
+The harness rebuilds the `public` schema of whatever it is pointed at, so it refuses to guess a target. Refusing an
+unset `SPIKE_DATABASE_URL` is the whole of the protection — nothing checks that the URL you do supply is disposable,
+so a set URL is a database this drops. Never point it at one anything else is reading, a deployed preview's
+included. Bring up a disposable PostgreSQL and the WebSocket proxy the Neon serverless driver dials, then run it:
 
 ```sh
 ./scripts/spike/result-entry/stack.sh

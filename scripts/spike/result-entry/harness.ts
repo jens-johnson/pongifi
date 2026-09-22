@@ -98,12 +98,14 @@ export function useLocalProxy(proxy: string): void {
 /**
  * Drops and rebuilds the public schema, then applies every checked-in migration in journal order.
  *
- * Destructive by design, which is why it refuses anything but a disposable target: the fixtures below rewrite the
- * whole database
+ * Destructive by design, and nothing here can tell a disposable target from a deployed one. The runners refuse an
+ * unset `SPIKE_DATABASE_URL` so that no database is rebuilt by default, which is the whole of the protection: a URL
+ * that is set is a URL this drops. Point it at a fixture whose disposability you have checked yourself — never at
+ * the database anything else is reading, a preview's included
  * @public
  * @async
  * @function
- * @param connectionString - The disposable database
+ * @param connectionString - The disposable database, verified as such by whoever supplied it
  */
 export async function resetDatabase(connectionString: string): Promise<void> {
   const pool: Pool = new Pool({ connectionString });
