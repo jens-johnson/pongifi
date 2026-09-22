@@ -83,3 +83,21 @@ export interface IRecordAttempt {
   /* Where it was sent, whole */
   endpoint: string;
 }
+
+/**
+ * What a recorded result answers with, as far as this form reads it
+ * @public
+ */
+export interface IRecordedAnswer {
+  /* Where the match stands now, which carries the page to go to */
+  current: { canonicalMatchId: string };
+}
+
+/**
+ * A rejection as the fetch layer raises it, carrying whatever the server answered
+ * @public
+ */
+export interface IRecordFailure {
+  /* The response body, when there was one */
+  data?: Record<string, unknown>;
+}

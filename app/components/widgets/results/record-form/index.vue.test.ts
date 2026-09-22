@@ -93,6 +93,41 @@ const OTHER_LEAGUE_ID: string = 'a1c3f5e7-0000-4000-8000-000000000009';
 const LEAVE_PROMPT: string = 'Leave without saving?';
 
 /**
+ * The line above Save, which every refusal and every uncertain outcome writes to
+ * @internal
+ * @constant
+ */
+const SERVER_MESSAGE: string = 'server-message';
+
+/**
+ * The attribute an input's accessible name is read from
+ * @internal
+ * @constant
+ */
+const ARIA_LABEL: string = 'aria-label';
+
+/**
+ * The departure question's two answers
+ * @internal
+ * @constant
+ */
+const LEAVE: string = 'leave-confirm';
+
+/**
+ * The answer that changes nothing
+ * @internal
+ * @constant
+ */
+const STAY: string = 'leave-cancel';
+
+/**
+ * What a 422 says, which is the refusal several cases answer with
+ * @internal
+ * @constant
+ */
+const UNRECORDABLE: string = 'Some of what was entered cannot be recorded as played.';
+
+/**
  * Every body the form sent, in order
  * @internal
  */
@@ -446,7 +481,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     await fillWin(wrapper);
     await pressSave(wrapper);
 
-    expect(at(wrapper, 'server-message').text()).toBe('This looks like a result already recorded.');
+    expect(at(wrapper, SERVER_MESSAGE).text()).toBe('This looks like a result already recorded.');
     expect(at(wrapper, 'duplicates').exists()).toBe(true);
     // The draft is untouched: a refusal never clears it
     expect((at(wrapper, 'score-a-0').element as HTMLInputElement).value).toBe('11');
@@ -484,14 +519,14 @@ describe(getTestFileName(import.meta.url), (): void => {
     await pressSave(wrapper);
 
     expect(at(wrapper, 'caption').text()).toBe('Friday Ladder · Best of 5 · Games to 21, win by 3');
-    expect(at(wrapper, 'server-message').text()).toContain('rules changed');
+    expect(at(wrapper, SERVER_MESSAGE).text()).toContain('rules changed');
   });
 
   it('shows a refusal above Save without clearing what was entered', async (): Promise<void> => {
     answer = (event: H3Event): unknown => {
       setResponseStatus(event, 422);
 
-      return { message: 'Some of what was entered cannot be recorded as played.' };
+      return { message: UNRECORDABLE };
     };
 
     const wrapper: VueWrapper = await mountForm();
@@ -499,7 +534,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     await fillWin(wrapper);
     await pressSave(wrapper);
 
-    expect(at(wrapper, 'server-message').text()).toBe('Some of what was entered cannot be recorded as played.');
+    expect(at(wrapper, SERVER_MESSAGE).text()).toBe(UNRECORDABLE);
     expect((at(wrapper, 'score-b-1').element as HTMLInputElement).value).toBe('6');
     expect(wrapper.emitted('recorded')).toBeUndefined();
   });
@@ -523,9 +558,9 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     expect(heads[1]?.text()).toBe('Side A');
     expect(heads[2]?.text()).toBe('Side B');
-    expect(at(wrapper, 'score-a-0').attributes('aria-label')).toBe('Game 1, Side A');
-    expect(at(wrapper, 'score-b-0').attributes('aria-label')).toBe('Game 1, Side B');
-    expect(at(wrapper, 'score-b-1').attributes('aria-label')).toBe('Game 2, Side B');
+    expect(at(wrapper, 'score-a-0').attributes(ARIA_LABEL)).toBe('Game 1, Side A');
+    expect(at(wrapper, 'score-b-0').attributes(ARIA_LABEL)).toBe('Game 1, Side B');
+    expect(at(wrapper, 'score-b-1').attributes(ARIA_LABEL)).toBe('Game 2, Side B');
   });
 
   it('names the guest field with something that survives being typed in', async (): Promise<void> => {
@@ -534,7 +569,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     await at(wrapper, 'seat-B1').setValue('GUEST');
 
-    expect(at(wrapper, 'guest-B1').attributes('aria-label')).toBe('Guest name');
+    expect(at(wrapper, 'guest-B1').attributes(ARIA_LABEL)).toBe('Guest name');
   });
 
   it('links the result a reused operation id already wrote', async (): Promise<void> => {
@@ -611,9 +646,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await fillWin(wrapper);
       await pressSave(wrapper);
 
-      expect(at(wrapper, 'server-message').text()).toBe(
-        'Pongifi could not tell whether the result was recorded. Check',
-      );
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe('Pongifi could not tell whether the result was recorded. Check');
       expect(at(wrapper, 'save').text()).toBe('Check');
       expect(at(wrapper, 'save').attributes('disabled')).toBeUndefined();
       expect((at(wrapper, 'score-a-0').element as HTMLInputElement).value).toBe('11');
@@ -681,7 +714,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await pressSave(wrapper);
       await pressSave(wrapper);
 
-      expect(at(wrapper, 'server-message').text()).toBe(
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe(
         'You have made too many changes just now. Your earlier save may still have gone through. Check again.',
       );
       expect(at(wrapper, 'save').text()).toBe('Check');
@@ -713,7 +746,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await pressSave(wrapper);
       await pressSave(wrapper);
 
-      expect(at(wrapper, 'server-message').text()).toContain('Your earlier save may still have gone through.');
+      expect(at(wrapper, SERVER_MESSAGE).text()).toContain('Your earlier save may still have gone through.');
       expect(at(wrapper, 'save').text()).toBe('Check');
     });
 
@@ -729,7 +762,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await fillWin(wrapper);
       await pressSave(wrapper);
 
-      expect(at(wrapper, 'server-message').text()).toBe('You have made too many changes just now.');
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe('You have made too many changes just now.');
       expect(at(wrapper, 'save').text()).toBe('Record result');
     });
 
@@ -762,7 +795,7 @@ describe(getTestFileName(import.meta.url), (): void => {
         answer = (again: H3Event): unknown => {
           setResponseStatus(again, 422);
 
-          return { message: 'Some of what was entered cannot be recorded as played.' };
+          return { message: UNRECORDABLE };
         };
 
         return {};
@@ -774,7 +807,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await pressSave(wrapper);
       await pressSave(wrapper);
 
-      expect(at(wrapper, 'server-message').text()).toBe('Some of what was entered cannot be recorded as played.');
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe(UNRECORDABLE);
       expect(at(wrapper, 'save').text()).toBe('Record result');
       expect((at(wrapper, 'score-b-1').element as HTMLInputElement).value).toBe('6');
     });
@@ -791,8 +824,8 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(at(wrapper, 'leave-dialog').attributes('aria-modal')).toBe('true');
       expect(at(wrapper, 'leave-dialog').attributes('role')).toBe('dialog');
       expect(wrapper.text()).toContain(LEAVE_PROMPT);
-      expect(at(wrapper, 'leave-confirm').text()).toBe('Leave');
-      expect(at(wrapper, 'leave-cancel').text()).toBe('Stay');
+      expect(at(wrapper, LEAVE).text()).toBe('Leave');
+      expect(at(wrapper, STAY).text()).toBe('Stay');
       expect(router.currentRoute.value.path).toBe(RECORD_PATH);
 
       // The question standing is not an answer to it
@@ -803,7 +836,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(wrapper.text()).toContain(LEAVE_PROMPT);
 
       // Nor does it re-ask: the second attempt leaves the standing question, and where it came from, alone
-      await at(wrapper, 'leave-cancel').trigger('click');
+      await at(wrapper, STAY).trigger('click');
       await settled();
 
       expect(document.activeElement).toBe(first);
@@ -816,9 +849,9 @@ describe(getTestFileName(import.meta.url), (): void => {
       first.focus();
       await attemptLeave(wrapper, router);
 
-      expect(document.activeElement).toBe(at(wrapper, 'leave-cancel').element);
+      expect(document.activeElement).toBe(at(wrapper, STAY).element);
 
-      await at(wrapper, 'leave-cancel').trigger('click');
+      await at(wrapper, STAY).trigger('click');
       await settled();
 
       expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
@@ -832,7 +865,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
 
       await attemptLeave(wrapper, router);
-      await at(wrapper, 'leave-confirm').trigger('click');
+      await at(wrapper, LEAVE).trigger('click');
 
       await vi.waitFor((): void => {
         expect(router.currentRoute.value.path).toBe('/leagues');
@@ -845,13 +878,13 @@ describe(getTestFileName(import.meta.url), (): void => {
       const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
 
       await attemptLeave(wrapper, router);
-      await at(wrapper, 'leave-cancel').trigger('keydown.tab');
+      await at(wrapper, STAY).trigger('keydown.tab');
 
-      expect(document.activeElement).toBe(at(wrapper, 'leave-confirm').element);
+      expect(document.activeElement).toBe(at(wrapper, LEAVE).element);
 
-      await at(wrapper, 'leave-confirm').trigger('keydown.tab', { shiftKey: true });
+      await at(wrapper, LEAVE).trigger('keydown.tab', { shiftKey: true });
 
-      expect(document.activeElement).toBe(at(wrapper, 'leave-cancel').element);
+      expect(document.activeElement).toBe(at(wrapper, STAY).element);
     });
 
     it('reads Escape as the answer that changes nothing', async (): Promise<void> => {
