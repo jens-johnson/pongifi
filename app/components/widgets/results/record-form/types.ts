@@ -16,7 +16,7 @@
  * █████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
  */
 
-import type { IResultFormContext, IResultSubmission } from '#shared/results';
+import type { IRecordRequestBody, IResultFormContext } from '#shared/results';
 
 /**
  * What the Record form is given
@@ -67,41 +67,19 @@ export interface IRecordExisting {
 }
 
 /**
- * The body a save sent, exactly as it was sent.
+ * A save as it was sent, held from the press until its outcome is known.
  *
- * The server keys creation on the account, the operation id and a digest of the body, so a retry that rebuilt its
- * body from whatever the form is showing now is not a retry at all: the same id carrying a different body is a
- * conflict, and the save the person is waiting on stays unresolved. The acknowledgement travels outside the digest
+ * Both halves, because both are keyed. The server keys creation on the account, the operation id and a digest of the
+ * body, so a retry that rebuilt its body from whatever the form is showing now is not a retry at all: the same id
+ * carrying a different body is a conflict, and the save the person is waiting on stays unresolved. The endpoint is
+ * held for the same reason and not reassembled from the props: a check aimed at a league the original operation was
+ * never made against would answer about nothing
  * @public
  */
-export interface IRecordRequestBody {
-  /* The token a duplicate warning issued, or null */
-  acknowledgement: string | null;
+export interface IRecordAttempt {
+  /* The body, exactly as it was sent. The acknowledgement travels outside the digest */
+  body: IRecordRequestBody;
 
-  /* The operation this save belongs to, from the first attempt until an outcome is known */
-  clientOperationId: string;
-
-  /* The league revision the form drew its rules from */
-  expectedLeagueRevision: number;
-
-  /* The match being recorded */
-  submission: IResultSubmission;
-}
-
-/**
- * What a recorded result answers with, as far as this form reads it
- * @public
- */
-export interface IRecordedAnswer {
-  /* Where the match stands now, which carries the page to go to */
-  current: { canonicalMatchId: string };
-}
-
-/**
- * A rejection as the fetch layer raises it, carrying whatever the server answered
- * @public
- */
-export interface IRecordFailure {
-  /* The response body, when there was one */
-  data?: Record<string, unknown>;
+  /* Where it was sent, whole */
+  endpoint: string;
 }

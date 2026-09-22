@@ -78,6 +78,13 @@ const MATCH_ID: string = 'd7a4f3b1-0000-4000-8000-000000000004';
 const RECORD_PATH: string = `/leagues/${LEAGUE_ID}/games/new`;
 
 /**
+ * A second league, used only to prove a check goes where its own save went
+ * @internal
+ * @constant
+ */
+const OTHER_LEAGUE_ID: string = 'a1c3f5e7-0000-4000-8000-000000000009';
+
+/**
  * The question the form asks before a departure would take an unsaved draft with it, which is the settings
  * editor's question word for word
  * @internal
@@ -90,6 +97,12 @@ const LEAVE_PROMPT: string = 'Leave without saving?';
  * @internal
  */
 let sent: Record<string, unknown>[] = [];
+
+/**
+ * Every body that reached a league this form was never saving into
+ * @internal
+ */
+let strays: Record<string, unknown>[] = [];
 
 /**
  * Every form a case mounted, unmounted afterwards.
@@ -126,6 +139,15 @@ registerEndpoint(`/api/leagues/${LEAGUE_ID}/games`, {
     sent.push((await readBody(event)) as Record<string, unknown>);
 
     return answer(event);
+  }),
+  method: 'POST',
+});
+
+registerEndpoint(`/api/leagues/${OTHER_LEAGUE_ID}/games`, {
+  handler: defineEventHandler(async (event: H3Event): Promise<unknown> => {
+    strays.push((await readBody(event)) as Record<string, unknown>);
+
+    return answerRecorded();
   }),
   method: 'POST',
 });
@@ -290,6 +312,7 @@ async function attemptLeave(wrapper: VueWrapper, router: Router, to: string = '/
 describe(getTestFileName(import.meta.url), (): void => {
   beforeEach((): void => {
     sent = [];
+    strays = [];
     answer = answerRecorded;
   });
 
@@ -636,6 +659,101 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(sent).toHaveLength(2);
       expect(sent[1]).toEqual(sent[0]);
       expect(at(wrapper, 'save').text()).toBe('Check');
+    });
+
+    it('keeps the save outstanding when the check is refused before the receipt is looked for', async (): Promise<void> => {
+      // A spent write allowance is read in front of the league's lock, so it says only that the check did not run.
+      // Calling it the answer would tell somebody a save that may well have committed did not
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+        answer = (again: H3Event): unknown => {
+          setResponseStatus(again, 429);
+
+          return { message: 'You have made too many changes just now.' };
+        };
+
+        return {};
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, 'server-message').text()).toBe(
+        'You have made too many changes just now. Your earlier save may still have gone through. Check again.',
+      );
+      expect(at(wrapper, 'save').text()).toBe('Check');
+
+      // And the check is still the first attempt's request, not a new one
+      answer = answerRecorded;
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(3);
+      expect(sent[2]).toEqual(sent[0]);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+    });
+
+    it('keeps it outstanding for a malformed-body refusal too, which the shape check answers first', async (): Promise<void> => {
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+        answer = (again: H3Event): unknown => {
+          setResponseStatus(again, 400);
+
+          return { message: 'That request was not in a form this page sends.' };
+        };
+
+        return {};
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, 'server-message').text()).toContain('Your earlier save may still have gone through.');
+      expect(at(wrapper, 'save').text()).toBe('Check');
+    });
+
+    it('leaves a first refusal an ordinary refusal, with nothing outstanding to check on', async (): Promise<void> => {
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 429);
+
+        return { message: 'You have made too many changes just now.' };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, 'server-message').text()).toBe('You have made too many changes just now.');
+      expect(at(wrapper, 'save').text()).toBe('Record result');
+    });
+
+    it('checks where its own save went, whatever league the page is showing by then', async (): Promise<void> => {
+      // A receipt is keyed by the account, the operation and its id; a check reassembled from the props of a page
+      // that has since moved would be asking a league the original operation was never made against
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+
+        return {};
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      await wrapper.setProps({ leagueId: OTHER_LEAGUE_ID });
+      answer = answerRecorded;
+      await pressSave(wrapper);
+
+      expect(strays).toHaveLength(0);
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(sent[0]);
     });
 
     it('takes an answered check as the answer, and goes back to saving', async (): Promise<void> => {

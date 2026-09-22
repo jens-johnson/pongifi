@@ -379,6 +379,50 @@ describe(getTestFileName(import.meta.url), (): void => {
 
     await expect(handler(buildEvent())).rejects.toMatchObject({ statusCode: 400 } satisfies Partial<H3Error>);
     expect(readViewerRoleMock).not.toHaveBeenCalled();
+    expect(recordResultMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps every refusal it decides itself off the statuses that mean a receipt was consulted', async (): Promise<void> => {
+    // The Record page reads a refused Check by its status. A 409 and a 422 are reached inside the transaction,
+    // after `replayOperation` has looked for the operation's receipt, so either proves there was none and answers
+    // the check. Everything the route decides in front of that lookup — the body's shape, the league id, the
+    // caller's membership — establishes only that the check did not run, and the earlier save stays outstanding.
+    // A preflight that started answering 409 or 422 would silently tell somebody a save that may have committed
+    // did not, so the boundary is asserted here rather than left to the order of the code
+    const preflight: { body: unknown; leagueId: string; role: string | null }[] = [
+      {
+        body: {
+          clientOperationId: 'not-a-uuid',
+          expectedLeagueRevision: 1,
+          submission: submission(),
+        },
+        leagueId: LEAGUE_ID,
+        role: 'PLAYER',
+      },
+      {
+        body,
+        leagueId: '../leagues',
+        role: 'PLAYER',
+      },
+      {
+        body,
+        leagueId: LEAGUE_ID,
+        role: null,
+      },
+    ];
+
+    for (const attempt of preflight) {
+      vi.clearAllMocks();
+      readViewerRoleMock.mockResolvedValue(attempt.role);
+      body = attempt.body as typeof body;
+
+      const refusal: H3Error = (await handler(buildEvent(attempt.leagueId)).catch(
+        (error: H3Error): H3Error => error,
+      )) as H3Error;
+
+      expect([409, 422]).not.toContain(refusal.statusCode);
+      expect(recordResultMock).not.toHaveBeenCalled();
+    }
   });
 
   it('answers a malformed league id as the shared not-found, without a query', async (): Promise<void> => {

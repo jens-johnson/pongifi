@@ -94,3 +94,27 @@ export const RECORD_REFUSED_MESSAGE: string = 'Pongifi could not record this res
  * @constant
  */
 export const RECORD_EXISTING_LINK: string = 'Open the result that exists';
+
+/**
+ * What is added when a check itself was refused.
+ *
+ * A refused check says nothing about the save it was checking on. Every refusal the page can recognize from the
+ * outside — a malformed body, an ended session, a request from elsewhere, a membership since lost, a spent write
+ * allowance — is decided before the server ever looks for the earlier operation's receipt, so it establishes only
+ * that the check did not run
+ * @public
+ * @constant
+ */
+export const RECORD_STILL_UNRESOLVED_MESSAGE: string = 'Your earlier save may still have gone through. Check again.';
+
+/**
+ * The refusal statuses this route decides after it has consulted the operation's receipt.
+ *
+ * The dividing line for a refused check. A 409 and a 422 are reached inside the transaction, under the league's
+ * lock, after `replayOperation` has looked for a receipt — so a save that had committed would already have been
+ * answered from it, and either of these proves there was none. Every other refusal is decided in front of that
+ * lookup and resolves nothing
+ * @public
+ * @constant
+ */
+export const RECORD_POST_RECEIPT_STATUSES: readonly number[] = [409, 422];

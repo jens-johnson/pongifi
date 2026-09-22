@@ -8,7 +8,7 @@ import { ResultEnding, seatsForGameType } from '#shared/results';
 import type { IMatchSettings } from '#shared/rules-engine';
 import { GameType } from '#shared/rules-engine';
 import { SETTINGS_LEAVE_PROMPT } from '~/utils/leagues/settings';
-import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failure';
+import { classifyWriteFailure, readWriteStatus, WriteFailure } from '~/utils/leagues/write-failure';
 import type {
   IRecordDraft,
   IRecordProblems,
@@ -31,17 +31,19 @@ import {
   PLAYED_AT_MESSAGE,
   RECORD_CHECK_LABEL,
   RECORD_EXISTING_LINK,
+  RECORD_POST_RECEIPT_STATUSES,
   RECORD_REFUSED_MESSAGE,
   RECORD_SAVE_LABEL,
   RECORD_SAVING_LABEL,
+  RECORD_STILL_UNRESOLVED_MESSAGE,
   RECORD_UNCERTAIN_MESSAGE,
 } from './constants';
 import type {
+  IRecordAttempt,
   IRecordDuplicate,
   IRecordedAnswer,
   IRecordExisting,
   IRecordFailure,
-  IRecordRequestBody,
   IResultsRecordFormEmits,
   IResultsRecordFormProps,
 } from './types';
@@ -141,15 +143,16 @@ const serverMessage: Ref<string | null> = ref<string | null>(null);
 const saving: Ref<boolean> = ref<boolean>(false);
 
 /**
- * The body a save sent, held from the press until its outcome is known.
+ * The save a check would repeat, held from the press until its outcome is known.
  *
  * Held whole rather than by its operation id alone: creation is keyed on a digest of the body, so a check has to
- * re-send what the first attempt sent. Cleared the moment the server answers either way, because the next press is
- * then a fresh save of whatever the form is showing — a draft edited after a duplicate warning must go as edited
+ * re-send what the first attempt sent, to where it sent it. Cleared the moment the server answers authoritatively,
+ * because the next press is then a fresh save of whatever the form is showing — a draft edited after a duplicate
+ * warning must go as edited
  * @internal
  * @constant
  */
-const held: Ref<IRecordRequestBody | null> = ref<IRecordRequestBody | null>(null);
+const held: Ref<IRecordAttempt | null> = ref<IRecordAttempt | null>(null);
 
 /**
  * Whether a save may or may not have been recorded.
@@ -464,22 +467,26 @@ function toSubmission(): IResultSubmission {
  * @function
  */
 async function save(): Promise<void> {
-  // A check re-sends the body the first attempt sent, never one rebuilt from what the form is showing now: the same
-  // operation id carrying a different body is a conflict, and the save being checked on would stay unresolved
-  const body: IRecordRequestBody = held.value ?? {
-    acknowledgement: acknowledgement.value,
-    clientOperationId: operationId.value,
-    expectedLeagueRevision: rules.value.configurationRevision,
-    submission: toSubmission(),
+  // A check re-sends what the first attempt sent, to where it sent it, never anything rebuilt from what the page
+  // holds now: the same operation id carrying a different body is a conflict, and a check aimed at a league the
+  // original operation was never made against would answer about nothing
+  const attempt: IRecordAttempt = held.value ?? {
+    body: {
+      acknowledgement: acknowledgement.value,
+      clientOperationId: operationId.value,
+      expectedLeagueRevision: rules.value.configurationRevision,
+      submission: toSubmission(),
+    },
+    endpoint: `/api/leagues/${props.leagueId}/games`,
   };
 
-  held.value = body;
+  held.value = attempt;
   saving.value = true;
   serverMessage.value = null;
 
   try {
-    const answer: IRecordedAnswer = await $fetch<IRecordedAnswer>(`/api/leagues/${props.leagueId}/games`, {
-      body,
+    const answer: IRecordedAnswer = await $fetch<IRecordedAnswer>(attempt.endpoint, {
+      body: attempt.body,
       method: 'POST',
     });
 
@@ -500,6 +507,18 @@ async function save(): Promise<void> {
     }
 
     const data: Record<string, unknown> = (failure as IRecordFailure).data ?? {};
+    const message: string = typeof data.message === 'string' ? data.message : RECORD_REFUSED_MESSAGE;
+    const status: number | null = readWriteStatus(failure);
+
+    // A refusal decided before the server looked for the operation's receipt says nothing about the save being
+    // checked on. The body's shape, the session, the origin, the membership and the write allowance are all read in
+    // front of the league's lock, so a check refused by one of them establishes only that the check did not run —
+    // and the earlier save, which may well have committed, stays outstanding with Check still offered
+    if (uncertain.value && !(status !== null && RECORD_POST_RECEIPT_STATUSES.includes(status))) {
+      serverMessage.value = `${message} ${RECORD_STILL_UNRESOLVED_MESSAGE}`;
+
+      return;
+    }
 
     // Answered, so nothing is outstanding: the next press is a fresh save of whatever the form is showing by then
     held.value = null;
@@ -521,7 +540,7 @@ async function save(): Promise<void> {
       rules.value = data.context as IResultFormContext;
     }
 
-    serverMessage.value = typeof data.message === 'string' ? data.message : RECORD_REFUSED_MESSAGE;
+    serverMessage.value = message;
   } finally {
     saving.value = false;
   }
