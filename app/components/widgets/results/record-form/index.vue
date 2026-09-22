@@ -262,6 +262,20 @@ const amendment: ComputedRef<IResultAmendment | null> = computed(
 const disputeLine: ComputedRef<string> = computed((): string => toDisputeLine(amendment.value ?? { dispute: null }));
 
 /**
+ * Where Cancel goes: back to the result a correction was opened from, or to the league an entry was started in.
+ *
+ * Somebody abandoning a correction is answering a dispute they arrived from, and the result is where the other
+ * resolution still is
+ * @internal
+ * @constant
+ */
+const cancelRoute: ComputedRef<string> = computed((): string =>
+  amendment.value
+    ? `/leagues/${props.leagueId}/games/${amendment.value.canonicalMatchId}`
+    : `/leagues/${props.leagueId}`,
+);
+
+/**
  * The scoring rules this entry is judged by, in the shape the engine takes
  * @internal
  * @constant
@@ -1141,7 +1155,7 @@ onBeforeRouteLeave((to): boolean => {
       <NuxtLink
         class="text-body text-ink-subtle hover:text-ink px-4 py-2 font-medium"
         data-test="cancel"
-        :to="`/leagues/${leagueId}`"
+        :to="cancelRoute"
       >
         Cancel
       </NuxtLink>

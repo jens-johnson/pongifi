@@ -537,6 +537,8 @@ describe(getTestFileName(import.meta.url), (): void => {
     // The play time the revision stated, not the instant the form was opened
     expect((at(wrapper, 'played-at').element as HTMLInputElement).value).not.toBe('');
     expect(at(wrapper, 'dispute').text()).toContain(DISPUTE_NOTE);
+    // Abandoning a correction goes back to the result it answers, not out to the league
+    expect(at(wrapper, 'cancel').attributes('href')).toBe(`/leagues/${LEAGUE_ID}/games/${MATCH_ID}`);
     expect(at(wrapper, 'save').text()).toBe('Save amendment');
     // One format is a fixed line rather than a choice of one
     expect(at(wrapper, `format-${GameType.SINGLES}`).exists()).toBe(false);
