@@ -28,10 +28,21 @@ import { matchedRouteKey } from 'vue-router';
 
 import type { IResultFormContext } from '#shared/results';
 import { GameType } from '#shared/rules-engine';
+import { toLocalDateTime } from '~/utils/results/format';
 
 import RecordForm from './index.vue';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Whether the session this file's account is signed into still owes the welcome step.
+ *
+ * Set by the one case about it, and only after that case has mounted: the record route is gated, so a session that
+ * owed the step from the start would never reach the page the case is about
+ * @internal
+ * @constant
+ */
+const { welcome } = vi.hoisted((): { welcome: { owed: boolean } } => ({ welcome: { owed: false } }));
 
 // A signed-in session, so the route middleware the departure cases navigate through lets them past its gate rather
 // than replacing every destination with sign-in
@@ -39,7 +50,7 @@ mockNuxtImport('useUserSession', () => (): Record<string, unknown> => ({
   fetch: async (): Promise<void> => undefined,
   loggedIn: computed((): boolean => true),
   session: { value: {} },
-  user: computed((): { needsWelcome: boolean } => ({ needsWelcome: false })),
+  user: computed((): { needsWelcome: boolean } => ({ needsWelcome: welcome.owed })),
 }));
 
 /**
@@ -69,6 +80,13 @@ const BEN: string = 'c6f3e2a0-0000-4000-8000-000000000003';
  * @constant
  */
 const MATCH_ID: string = 'd7a4f3b1-0000-4000-8000-000000000004';
+
+/**
+ * A second match, used only where a list of one would prove nothing
+ * @internal
+ * @constant
+ */
+const OTHER_MATCH_ID: string = 'e8b5a4c2-0000-4000-8000-000000000005';
 
 /**
  * The route the form is rendered at, which its departure guard is registered against
@@ -227,7 +245,10 @@ function context(overrides: Partial<IResultFormContext> = {}): IResultFormContex
  * @param overrides - What the case changes about the league
  * @returns The mounted form and the router it is guarding
  */
-async function mountRouted(overrides: Partial<IResultFormContext> = {}): Promise<{
+async function mountRouted(
+  overrides: Partial<IResultFormContext> = {},
+  onRecorded?: (canonicalMatchId: string, leagueId: string) => void,
+): Promise<{
   router: Router;
   wrapper: VueWrapper;
 }> {
@@ -247,6 +268,7 @@ async function mountRouted(overrides: Partial<IResultFormContext> = {}): Promise
     props: {
       context: context(overrides),
       leagueId: LEAGUE_ID,
+      onRecorded,
       recorderId: ADA,
     },
     route: RECORD_PATH,
@@ -267,6 +289,21 @@ async function mountRouted(overrides: Partial<IResultFormContext> = {}): Promise
  */
 async function mountForm(overrides: Partial<IResultFormContext> = {}): Promise<VueWrapper> {
   return (await mountRouted(overrides)).wrapper;
+}
+
+/**
+ * What the page does when the form reports a result: goes to it, in the league it was recorded in.
+ *
+ * The page's own listener, so a case exercises the departure the loop actually makes rather than the emit alone
+ * @internal
+ * @function
+ * @param router - The router the case is watching
+ * @returns The listener
+ */
+function goToResult(router: Router): (canonicalMatchId: string, leagueId: string) => void {
+  return (canonicalMatchId: string, leagueId: string): void => {
+    void router.push(`/leagues/${leagueId}/games/${canonicalMatchId}`);
+  };
 }
 
 /**
@@ -349,6 +386,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     sent = [];
     strays = [];
     answer = answerRecorded;
+    welcome.owed = false;
   });
 
   afterEach((): void => {
@@ -459,7 +497,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     await fillWin(wrapper);
     await pressSave(wrapper);
 
-    expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+    expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
   });
 
   it('keeps the draft when a duplicate is warned about, and records anyway on the second press', async (): Promise<void> => {
@@ -492,7 +530,38 @@ describe(getTestFileName(import.meta.url), (): void => {
     expect(sent[0]?.acknowledgement).toBeNull();
     expect(sent[1]?.acknowledgement).toBe('token-1');
     expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
-    expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+    expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
+  });
+
+  it('names each match the warning listed by when it was played', async (): Promise<void> => {
+    // Two candidates were two links reading the same sentence, which is not a choice between them
+    const first: string = '2026-09-20T11:00:00.000Z';
+    const second: string = '2026-09-20T09:30:00.000Z';
+
+    answer = (event: H3Event): unknown => {
+      setResponseStatus(event, 409);
+
+      return {
+        acknowledgement: 'token-1',
+        candidates: [
+          { canonicalMatchId: MATCH_ID, playedAt: first },
+          { canonicalMatchId: OTHER_MATCH_ID, playedAt: second },
+        ],
+        message: 'This looks like a result already recorded.',
+        refusal: 'PROBABLE_DUPLICATE',
+      };
+    };
+
+    const wrapper: VueWrapper = await mountForm();
+
+    await fillWin(wrapper);
+    await pressSave(wrapper);
+
+    const links: DOMWrapper<Element>[] = at(wrapper, 'duplicates').findAll('a');
+
+    expect(links).toHaveLength(2);
+    expect(links[0]?.text()).toBe(`Result recorded for ${toLocalDateTime(first)}`);
+    expect(links[1]?.text()).toBe(`Result recorded for ${toLocalDateTime(second)}`);
   });
 
   it('redraws the caption to the rules the league moved to', async (): Promise<void> => {
@@ -631,7 +700,7 @@ describe(getTestFileName(import.meta.url), (): void => {
       await settled();
 
       expect(sent).toHaveLength(1);
-      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
     });
 
     it('holds the request open rather than calling it a failure', async (): Promise<void> => {
@@ -673,7 +742,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(sent).toHaveLength(2);
       expect(sent[1]).toEqual(sent[0]);
-      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
     });
 
     it('offers Check again when the check itself goes unanswered', async (): Promise<void> => {
@@ -725,7 +794,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(sent).toHaveLength(3);
       expect(sent[2]).toEqual(sent[0]);
-      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID]]);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
     });
 
     it('keeps it outstanding for a malformed-body refusal too, which the shape check answers first', async (): Promise<void> => {
@@ -907,6 +976,216 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
       expect(router.currentRoute.value.path).toBe('/leagues');
+    });
+  });
+
+  describe('reaching the result it recorded', (): void => {
+    it('goes to the game without asking about the draft that became it', async (): Promise<void> => {
+      // The draft is still dirty the moment a save comes back recorded, and the guard was asking about it: the loop
+      // this page exists for ended in Leave without saving? and a navigation the form itself refused
+      const router: Router = useNuxtApp().$router as Router;
+      const { wrapper }: { wrapper: VueWrapper } = await mountRouted({}, goToResult(router));
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe(`/leagues/${LEAGUE_ID}/games/${MATCH_ID}`);
+      });
+
+      expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+    });
+
+    it('goes to the league the attempt was made against, however the page has moved since', async (): Promise<void> => {
+      // The request is held whole, so the check went to the right league; the result it recorded is read there too,
+      // and the edits made while the outcome was unknown are neither saved nor offered back
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+
+        return {};
+      };
+
+      const router: Router = useNuxtApp().$router as Router;
+      const { wrapper }: { wrapper: VueWrapper } = await mountRouted({}, goToResult(router));
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      await wrapper.setProps({ leagueId: OTHER_LEAGUE_ID });
+      await at(wrapper, 'score-b-1').setValue('9');
+      answer = answerRecorded;
+      await pressSave(wrapper);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe(`/leagues/${LEAGUE_ID}/games/${MATCH_ID}`);
+      });
+
+      expect(strays).toHaveLength(0);
+      expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+    });
+  });
+
+  describe('a refusal about the session rather than the result', (): void => {
+    it('leaves for sign-in, carrying the page back with it', async (): Promise<void> => {
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 401);
+
+        return { message: 'Your session has ended.' };
+      };
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe('/sign-in');
+      });
+
+      expect(router.currentRoute.value.query.redirect).toBe(RECORD_PATH);
+      expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+    });
+
+    it('leaves for a welcome step the account still owes', async (): Promise<void> => {
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 403);
+
+        return { message: 'Finish setting up your account first.' };
+      };
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+
+      await fillWin(wrapper);
+      // Owed from here rather than from the start: the record route is gated, and an account owing the step would
+      // have been sent to it instead of to this page
+      welcome.owed = true;
+      await pressSave(wrapper);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe('/welcome');
+      });
+
+      expect(router.currentRoute.value.query.redirect).toBe(RECORD_PATH);
+      expect(wrapper.text()).not.toContain(LEAVE_PROMPT);
+    });
+
+    it('stays where it is for a 403 that owes no welcome step', async (): Promise<void> => {
+      // A request from elsewhere, or a role this account does not have, is an ordinary refusal of this write and
+      // there is nowhere to send anybody
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 403);
+
+        return { message: 'This came from somewhere Pongifi does not accept.' };
+      };
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await settled();
+
+      expect(router.currentRoute.value.path).toBe(RECORD_PATH);
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe('This came from somewhere Pongifi does not accept.');
+    });
+
+    it('keeps an unresolved save unresolved when it is the one that answers this way', async (): Promise<void> => {
+      // A 403 is read in front of the league's lock, so it says nothing about the save being checked on, and the
+      // page that stays has to still be offering Check
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+        answer = (again: H3Event): unknown => {
+          setResponseStatus(again, 403);
+
+          return { message: 'This came from somewhere Pongifi does not accept.' };
+        };
+
+        return {};
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, SERVER_MESSAGE).text()).toContain('Your earlier save may still have gone through.');
+      expect(at(wrapper, 'save').text()).toBe('Check');
+    });
+  });
+
+  describe('the operation a press belongs to', (): void => {
+    it('records a deliberate new result under an operation of its own', async (): Promise<void> => {
+      // The id a receipt already names can never record anything else, so a second press carrying it met the same
+      // conflict for as long as the page stayed open
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 409);
+        answer = answerRecorded;
+
+        return {
+          existing: { canonicalMatchId: OTHER_MATCH_ID },
+          message: 'This entry was already recorded with different details.',
+          refusal: 'OPERATION_BODY_CHANGED',
+        };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+
+      await at(wrapper, 'score-b-1').setValue('9');
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(2);
+      expect(sent[1]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
+    });
+
+    it('holds the id through a check, and starts a new one only once the check is answered', async (): Promise<void> => {
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 503);
+        answer = (again: H3Event): unknown => {
+          setResponseStatus(again, 422);
+
+          return { message: UNRECORDABLE };
+        };
+
+        return {};
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      // The check is the first attempt's own request, id included
+      expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
+
+      answer = answerRecorded;
+      await at(wrapper, 'score-b-1').setValue('9');
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(3);
+      expect(sent[2]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
+    });
+
+    it('starts nothing by itself, and nothing until the next press', async (): Promise<void> => {
+      // Rotating when the refusal arrived would leave the page holding an operation nobody had asked for
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 422);
+
+        return { message: UNRECORDABLE };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await settled();
+
+      expect(sent).toHaveLength(1);
+      expect(at(wrapper, 'save').text()).toBe('Record result');
     });
   });
 });

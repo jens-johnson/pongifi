@@ -384,9 +384,11 @@ describe(getTestFileName(import.meta.url), (): void => {
 
   it('keeps every refusal it decides itself off the statuses that mean a receipt was consulted', async (): Promise<void> => {
     // The Record page reads a refused Check by its status. A 409 and a 422 are reached inside the transaction,
-    // after `replayOperation` has looked for the operation's receipt, so either proves there was none and answers
-    // the check. Everything the route decides in front of that lookup — the body's shape, the league id, the
-    // caller's membership — establishes only that the check did not run, and the earlier save stays outstanding.
+    // after `replayOperation` has looked for the operation's receipt, so either of them answers the check: a 422,
+    // and a 409 about the league's rules, because the lookup found nothing, and a changed-body 409 because the
+    // lookup found a receipt for another body. Everything the route decides in front of that lookup — the body's
+    // shape, the league id, the caller's membership — establishes only that the check did not run, and the earlier
+    // save stays outstanding.
     // A preflight that started answering 409 or 422 would silently tell somebody a save that may have committed
     // did not, so the boundary is asserted here rather than left to the order of the code
     const preflight: { body: unknown; leagueId: string; role: string | null }[] = [

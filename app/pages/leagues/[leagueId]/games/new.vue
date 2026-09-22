@@ -151,7 +151,10 @@ useHead({
         :context="context"
         :league-id="String(route.params.leagueId)"
         :recorder-id="String(user?.id ?? '')"
-        @recorded="(canonicalMatchId) => navigateTo(`${leagueRoute}/games/${canonicalMatchId}`)"
+        @recorded="
+          (canonicalMatchId, recordedLeagueId) =>
+            navigateTo(`${LEAGUES_ROUTE}/${recordedLeagueId}/games/${canonicalMatchId}`)
+        "
       />
     </div>
   </main>

@@ -30,6 +30,7 @@ import {
 import {
   PLAYED_AT_MESSAGE,
   RECORD_CHECK_LABEL,
+  RECORD_DUPLICATE_LINK,
   RECORD_EXISTING_LINK,
   RECORD_POST_RECEIPT_STATUSES,
   RECORD_REFUSED_MESSAGE,
@@ -101,11 +102,28 @@ const draft: Ref<IRecordDraft> = ref<IRecordDraft>({
 });
 
 /**
+ * The exits taken when a write was refused about the session rather than about the result
+ * @internal
+ * @constant
+ */
+const exit: ReturnType<typeof useSessionExit> = useSessionExit();
+
+/**
  * The operation this save belongs to, from the first attempt until an outcome is known
  * @internal
  * @constant
  */
 const operationId: Ref<string> = ref<string>(crypto.randomUUID());
+
+/**
+ * Whether the server has answered the operation the form is holding.
+ *
+ * An answered operation cannot record anything else: the server keys a receipt to the id and a digest of the body,
+ * so a later save carrying a different result under the same id is refused as a changed body for as long as the
+ * page stays open. The next deliberate save is therefore a new operation, and this is what knows to start one
+ * @internal
+ */
+let answered: boolean = false;
 
 /**
  * The token a duplicate warning issued, sent back to record anyway
@@ -179,14 +197,25 @@ const pendingDeparture: Ref<string | null> = ref<string | null>(null);
 let departureOrigin: HTMLElement | null = null;
 
 /**
- * Whether the page is leaving because Leave was answered.
+ * Whether the page is leaving on a departure it decided itself.
  *
- * The draft is still dirty at that moment, so the guard would otherwise ask the same question about the answer it
- * was just given and the departure would never resolve
+ * Leave was answered, or the result was recorded and the page is going to it. The draft is still dirty at both of
+ * those moments, so without the mark the guard would ask about work that is either being abandoned on purpose or
+ * already saved — and in the first case it would ask the same question about the answer it was just given, so the
+ * departure would never resolve
  * @internal
- * @constant
  */
 let departing: boolean = false;
+
+/**
+ * Whether the page is leaving for sign-in or for the welcome step, because a write said the session had to.
+ *
+ * Nobody chose this departure, so it is not a draft anybody is being asked about: the question would abort the very
+ * navigation the refusal requires, and an aborted push resolves rather than rejects, so the form would sit there
+ * with a save it could no longer make
+ * @internal
+ */
+let leavingForSession: boolean = false;
 
 /**
  * The departure question's safe answer, which takes focus while the question stands
@@ -456,6 +485,76 @@ function toSubmission(): IResultSubmission {
 }
 
 /**
+ * Reads a save that did not come back as a save onto the form.
+ *
+ * Three answers, and they are not the same answer. An outcome nobody can know keeps the request and offers Check.
+ * A refusal about the session is not about this result at all, and the page leaves for the step that can be taken.
+ * Everything else is an answer: it never clears the draft, and it settles the operation the press belonged to
+ * @internal
+ * @async
+ * @function
+ * @param failure - What `$fetch` rejected with
+ */
+async function settleFailure(failure: unknown): Promise<void> {
+  const classified: WriteFailure = classifyWriteFailure(failure);
+
+  if (classified === WriteFailure.UNCERTAIN) {
+    // No answer at all, or the server itself failed: either may have committed. Calling that a failure is how a
+    // second identical result gets entered, so the request and its operation id are kept and Check re-sends them
+    uncertain.value = true;
+    serverMessage.value = RECORD_UNCERTAIN_MESSAGE;
+
+    return;
+  }
+
+  const data: Record<string, unknown> = (failure as IRecordFailure).data ?? {};
+  const message: string = typeof data.message === 'string' ? data.message : RECORD_REFUSED_MESSAGE;
+  const status: number | null = readWriteStatus(failure);
+
+  // An ended session, or an account that still owes the welcome step, was not a refusal of this result at all, and
+  // the page leaves for the step that can actually be taken. Everything it is holding is left exactly as it is on
+  // the way out: an unresolved save stays unresolved rather than being reported as a failure it was never shown
+  // to be
+  if (await leftForSession(classified)) {
+    return;
+  }
+
+  // A refusal decided before the server looked for the operation's receipt says nothing about the save being
+  // checked on. The body's shape, the session, the origin, the membership and the write allowance are all read in
+  // front of the league's lock, so a check refused by one of them establishes only that the check did not run —
+  // and the earlier save, which may well have committed, stays outstanding with Check still offered
+  if (uncertain.value && !(status !== null && RECORD_POST_RECEIPT_STATUSES.includes(status))) {
+    serverMessage.value = `${message} ${RECORD_STILL_UNRESOLVED_MESSAGE}`;
+
+    return;
+  }
+
+  // Answered, so nothing is outstanding: the next press is a fresh save of whatever the form is showing by then,
+  // under an operation of its own
+  held.value = null;
+  uncertain.value = false;
+  answered = true;
+
+  if (typeof data.acknowledgement === 'string') {
+    // Shown what was found, and records anyway if they mean to: two identical honest matches in one evening are
+    // possible, and this is what keeps them possible
+    acknowledgement.value = data.acknowledgement;
+    candidates.value = (data.candidates as IRecordDuplicate[]) ?? [];
+  }
+
+  // Named only when the refusal named it. The message tells the person to open the result that exists, so without
+  // the link it points at nothing they can reach
+  existing.value = data.existing ? (data.existing as IRecordExisting) : null;
+
+  if (data.context) {
+    // The league moved under the form; the caption redraws to the rules the entry will now be judged by
+    rules.value = data.context as IResultFormContext;
+  }
+
+  serverMessage.value = message;
+}
+
+/**
  * Saves the result, or checks on one whose outcome is unknown, and reads whatever the server answers back onto the
  * form.
  *
@@ -467,6 +566,17 @@ function toSubmission(): IResultSubmission {
  * @function
  */
 async function save(): Promise<void> {
+  // A deliberate save after the server answered the last one is a new operation, because the answered id can never
+  // record anything else — a changed-body refusal is exactly that, and re-using the id would answer this result
+  // with the same refusal for as long as the page stays open. Rotated here, at the press, rather than when the
+  // answer arrived: nothing holds an operation nobody has asked for yet. A check is untouched, because it carries
+  // the id its held body already has; and the press that answers a duplicate warning is the same save going
+  // through, so it keeps the id the warning was issued about
+  if (held.value === null && answered && acknowledgement.value === null) {
+    operationId.value = crypto.randomUUID();
+    answered = false;
+  }
+
   // A check re-sends what the first attempt sent, to where it sent it, never anything rebuilt from what the page
   // holds now: the same operation id carrying a different body is a conflict, and a check aimed at a league the
   // original operation was never made against would answer about nothing
@@ -478,6 +588,7 @@ async function save(): Promise<void> {
       submission: toSubmission(),
     },
     endpoint: `/api/leagues/${props.leagueId}/games`,
+    leagueId: props.leagueId,
   };
 
   held.value = attempt;
@@ -495,54 +606,51 @@ async function save(): Promise<void> {
     candidates.value = [];
     existing.value = null;
     acknowledgement.value = null;
-    emit('recorded', answer.current.canonicalMatchId);
+
+    // The page is about to go to the result this draft became, and the guard asks about drafts that would be lost.
+    // Marked for a check that came back recorded as much as for a first save: the edits made while the outcome was
+    // unknown are not part of what was recorded, and they are not work to be offered back either
+    departing = true;
+
+    // The league the attempt was made against, never the prop as it stands now: the result was written where the
+    // request went, and that is the page it is read at
+    emit('recorded', answer.current.canonicalMatchId, attempt.leagueId);
   } catch (failure: unknown) {
-    if (classifyWriteFailure(failure) === WriteFailure.UNCERTAIN) {
-      // No answer at all, or the server itself failed: either may have committed. Calling that a failure is how a
-      // second identical result gets entered, so the request and its operation id are kept and Check re-sends them
-      uncertain.value = true;
-      serverMessage.value = RECORD_UNCERTAIN_MESSAGE;
-
-      return;
-    }
-
-    const data: Record<string, unknown> = (failure as IRecordFailure).data ?? {};
-    const message: string = typeof data.message === 'string' ? data.message : RECORD_REFUSED_MESSAGE;
-    const status: number | null = readWriteStatus(failure);
-
-    // A refusal decided before the server looked for the operation's receipt says nothing about the save being
-    // checked on. The body's shape, the session, the origin, the membership and the write allowance are all read in
-    // front of the league's lock, so a check refused by one of them establishes only that the check did not run —
-    // and the earlier save, which may well have committed, stays outstanding with Check still offered
-    if (uncertain.value && !(status !== null && RECORD_POST_RECEIPT_STATUSES.includes(status))) {
-      serverMessage.value = `${message} ${RECORD_STILL_UNRESOLVED_MESSAGE}`;
-
-      return;
-    }
-
-    // Answered, so nothing is outstanding: the next press is a fresh save of whatever the form is showing by then
-    held.value = null;
-    uncertain.value = false;
-
-    if (typeof data.acknowledgement === 'string') {
-      // Shown what was found, and records anyway if they mean to: two identical honest matches in one evening are
-      // possible, and this is what keeps them possible
-      acknowledgement.value = data.acknowledgement;
-      candidates.value = (data.candidates as IRecordDuplicate[]) ?? [];
-    }
-
-    // Named only when the refusal named it. The message tells the person to open the result that exists, so without
-    // the link it points at nothing they can reach
-    existing.value = data.existing ? (data.existing as IRecordExisting) : null;
-
-    if (data.context) {
-      // The league moved under the form; the caption redraws to the rules the entry will now be judged by
-      rules.value = data.context as IResultFormContext;
-    }
-
-    serverMessage.value = message;
+    await settleFailure(failure);
   } finally {
     saving.value = false;
+  }
+}
+
+/**
+ * Leaves for sign-in, or for the welcome step, when the refusal was about the session rather than about the result.
+ *
+ * A 401 is the session itself; a 403 is either a role this account does not have or a welcome step it still owes,
+ * and only the refreshed session can tell those apart — the first is an ordinary refusal of this write and stays
+ * on the page. Either exit can be refused by the same network that refused the write, and an escaping rejection
+ * would leave the form with no message and no way on, so a failed exit falls back to the ordinary handling and the
+ * held request stays exactly where it was
+ * @internal
+ * @async
+ * @function
+ * @param failure - How the write failed
+ * @returns Whether the page is leaving, and nothing more should be read onto the form
+ */
+async function leftForSession(failure: WriteFailure): Promise<boolean> {
+  leavingForSession = true;
+
+  try {
+    if (failure === WriteFailure.UNAUTHORIZED) {
+      await exit.toSignIn();
+
+      return true;
+    }
+
+    return failure === WriteFailure.FORBIDDEN && (await exit.toWelcomeIfOwed());
+  } catch {
+    return false;
+  } finally {
+    leavingForSession = false;
   }
 }
 
@@ -593,7 +701,7 @@ watch([shown, settings], (): void => growRows());
 // left, and a session that has ended is not a question anybody can usefully answer. An unanswered question is not
 // permission either — a second attempt while it stands is refused too, and only Leave departs
 onBeforeRouteLeave((to): boolean => {
-  if (departing || !dirty.value || to.path.startsWith(SIGN_IN_ROUTE)) {
+  if (departing || leavingForSession || !dirty.value || to.path.startsWith(SIGN_IN_ROUTE)) {
     return true;
   }
 
@@ -902,11 +1010,13 @@ onBeforeRouteLeave((to): boolean => {
         v-for="candidate in candidates"
         :key="candidate.canonicalMatchId"
       >
+        <!-- Named by when it was played: a warning about two matches is two links, and two lines reading the same
+             thing are not a choice between them -->
         <NuxtLink
           class="text-accent-strong hover:text-accent font-medium"
           :to="`/leagues/${leagueId}/games/${candidate.canonicalMatchId}`"
         >
-          A result already recorded
+          {{ RECORD_DUPLICATE_LINK(candidate.playedAt) }}
         </NuxtLink>
       </li>
     </ul>

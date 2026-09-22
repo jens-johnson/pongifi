@@ -38,8 +38,8 @@ export interface IResultsRecordFormProps {
  * @public
  */
 export interface IResultsRecordFormEmits {
-  /* A result was recorded; the page navigates to it */
-  recorded: [canonicalMatchId: string];
+  /* A result was recorded; the page navigates to it, in the league the operation that recorded it was made against */
+  recorded: [canonicalMatchId: string, leagueId: string];
 }
 
 /**
@@ -82,6 +82,11 @@ export interface IRecordAttempt {
 
   /* Where it was sent, whole */
   endpoint: string;
+
+  /* The league it was made against, so the result it records is opened in that league rather than in whichever one
+     the page is showing by the time the answer arrives. Carried beside the endpoint rather than read back out of it:
+     a path is assembled from what is known, never parsed for it */
+  leagueId: string;
 }
 
 /**

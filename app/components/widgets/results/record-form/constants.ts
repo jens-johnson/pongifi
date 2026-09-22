@@ -17,6 +17,7 @@
  */
 
 import type { IResultFormContext } from '#shared/results';
+import { toLocalDateTime } from '~/utils/results/format';
 
 /**
  * An hour, in milliseconds
@@ -96,6 +97,20 @@ export const RECORD_REFUSED_MESSAGE: string = 'Pongifi could not record this res
 export const RECORD_EXISTING_LINK: string = 'Open the result that exists';
 
 /**
+ * What one of the matches a duplicate warning listed is called.
+ *
+ * Named by when it says it was played, in the viewer's own time and in the form the Game page shows one. A warning
+ * about two matches is two links, and a list whose lines all read the same thing is a list nobody can choose from
+ * @public
+ * @function
+ * @param playedAt - When the match says it was played
+ * @returns The link's text
+ */
+export function RECORD_DUPLICATE_LINK(playedAt: string): string {
+  return `Result recorded for ${toLocalDateTime(playedAt)}`;
+}
+
+/**
  * What is added when a check itself was refused.
  *
  * A refused check says nothing about the save it was checking on. Every refusal the page can recognize from the
@@ -111,9 +126,11 @@ export const RECORD_STILL_UNRESOLVED_MESSAGE: string = 'Your earlier save may st
  * The refusal statuses this route decides after it has consulted the operation's receipt.
  *
  * The dividing line for a refused check. A 409 and a 422 are reached inside the transaction, under the league's
- * lock, after `replayOperation` has looked for a receipt — so a save that had committed would already have been
- * answered from it, and either of these proves there was none. Every other refusal is decided in front of that
- * lookup and resolves nothing
+ * lock, after `replayOperation` has looked for a receipt, so either of them is an authoritative reconciliation of
+ * the save being checked on rather than a refusal of the check. Which way it settles is not the same for both: a
+ * 422, and a 409 about the league's rules, are reached because the lookup found nothing, while a changed-body 409
+ * is the lookup itself — it is authoritative precisely because a receipt exists, for a body that is not this one.
+ * Every other refusal is decided in front of the lookup and resolves nothing
  * @public
  * @constant
  */
