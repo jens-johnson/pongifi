@@ -235,6 +235,7 @@ registerEndpoint(`/api/leagues/${OTHER_LEAGUE_ID}/games`, {
  */
 function context(overrides: Partial<IResultFormContext> = {}): IResultFormContext {
   return {
+    amendment: null,
     authority: {
       may: true,
       mustPlay: false,

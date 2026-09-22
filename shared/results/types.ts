@@ -143,6 +143,29 @@ export interface IReconstruction {
 }
 
 /**
+ * What the Record page opens on in Amend mode: the result being corrected, what was said against it, and the
+ * revision the correction is judged against.
+ *
+ * Present only when the page was asked for a correction. Everything else on the context comes from the match's own
+ * frozen snapshots in that case rather than from the league, because an amended result is still judged under the
+ * rules the match was played under (page spec, Record, Amend mode)
+ * @public
+ */
+export interface IResultAmendment {
+  /* The match being corrected: where the save goes, and where the way back leads */
+  canonicalMatchId: string;
+
+  /* What the dispute said, for the line between the caption and the form */
+  dispute: { at: string; by: IResultIdentity; note: string | null; redacted: boolean } | null;
+
+  /* The revision the page was showing, which the save carries instead of a league configuration revision */
+  expectedRevision: number;
+
+  /* The disputed revision's own submission, which the form opens pre-filled from */
+  submission: IResultSubmission;
+}
+
+/**
  * What the Record page needs before a person can type anything: the rules the entry will be judged by, the roster it
  * may seat, and the database's own clock.
  *
@@ -152,6 +175,9 @@ export interface IReconstruction {
  * @public
  */
 export interface IResultFormContext {
+  /* The result being corrected, when the page was opened to correct one; null for an ordinary entry */
+  amendment: IResultAmendment | null;
+
   /**
    * Whether this account may record in this league at all, the sentence to show when it may not, and whether it has
    * to be seated in what it records.

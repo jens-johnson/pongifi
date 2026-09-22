@@ -27,6 +27,7 @@ import type {
   IMatchViewParticipant,
   IMatchViewRevision,
   IMatchViewSide,
+  IResultAmendment,
   IResultFormContext,
   IResultIdentity,
   IResultPolicySnapshot,
@@ -79,6 +80,13 @@ const RECORDER_LABEL: Record<string, string> = {
   [ResultRecorder.MANAGER]: 'a commissioner or manager',
   [ResultRecorder.PARTICIPANTS]: 'a commissioner, a manager, or a player in the match',
 };
+
+/**
+ * How the Record page names who may correct a result, for the one field on the context that states it
+ * @internal
+ * @constant
+ */
+const AMENDER_LABEL: string = 'a commissioner or manager';
 
 /**
  * Whether this role and setting let the account open the form at all.
@@ -165,6 +173,7 @@ export async function readFormContext(leagueId: string, userId: string): Promise
   const role: LeagueRole = league.role as LeagueRole;
 
   return {
+    amendment: null,
     authority: {
       may: mayOpenForm(role, settings),
       mustPlay: role !== LeagueRole.COMMISSIONER && role !== LeagueRole.MANAGER,
@@ -181,6 +190,153 @@ export async function readFormContext(leagueId: string, userId: string): Promise
       targetScore: settings.targetScore as unknown as Record<string, number>,
       winningMargin: settings.winningMargin,
     },
+  };
+}
+
+/**
+ * What the same form opens on when it was asked to correct a result instead of record one.
+ *
+ * The same shape, filled from the match rather than from the league: the format, the scoring rules and the entry
+ * window are the ones frozen onto the revision being corrected, because a league that changed its rules since the
+ * match was played must not pull the correction onto the new ones, and the play-time bound is measured from the
+ * play time the first revision stated so that editing the time cannot revive an expired right (page spec, Record,
+ * Amend mode; the service enforces all three again under the lock).
+ *
+ * Authority is decided here rather than left to the page: a correction is a commissioner's or a manager's, only
+ * while the result is disputed, and only while the window is open. When any of those is false the caller is told
+ * `may: false` and the page sends them to the result, which explains the state it is in
+ * @public
+ * @async
+ * @function
+ * @param leagueId - The league, already authorized for this caller
+ * @param canonicalMatchId - The match being corrected
+ * @param role - The role that account holds now
+ * @returns The context, or null when there is no such match in this league or the clock could not be read
+ */
+export async function readAmendContext(
+  leagueId: string,
+  canonicalMatchId: string,
+  role: LeagueRole,
+): Promise<IResultFormContext | null> {
+  const database = useDatabase();
+  const rows = await database
+    .select({
+      configurationRevision: leagues.configurationRevision,
+      id: resultRevisions.id,
+      leagueName: leagues.name,
+      originalPlayedAt: resultRevisions.originalPlayedAt,
+      policySnapshot: resultRevisions.policySnapshot,
+      revision: resultRevisions.revision,
+      settingsSnapshot: resultRevisions.settingsSnapshot,
+      state: resultRevisions.state,
+      submission: resultRevisions.submission,
+    })
+    .from(resultRevisions)
+    .innerJoin(leagues, eq(leagues.id, resultRevisions.leagueId))
+    .where(
+      and(
+        eq(resultRevisions.leagueId, leagueId),
+        eq(resultRevisions.canonicalMatchId, canonicalMatchId),
+        eq(resultRevisions.isCurrent, true),
+      ),
+    )
+    .limit(1);
+  const current: (typeof rows)[number] | undefined = rows[0];
+
+  if (!current) {
+    return null;
+  }
+
+  // The database's clock, for the same reason the entry form takes it from there: the window this correction has
+  // left is measured against it, and the service will measure it against that same clock under the lock
+  const now: Date | null = await readClock(leagueId);
+
+  if (!now) {
+    return null;
+  }
+
+  const settings: IMatchSettings = current.settingsSnapshot;
+  const policy: IResultPolicySnapshot = current.policySnapshot;
+  const window: number = policy.resultAmendmentWindow * HOUR_MS;
+  const administrator: boolean = role === LeagueRole.COMMISSIONER || role === LeagueRole.MANAGER;
+  const dispute = await readDispute(leagueId, current.id);
+  const roster = await database
+    .select({ displayName: users.displayName, id: users.id })
+    .from(memberships)
+    .innerJoin(users, and(eq(users.id, memberships.userId), isNull(users.deletedAt)))
+    .where(and(eq(memberships.leagueId, leagueId), eq(memberships.status, MembershipStatus.ACTIVE)));
+
+  return {
+    amendment: {
+      canonicalMatchId,
+      dispute,
+      expectedRevision: current.revision,
+      submission: current.submission,
+    },
+    authority: {
+      // A frozen format this form cannot render is treated as a correction nobody may make here rather than as an
+      // empty form: cutthroat is scored live, and a final triple cannot be reconstructed from scores alone
+      may:
+        administrator &&
+        (current.state as ResultState) === ResultState.DISPUTED &&
+        now.getTime() <= current.originalPlayedAt.getTime() + window &&
+        RECORDABLE_FORMATS.includes(settings.gameType),
+      mustPlay: false,
+      who: AMENDER_LABEL,
+    },
+    configurationRevision: current.configurationRevision,
+    earliest: new Date(current.originalPlayedAt.getTime() - window).toISOString(),
+    formats: [settings.gameType],
+    leagueName: current.leagueName,
+    now: now.toISOString(),
+    roster: roster.map((member: (typeof roster)[number]) => ({ displayName: member.displayName, id: member.id })),
+    rules: {
+      matchFormat: settings.matchFormat,
+      // Keyed by format, as the league's own rules are, because the form reads the target score for the format it
+      // is showing; a frozen snapshot knows exactly one
+      targetScore: { [settings.gameType]: settings.targetScore },
+      winningMargin: settings.winningMargin,
+    },
+  };
+}
+
+/**
+ * What was said against a revision, for the line the correction form shows above itself
+ * @internal
+ * @async
+ * @function
+ * @param leagueId - The league the match belongs to, for naming the disputer as every other surface names them
+ * @param revisionId - The revision being corrected
+ * @returns The dispute, or null when this revision carries none
+ */
+async function readDispute(leagueId: string, revisionId: string): Promise<IResultAmendment['dispute']> {
+  const database = useDatabase();
+  const actions = await database
+    .select({
+      actorUserId: resultActions.actorUserId,
+      createdAt: resultActions.createdAt,
+      id: resultActions.id,
+    })
+    .from(resultActions)
+    .where(and(eq(resultActions.resultRevisionId, revisionId), eq(resultActions.type, ResultAction.DISPUTE)));
+  const dispute: (typeof actions)[number] | undefined = actions[0];
+
+  if (!dispute) {
+    return null;
+  }
+
+  const notes = await database
+    .select({ body: resultDisputeNotes.body, redactedAt: resultDisputeNotes.redactedAt })
+    .from(resultDisputeNotes)
+    .where(eq(resultDisputeNotes.resultActionId, dispute.id));
+  const note: (typeof notes)[number] | undefined = notes[0];
+  const identities = await readIdentities(leagueId, [dispute.actorUserId]);
+
+  return {
+    at: dispute.createdAt.toISOString(),
+    by: identityOf(identities.get(dispute.actorUserId)),
+    note: note?.body ?? null,
+    redacted: note !== undefined && note.redactedAt !== null,
   };
 }
 

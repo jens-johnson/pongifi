@@ -28,7 +28,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { GameCreator, LeagueRole, ResultRecorder } from '#shared/domain';
 import type { TLeagueSettings } from '#shared/league-settings';
-import type { IMatchView, IResultSubmission } from '#shared/results';
+import type { IMatchView, IResultFormContext, IResultSubmission } from '#shared/results';
 import { DELETED_ACCOUNT_NAME, ResultAction, ResultEnding, ResultState, Seat, SideSatisfaction } from '#shared/results';
 import { GameType, Side } from '#shared/rules-engine';
 import { symbolName } from '#shared/utils/symbol';
@@ -48,7 +48,7 @@ const databaseRef = vi.hoisted((): { current: unknown } => ({ current: undefined
 
 vi.mock('#utils/db', (): Record<string, unknown> => ({ useDatabase: (): unknown => databaseRef.current }));
 
-const { readClock, readFormContext, readMatchView } = await import('./queries');
+const { readAmendContext, readClock, readFormContext, readMatchView } = await import('./queries');
 const { amendResult, answerResult, recordResult } = await import('./utils');
 
 /**
@@ -71,6 +71,13 @@ const LEAGUE_ID: string = '11111111-1111-1111-1111-111111111111';
  * @constant
  */
 const EMPTIED: string = `TRUNCATE "result_revisions", "games", "rating_generations", "memberships", "leagues", "users" CASCADE`;
+
+/**
+ * What a dispute said, where a case needs the words back out again
+ * @internal
+ * @constant
+ */
+const DISPUTE_NOTE: string = 'that was not the score';
 
 /**
  * The database under test
@@ -275,6 +282,49 @@ async function view(match: string, viewer: string, role: LeagueRole = LeagueRole
 
   if (!found) {
     throw new Error('the fixture match could not be read');
+  }
+
+  return found;
+}
+
+/**
+ * Records a singles result and has the other seat dispute it
+ * @internal
+ * @async
+ * @function
+ * @param note - What the dispute said, or null when it said nothing
+ * @returns The canonical match id
+ */
+async function disputed(note: string | null): Promise<string> {
+  const match: string = await record(ids.Ada!, singles([ids.Ada!, ids.Ben!]));
+
+  await inTransaction((transaction) =>
+    answerResult(transaction, ids.Ben!, {
+      action: ResultAction.DISPUTE,
+      canonicalMatchId: match,
+      clientOperationId: randomUUID(),
+      expectedRevision: 1,
+      note,
+    }),
+  );
+
+  return match;
+}
+
+/**
+ * Reads the context a correction of one match opens on
+ * @internal
+ * @async
+ * @function
+ * @param match - The match being corrected
+ * @param role - The role the account holds now
+ * @returns The context
+ */
+async function correction(match: string, role: LeagueRole): Promise<IResultFormContext> {
+  const found: IResultFormContext | null = await readAmendContext(LEAGUE_ID, match, role);
+
+  if (!found) {
+    throw new Error('the fixture correction could not be read');
   }
 
   return found;
@@ -566,7 +616,7 @@ describe(getTestFileName(import.meta.url), (): void => {
           canonicalMatchId: match,
           clientOperationId: randomUUID(),
           expectedRevision: 1,
-          note: 'that was not the score',
+          note: DISPUTE_NOTE,
         }),
       );
       await read(`UPDATE "result_revisions" SET "submitted_at" = now() - interval '2 hours' WHERE "revision" = 1`);
@@ -630,6 +680,105 @@ describe(getTestFileName(import.meta.url), (): void => {
       expect(
         await readMatchView('22222222-2222-4222-8222-222222222222', match, ids.Ada!, LeagueRole.PLAYER),
       ).toBeNull();
+    });
+  });
+
+  describe(symbolName(readAmendContext), (): void => {
+    it('opens a correction on the match rather than on the league it was played in', async (): Promise<void> => {
+      const match: string = await disputed(DISPUTE_NOTE);
+
+      // The league moves underneath the correction: a different length, a different target and a format the match
+      // was not played in. None of it may reach the form, because the correction is judged under the rules the
+      // match was played under
+      await read(`UPDATE "leagues" SET "settings" = $1 WHERE "id" = $2`, [
+        JSON.stringify(
+          settingsFixture({
+            allowedGameTypes: [GameType.DOUBLES],
+            matchFormat: 5,
+            targetScore: {
+              [GameType.CUTTHROAT]: 15,
+              [GameType.DOUBLES]: 21,
+              [GameType.SINGLES]: 21,
+            },
+          }),
+        ),
+        LEAGUE_ID,
+      ]);
+
+      const context: IResultFormContext = await correction(match, LeagueRole.COMMISSIONER);
+
+      expect(context.formats).toEqual([GameType.SINGLES]);
+      expect(context.rules).toEqual({
+        matchFormat: 1,
+        targetScore: { [GameType.SINGLES]: 11 },
+        winningMargin: 2,
+      });
+      expect(context.amendment?.expectedRevision).toBe(1);
+      expect(context.amendment?.canonicalMatchId).toBe(match);
+      expect(context.amendment?.submission.games).toEqual([
+        {
+          a: 11,
+          b: 4,
+          gameNumber: 1,
+        },
+      ]);
+      expect(context.amendment?.dispute?.by.displayName).toBe('Ben');
+      expect(context.amendment?.dispute?.note).toBe(DISPUTE_NOTE);
+      expect(context.amendment?.dispute?.redacted).toBe(false);
+    });
+
+    it('bounds the corrected play time from the original play time, not from now', async (): Promise<void> => {
+      const match: string = await disputed(null);
+
+      await read(`UPDATE "result_revisions" SET "original_played_at" = now() - interval '40 hours'`);
+
+      const context: IResultFormContext = await correction(match, LeagueRole.MANAGER);
+      const [row] = await read<{ originalPlayedAt: Date }>(
+        `SELECT "original_played_at" AS "originalPlayedAt" FROM "result_revisions" WHERE "is_current"`,
+      );
+
+      // A correction may move the time within the window the match was entered under. Measuring the window from
+      // now instead would let an edit reach back further the longer nobody resolved the dispute
+      expect(Date.parse(context.earliest)).toBe(row!.originalPlayedAt.getTime() - 48 * HOUR_MS);
+      expect(context.amendment?.dispute?.note).toBeNull();
+    });
+
+    it('says a correction is nobody else’s, and only while the result is disputed and the window is open', async (): Promise<void> => {
+      // Two hours apart, or the second entry is warned about as a duplicate of the first rather than recorded
+      const undisputedMatch: string = await record(
+        ids.Ada!,
+        singles([ids.Ada!, ids.Ben!], { playedAt: new Date(Date.now() - 3 * HOUR_MS).toISOString() }),
+      );
+      const match: string = await disputed(null);
+
+      expect((await correction(match, LeagueRole.COMMISSIONER)).authority.may).toBe(true);
+      expect((await correction(match, LeagueRole.MANAGER)).authority.may).toBe(true);
+      // A player holds no correction right at all, and neither does an administrator on a result nobody questioned
+      expect((await correction(match, LeagueRole.PLAYER)).authority.may).toBe(false);
+      expect((await correction(undisputedMatch, LeagueRole.COMMISSIONER)).authority.may).toBe(false);
+
+      await read(`UPDATE "result_revisions" SET "original_played_at" = now() - interval '96 hours'`);
+
+      expect((await correction(match, LeagueRole.COMMISSIONER)).authority.may).toBe(false);
+    });
+
+    it('says a note was removed rather than showing it', async (): Promise<void> => {
+      const match: string = await disputed(DISPUTE_NOTE);
+
+      // The row's own constraint: a redacted note keeps no body, so the page cannot be handed one to render
+      await read(`UPDATE "result_dispute_notes" SET "body" = NULL, "redacted_at" = now()`);
+
+      const context: IResultFormContext = await correction(match, LeagueRole.COMMISSIONER);
+
+      // The body is still readable in the row; what the page is told is that it was removed, and the page decides
+      // what to say instead
+      expect(context.amendment?.dispute?.redacted).toBe(true);
+    });
+
+    it('answers nothing for a match that belongs to another league', async (): Promise<void> => {
+      const match: string = await disputed(null);
+
+      expect(await readAmendContext('22222222-2222-4222-8222-222222222222', match, LeagueRole.COMMISSIONER)).toBeNull();
     });
   });
 });
