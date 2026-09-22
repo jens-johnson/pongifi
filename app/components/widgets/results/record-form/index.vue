@@ -540,6 +540,13 @@ async function settleFailure(failure: unknown): Promise<void> {
     // possible, and this is what keeps them possible
     acknowledgement.value = data.acknowledgement;
     candidates.value = (data.candidates as IRecordDuplicate[]) ?? [];
+  } else if (status !== null && RECORD_POST_RECEIPT_STATUSES.includes(status)) {
+    // A warning belongs to the operation it was issued about, and this refusal has just settled that operation
+    // from inside the lock. Keeping its token would hold the next press on an id the server has already answered —
+    // which is the same refusal again for as long as the page stays open — and keeping its list would leave the
+    // matches that warning found sitting on the page under a message about something else entirely
+    acknowledgement.value = null;
+    candidates.value = [];
   }
 
   // Named only when the refusal named it. The message tells the person to open the result that exists, so without

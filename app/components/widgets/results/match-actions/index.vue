@@ -4,6 +4,7 @@
 import type { ComputedRef, Ref } from 'vue';
 
 import { MAX_NOTE_LENGTH, ResultAction } from '#shared/results';
+import { classifyWriteFailure, WriteFailure } from '~/utils/leagues/write-failure';
 import type { IResultActionRequest, IResultActionState } from '~/utils/results/actions';
 import {
   ACTION_LABEL,
@@ -36,6 +37,13 @@ const props: Readonly<IResultsMatchActionsProps> = defineProps<IResultsMatchActi
 const emit = defineEmits<IResultsMatchActionsEmits>();
 
 /* ─── State ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The exits this page takes when an answer is refused because of the session rather than because of the result
+ * @internal
+ * @constant
+ */
+const exit: ReturnType<typeof useSessionExit> = useSessionExit();
 
 /**
  * What the pressed action is doing, and what it is still holding
@@ -135,7 +143,42 @@ async function press(which: ResultAction): Promise<void> {
       voidAsking.value = false;
 
       emit('resolved');
+
+      return;
     }
+
+    // An ended session, or an account that still owes the welcome step, refused the session rather than this
+    // answer, and the page leaves for the step that can actually be taken. Settled first, so an exit refused by
+    // the same network that refused the write leaves an outcome nobody can be sure of still holding its request,
+    // its endpoint and its operation id, with Check still on the button that made it
+    await leaveForSession(failure);
+  }
+}
+
+/**
+ * Leaves for sign-in, or for the welcome step, when the refusal was about the session rather than about the answer.
+ *
+ * A 401 is the session itself; a 403 is either a role this account does not have or a welcome step it still owes,
+ * and only the refreshed session can tell those apart — the first is an ordinary refusal of this answer and stays
+ * on the page. Both exits carry the game back as their return path, so whoever signs in lands on the result they
+ * were answering rather than at the top of the app
+ * @internal
+ * @async
+ * @function
+ * @param failure - How the write failed
+ */
+async function leaveForSession(failure: unknown): Promise<void> {
+  const classified: WriteFailure = classifyWriteFailure(failure);
+
+  try {
+    if (classified === WriteFailure.UNAUTHORIZED) {
+      await exit.toSignIn();
+    } else if (classified === WriteFailure.FORBIDDEN) {
+      await exit.toWelcomeIfOwed();
+    }
+  } catch {
+    // The exit can be refused by the same network that refused the write, and an escaping rejection would leave
+    // the page with no way on: what `failAction` settled stands, and an unresolved answer is still checkable
   }
 }
 </script>

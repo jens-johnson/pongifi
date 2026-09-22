@@ -146,6 +146,27 @@ const STAY: string = 'leave-cancel';
 const UNRECORDABLE: string = 'Some of what was entered cannot be recorded as played.';
 
 /**
+ * What a probable-duplicate warning says
+ * @internal
+ * @constant
+ */
+const WARNED: string = 'This looks like a result already recorded.';
+
+/**
+ * What the refusal that names an occupied operation id says
+ * @internal
+ * @constant
+ */
+const CHANGED_BODY: string = 'This entry was already recorded with different details.';
+
+/**
+ * When the match a duplicate warning names was played
+ * @internal
+ * @constant
+ */
+const WARNED_AT: string = '2026-09-20T11:00:00.000Z';
+
+/**
  * Every body the form sent, in order
  * @internal
  */
@@ -508,8 +529,8 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       return {
         acknowledgement: 'token-1',
-        candidates: [{ canonicalMatchId: MATCH_ID, playedAt: '2026-09-20T11:00:00.000Z' }],
-        message: 'This looks like a result already recorded.',
+        candidates: [{ canonicalMatchId: MATCH_ID, playedAt: WARNED_AT }],
+        message: WARNED,
         refusal: 'PROBABLE_DUPLICATE',
       };
     };
@@ -519,7 +540,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     await fillWin(wrapper);
     await pressSave(wrapper);
 
-    expect(at(wrapper, SERVER_MESSAGE).text()).toBe('This looks like a result already recorded.');
+    expect(at(wrapper, SERVER_MESSAGE).text()).toBe(WARNED);
     expect(at(wrapper, 'duplicates').exists()).toBe(true);
     // The draft is untouched: a refusal never clears it
     expect((at(wrapper, 'score-a-0').element as HTMLInputElement).value).toBe('11');
@@ -535,7 +556,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
   it('names each match the warning listed by when it was played', async (): Promise<void> => {
     // Two candidates were two links reading the same sentence, which is not a choice between them
-    const first: string = '2026-09-20T11:00:00.000Z';
+    const first: string = WARNED_AT;
     const second: string = '2026-09-20T09:30:00.000Z';
 
     answer = (event: H3Event): unknown => {
@@ -547,7 +568,7 @@ describe(getTestFileName(import.meta.url), (): void => {
           { canonicalMatchId: MATCH_ID, playedAt: first },
           { canonicalMatchId: OTHER_MATCH_ID, playedAt: second },
         ],
-        message: 'This looks like a result already recorded.',
+        message: WARNED,
         refusal: 'PROBABLE_DUPLICATE',
       };
     };
@@ -648,7 +669,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       return {
         existing: { canonicalMatchId: MATCH_ID },
-        message: 'This entry was already recorded with different details.',
+        message: CHANGED_BODY,
         refusal: 'OPERATION_BODY_CHANGED',
       };
     };
@@ -665,7 +686,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     answer = (event: H3Event): unknown => {
       setResponseStatus(event, 409);
 
-      return { message: 'This entry was already recorded with different details.', refusal: 'OPERATION_BODY_CHANGED' };
+      return { message: CHANGED_BODY, refusal: 'OPERATION_BODY_CHANGED' };
     };
 
     const wrapper: VueWrapper = await mountForm();
@@ -1123,7 +1144,7 @@ describe(getTestFileName(import.meta.url), (): void => {
 
         return {
           existing: { canonicalMatchId: OTHER_MATCH_ID },
-          message: 'This entry was already recorded with different details.',
+          message: CHANGED_BODY,
           refusal: 'OPERATION_BODY_CHANGED',
         };
       };
@@ -1168,6 +1189,128 @@ describe(getTestFileName(import.meta.url), (): void => {
 
       expect(sent).toHaveLength(3);
       expect(sent[2]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
+    });
+
+    it('leaves a warning behind once a later refusal answered the operation it belonged to', async (): Promise<void> => {
+      // The token and the list belong to the operation the warning was issued about. Held past the refusal that
+      // settled that operation, they kept every later press on an id the server had already answered — so a
+      // deliberate new result met the same refusal for as long as the page stayed open, under a list of matches
+      // that had nothing to do with the message above it
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 409);
+        answer = (unanswered: H3Event): unknown => {
+          setResponseStatus(unanswered, 503);
+          answer = (checked: H3Event): unknown => {
+            setResponseStatus(checked, 422);
+            answer = answerRecorded;
+
+            return { message: UNRECORDABLE };
+          };
+
+          return {};
+        };
+
+        return {
+          acknowledgement: 'token-1',
+          candidates: [{ canonicalMatchId: MATCH_ID, playedAt: WARNED_AT }],
+          message: WARNED,
+          refusal: 'PROBABLE_DUPLICATE',
+        };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      // The press that answers the warning, which goes unanswered, and then the check that resolves it
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      // The check is the acknowledged press's own request, so it still carried the token the warning issued
+      expect(sent[2]?.acknowledgement).toBe('token-1');
+      expect(at(wrapper, SERVER_MESSAGE).text()).toBe(UNRECORDABLE);
+      expect(at(wrapper, 'duplicates').exists()).toBe(false);
+
+      await at(wrapper, 'score-b-1').setValue('9');
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(4);
+      expect(sent[3]?.acknowledgement).toBeNull();
+      expect(sent[3]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
+      expect(wrapper.emitted('recorded')).toEqual([[MATCH_ID, LEAGUE_ID]]);
+    });
+
+    it('leaves it behind for a changed-body refusal too, which is the receipt itself', async (): Promise<void> => {
+      // The refusal that names an occupied id is exactly the one a surviving token made unrecoverable: the next
+      // press carried the same id again and met the same conflict
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 409);
+        answer = (changed: H3Event): unknown => {
+          setResponseStatus(changed, 409);
+          answer = answerRecorded;
+
+          return {
+            existing: { canonicalMatchId: OTHER_MATCH_ID },
+            message: CHANGED_BODY,
+            refusal: 'OPERATION_BODY_CHANGED',
+          };
+        };
+
+        return {
+          acknowledgement: 'token-1',
+          candidates: [{ canonicalMatchId: MATCH_ID, playedAt: WARNED_AT }],
+          message: WARNED,
+          refusal: 'PROBABLE_DUPLICATE',
+        };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      expect(at(wrapper, 'duplicates').exists()).toBe(false);
+      expect(at(wrapper, 'existing').exists()).toBe(true);
+
+      await at(wrapper, 'score-b-1').setValue('9');
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(3);
+      expect(sent[2]?.acknowledgement).toBeNull();
+      expect(sent[2]?.clientOperationId).not.toBe(sent[0]?.clientOperationId);
+    });
+
+    it('answers the warning it was just given on the id that warning was about', async (): Promise<void> => {
+      // The other side of the same rule: a refusal read before the receipt settles nothing, so the press that
+      // answers a warning through one still continues the operation the warning named
+      answer = (event: H3Event): unknown => {
+        setResponseStatus(event, 409);
+        answer = (limited: H3Event): unknown => {
+          setResponseStatus(limited, 429);
+          answer = answerRecorded;
+
+          return { message: 'Too many saves.' };
+        };
+
+        return {
+          acknowledgement: 'token-1',
+          candidates: [{ canonicalMatchId: MATCH_ID, playedAt: WARNED_AT }],
+          message: WARNED,
+          refusal: 'PROBABLE_DUPLICATE',
+        };
+      };
+
+      const wrapper: VueWrapper = await mountForm();
+
+      await fillWin(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+      await pressSave(wrapper);
+
+      expect(sent).toHaveLength(3);
+      expect(sent[2]?.acknowledgement).toBe('token-1');
+      expect(sent[2]?.clientOperationId).toBe(sent[0]?.clientOperationId);
     });
 
     it('starts nothing by itself, and nothing until the next press', async (): Promise<void> => {

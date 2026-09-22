@@ -17,11 +17,13 @@
  */
 
 import { getTestFileName } from '@jens-johnson/style-guide/test-utils';
-import { mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime';
+import { mockNuxtImport, mountSuspended, registerEndpoint } from '@nuxt/test-utils/runtime';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import type { H3Event } from 'h3';
 import { defineEventHandler, readBody, setResponseStatus } from 'h3';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { computed, nextTick } from 'vue';
+import type { Router } from 'vue-router';
 
 import type { IMatchView } from '#shared/results';
 import { ResultAction, ResultState } from '#shared/results';
@@ -36,6 +38,32 @@ import {
 import MatchActions from './index.vue';
 
 /* ─── Fixtures ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The session this file's account is signed into: whether it still owes the welcome step, and whether the refresh
+ * the welcome exit makes can itself be reached.
+ *
+ * Set by the cases about the session, and only after they have mounted: the game route is gated, so an account that
+ * owed the step from the start would never reach the page these cases are about
+ * @internal
+ * @constant
+ */
+const { session } = vi.hoisted((): { session: { owed: boolean; reachable: boolean } } => ({
+  session: { owed: false, reachable: true },
+}));
+
+// A signed-in session, so the route middleware the departure cases navigate through lets them past its gate rather
+// than replacing every destination with sign-in
+mockNuxtImport('useUserSession', () => (): Record<string, unknown> => ({
+  fetch: async (): Promise<void> => {
+    if (!session.reachable) {
+      throw new Error('offline');
+    }
+  },
+  loggedIn: computed((): boolean => true),
+  session: { value: {} },
+  user: computed((): { needsWelcome: boolean } => ({ needsWelcome: session.owed })),
+}));
 
 /**
  * The league the match belongs to
@@ -64,6 +92,13 @@ const LATER_MATCH_ID: string = 'f9c6b5d3-0000-4000-8000-000000000006';
  * @constant
  */
 const LATER_LEAGUE_ID: string = 'a1b2c3d4-0000-4000-8000-000000000007';
+
+/**
+ * The page the actions are shown on, and the page a session exit has to bring the person back to
+ * @internal
+ * @constant
+ */
+const GAME_PATH: string = `/leagues/${LEAGUE_ID}/games/${MATCH_ID}`;
 
 /**
  * The names the template gives each control
@@ -99,6 +134,13 @@ const MESSAGE: string = 'action-message';
  * @constant
  */
 const WORDS: string = 'that was not the score';
+
+/**
+ * What a 403 that is about a role rather than about the session says
+ * @internal
+ * @constant
+ */
+const ROLE_REFUSED: string = 'Your role in this league does not allow that.';
 
 /**
  * Every body the component sent, in order.
@@ -149,6 +191,32 @@ function answerRateLimited(event: H3Event): unknown {
   setResponseStatus(event, 429);
 
   return { message: 'Too many saves.' };
+}
+
+/**
+ * The session having ended, which is not a refusal of this answer at all
+ * @internal
+ * @function
+ * @param event - The request
+ * @returns The refusal body
+ */
+function answerSignedOut(event: H3Event): unknown {
+  setResponseStatus(event, 401);
+
+  return { message: 'Your session has ended.' };
+}
+
+/**
+ * A 403, which is either a welcome step still owed or a role this account does not hold
+ * @internal
+ * @function
+ * @param event - The request
+ * @returns The refusal body
+ */
+function answerForbidden(event: H3Event): unknown {
+  setResponseStatus(event, 403);
+
+  return { message: ROLE_REFUSED };
 }
 
 /**
@@ -218,6 +286,45 @@ async function mountActions(
 }
 
 /**
+ * Mounts the actions at the game's own route, so the exits a session refusal takes have a page to carry back
+ * @internal
+ * @async
+ * @function
+ * @param viewer - What this viewer may do
+ * @returns The mounted actions and the router they are on
+ */
+async function mountRouted(viewer: Partial<IMatchView['viewer']> = {}): Promise<{
+  router: Router;
+  wrapper: VueWrapper;
+}> {
+  const router: Router = useNuxtApp().$router as Router;
+
+  await router.replace(GAME_PATH);
+
+  const wrapper: VueWrapper = await mountSuspended(MatchActions, {
+    props: { leagueId: LEAGUE_ID, match: match(viewer) },
+    route: GAME_PATH,
+  });
+
+  return { router, wrapper };
+}
+
+/**
+ * Lets an exit the press started resolve its own navigation guards
+ * @internal
+ * @async
+ * @function
+ */
+async function settled(): Promise<void> {
+  for (let round: number = 0; round < 2; round += 1) {
+    await new Promise((resolve: (value: unknown) => void): void => {
+      setTimeout(resolve, 0);
+    });
+    await nextTick();
+  }
+}
+
+/**
  * Presses one of the buttons and waits for the request it makes to settle.
  *
  * `trigger` waits for the render, not for the handler's fetch; without this the assertions run before the request
@@ -255,6 +362,8 @@ describe(getTestFileName(import.meta.url), (): void => {
     sent = [];
     paths = [];
     answer = answerAccepted;
+    session.owed = false;
+    session.reachable = true;
   });
 
   it('offers a viewer who holds nothing no actions at all', async (): Promise<void> => {
@@ -487,7 +596,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     answer = (event: H3Event): unknown => {
       setResponseStatus(event, 403);
 
-      return { message: 'Your role in this league does not allow that.' };
+      return { message: ROLE_REFUSED };
     };
 
     const wrapper: VueWrapper = await mountActions({ mayDispute: true });
@@ -495,7 +604,7 @@ describe(getTestFileName(import.meta.url), (): void => {
     await at(wrapper, NOTE).setValue(WORDS);
     await pressButton(wrapper, DISPUTE);
 
-    expect(at(wrapper, MESSAGE).text()).toBe('Your role in this league does not allow that.');
+    expect(at(wrapper, MESSAGE).text()).toBe(ROLE_REFUSED);
     expect((at(wrapper, NOTE).element as HTMLTextAreaElement).value).toBe(WORDS);
     expect(wrapper.emitted('resolved')).toBeUndefined();
   });
@@ -513,5 +622,102 @@ describe(getTestFileName(import.meta.url), (): void => {
     const wrapper: VueWrapper = await mountActions({ mayDispute: true });
 
     expect(at(wrapper, NOTE).attributes('maxlength')).toBe('280');
+  });
+  describe('a refusal about the session rather than the result', (): void => {
+    it('leaves for sign-in, carrying the game back with it', async (): Promise<void> => {
+      // An ended session is not a refusal of this answer, and the page that stayed put offered a button that could
+      // only fail again
+      answer = answerSignedOut;
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({ mayConfirm: true });
+
+      await pressButton(wrapper, CONFIRM);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe('/sign-in');
+      });
+
+      expect(router.currentRoute.value.query.redirect).toBe(GAME_PATH);
+    });
+
+    it('leaves for a welcome step the account still owes', async (): Promise<void> => {
+      answer = answerForbidden;
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({ mayConfirm: true });
+
+      // Owed from here rather than from the start: the game route is gated, and an account owing the step would
+      // have been sent to it instead of to this page
+      session.owed = true;
+      await pressButton(wrapper, CONFIRM);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe('/welcome');
+      });
+
+      expect(router.currentRoute.value.query.redirect).toBe(GAME_PATH);
+    });
+
+    it('stays where it is for a 403 that owes no welcome step', async (): Promise<void> => {
+      // A request from elsewhere, or a role this account does not have, is an ordinary refusal of this answer and
+      // there is nowhere to send anybody
+      answer = answerForbidden;
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({ mayConfirm: true });
+
+      await pressButton(wrapper, CONFIRM);
+      await settled();
+
+      expect(router.currentRoute.value.path).toBe(GAME_PATH);
+      expect(at(wrapper, MESSAGE).text()).toBe(ROLE_REFUSED);
+    });
+
+    it('leaves a check the same way, and holds nothing back on the way out', async (): Promise<void> => {
+      // The session can end between the press and the check as easily as before it
+      answer = answerUnavailable;
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({ mayConfirm: true });
+
+      await pressButton(wrapper, CONFIRM);
+
+      expect(at(wrapper, CONFIRM).text()).toBe('Check');
+
+      answer = answerSignedOut;
+      await pressButton(wrapper, CONFIRM);
+
+      await vi.waitFor((): void => {
+        expect(router.currentRoute.value.path).toBe('/sign-in');
+      });
+
+      expect(router.currentRoute.value.query.redirect).toBe(GAME_PATH);
+      expect(sent).toHaveLength(2);
+      expect(sent[1]?.clientOperationId).toBe(sent[0]?.clientOperationId);
+    });
+
+    it('keeps an unresolved answer checkable when the exit itself cannot be made', async (): Promise<void> => {
+      // The network that refused the write can refuse the session refresh too. The page that cannot leave has to
+      // still be holding the answer nobody can be sure of, on the button that made it
+      answer = answerUnavailable;
+
+      const { router, wrapper }: { router: Router; wrapper: VueWrapper } = await mountRouted({ mayConfirm: true });
+
+      await pressButton(wrapper, CONFIRM);
+
+      answer = answerForbidden;
+      session.owed = true;
+      session.reachable = false;
+      await pressButton(wrapper, CONFIRM);
+      await settled();
+
+      expect(router.currentRoute.value.path).toBe(GAME_PATH);
+      expect(at(wrapper, MESSAGE).text()).toContain(STILL_UNRESOLVED_MESSAGE);
+      expect(at(wrapper, CONFIRM).text()).toBe('Check');
+
+      answer = answerAccepted;
+      await pressButton(wrapper, CONFIRM);
+
+      expect(sent).toHaveLength(3);
+      expect(new Set(sent.map((body): unknown => body.clientOperationId)).size).toBe(1);
+      expect(wrapper.emitted('resolved')).toHaveLength(1);
+    });
   });
 });
